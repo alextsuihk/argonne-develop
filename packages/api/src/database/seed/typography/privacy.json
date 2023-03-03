@@ -1,0 +1,19 @@
+{
+  "general": {
+    "title": { "enUS": "How to save $$$", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" },
+    "content": { "enUS": "perhaps, join a group:", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" }
+  },
+
+  "gdpr": {
+    "title": { "enUS": "GDPR Compliance", "zhHK": "隱私" },
+    "content": { "enUS": "TODO", "zhHK": "TODO" }
+  },
+
+  "avatar": {
+    "title": { "enUS": "Avatar Policy", "zhHK": "TODO" },
+    "content": {
+      "enUS": "Avatar is your personalize icon photo. Primary school students are suggested NOT to upload his/her photo. They have options to choose a pre-selected icon or uploaded avatar will need approval",
+      "zhHK": "TODO"
+    }
+  }
+}

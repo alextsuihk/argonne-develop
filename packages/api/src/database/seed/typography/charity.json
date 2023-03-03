@@ -1,0 +1,28 @@
+{
+  "background": {
+    "title": { "enUS": "This is non-profit project", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" },
+    "content": {
+      "enUS": "We are here to help student to learn and understand. A detailed explanation & steps are far more important than result answer. However, we understand there is a cost for high quality tutoring & mentoring.",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  },
+
+  "supportAsTutor": {
+    "title": { "enUS": "Help answering question", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" },
+    "content": {
+      "enUS": "There are a few ways to help. First, you could donate the earning point to charity fund pool. Second, you could help to answer questions from economically disadvantaged students who use free coupon to raise question, coupon will be returned back to the student",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  },
+
+  "generosity": {
+    "title": { "enUS": "Generosity & Donation", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" },
+    "content": {
+      "enUS": "At the moment, we do NOT accept any cash or momentary donation. If you are available or capable, please join us as a 'generous tutor' answering questions for free. You want to make a donation, we prefer to donation of table or computer, and give away through schools without disclosing student privacy (further instruction will be provided).",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  }
+}

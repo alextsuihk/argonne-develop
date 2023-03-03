@@ -1,0 +1,17 @@
+{
+  "policy": {
+    "title": { "enUS": "TODO: Placeholder", "zhHK": "TODO: placeholder" },
+    "content": {
+      "enUS": "<strong>Our site is designated for students & parents. We do not accept advertisement which is inappropriate for children, including but not limited to games with excessive violent. We reserved the right to make final decision.</strong>",
+      "zhHK": "TODO: placeholder"
+    }
+  },
+
+  "free": {
+    "title": { "enUS": "Free Advertisement", "zhHK": "免費廣告" },
+    "content": {
+      "enUS": "We are offering Free of Charge advertisement to non-profit organization. For detail, please contact us",
+      "zhHK": "TODO: placeholder"
+    }
+  }
+}

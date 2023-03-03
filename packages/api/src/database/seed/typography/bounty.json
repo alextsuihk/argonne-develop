@@ -1,0 +1,17 @@
+{
+  "reportError": {
+    "title": { "enUS": "English Title", "zhHK": "TODO: placeholder" },
+    "content": { "enUS": "<strong>content..... </strong>", "zhHK": "TODO: placeholder" }
+  },
+
+  "contributeData": {
+    "title": {
+      "enUS": "Help to contribute data",
+      "zhHK": "TODO: placeholder"
+    },
+    "content": {
+      "enUS": "<p>provide missing data, such as new textbook, </p>",
+      "zhHK": "TODO: placeholder"
+    }
+  }
+}

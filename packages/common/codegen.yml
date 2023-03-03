@@ -1,0 +1,12 @@
+overwrite: true
+schema: http://127.0.0.1:4000/graphql
+documents: '../api/src/queries/*.ts'
+generates:
+  ./src/__generated__/graphql.ts:
+    plugins:
+      - typescript
+      - typescript-operations
+      - typed-document-node
+  ./src/__generated__/graphql.schema.json:
+    plugins:
+      - 'introspection'

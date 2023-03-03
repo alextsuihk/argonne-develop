@@ -1,0 +1,9 @@
+.dockerignore
+node_modules
+assets
+coverage
+dist
+Dockerfile
+*.log
+*.md 
+

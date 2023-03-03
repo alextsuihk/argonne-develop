@@ -1,0 +1,37 @@
+{
+  "policy": {
+    "title": { "enUS": "Open Source Policy", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" },
+    "content": {
+      "enUS": "Majority of this project is open-sources. Some of the project-specific backend code is also available upon request. Please send me an email alex@alextsui <mailto: alex@alextsui.net?subject:Request Gitlab Access",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  },
+
+  "disclaimer": {
+    "title": { "enUS": "Important Disclaimer", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" },
+    "content": {
+      "enUS": "There is NO warranty or guarantee of the quality of this project. Please feel free to use the software at your own risk. We will not be responsible for any damages.",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  },
+
+  "contribute": {
+    "title": { "enUS": "Want to contribute to the project", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" },
+    "content": {
+      "enUS": "Developer privilege could be granted upon request.",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  },
+
+  "featureRequest": {
+    "title": { "enUS": "Request New Feature", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" },
+    "content": {
+      "enUS": "'If you have a great idea or request, please drop me an email alex@alextsui.net <mailto: alex@alextsui.net>",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  }
+}

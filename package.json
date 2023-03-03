@@ -1,0 +1,62 @@
+{
+  "name": "@argonne/argonne",
+  "version": "1.0.0",
+  "description": "argonne mono-repo",
+  "homepage": "https://school.inspire.hk",
+  "keywords": [
+    "apollo-graphql",
+    "express",
+    "graphql",
+    "i18next",
+    "jest",
+    "jsonwebtoken",
+    "lint",
+    "material-ui (mui)",
+    "minio (s3)",
+    "mongo",
+    "oauth",
+    "pwa",
+    "react",
+    "socket.io",
+    "vite",
+    "web-push",
+    "yarn workspace",
+    "yup"
+  ],
+  "author": {
+    "name": "Alex Tsui",
+    "email": "alex@inspire.hk"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://gitlab.alextsui.net/inspirehk/argonne/argonne"
+  },
+  "bugs": {
+    "url": "https://github.com/inspirehk/argonne/argonne",
+    "email": "argonne@inspire.hk"
+  },
+  "packageManager": "yarn@3.2.4",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "packages/*"
+    ]
+  },
+  "license": "MIT",
+  "scripts": {
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "husky": "^8.0.3",
+    "lint-staged": "^13.1.1",
+    "typescript": "^4.9.5"
+  },
+  "lint-staged": {
+    "packages/**/src/**/*.{js,jsx,ts,tsx,json,css,scss,md}": [
+      "prettier --write"
+    ],
+    "packages/**/src/**/*.{js,jsx,ts,tsx,json}": [
+      "lint"
+    ]
+  }
+}

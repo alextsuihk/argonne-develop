@@ -1,0 +1,17 @@
+{
+  "policy": {
+    "title": { "enUS": "TODO: Placeholder", "zhHK": "TODO: placeholder" },
+    "content": {
+      "enUS": "Free service to all active advertisement",
+      "zhHK": "TODO: placeholder"
+    }
+  },
+
+  "payment": {
+    "title": { "enUS": "Payment Collection", "zhHK": "代收款項" },
+    "content": {
+      "enUS": "We withhold the full amount at registration <strong>confirmation</strong>. Full amount will be transferred to event organizer <strong>two days</strong> after the first session if there is NOT dispute.",
+      "zhHK": "TODO: placeholder"
+    }
+  }
+}

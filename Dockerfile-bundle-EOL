@@ -1,0 +1,71 @@
+
+# TODO: strategy: single instance of mongo & minio
+
+ARG  CODE_VERSION=latest
+
+FROM ubuntu:alpine
+
+
+# install minio, mongo, nginx, node, redis
+RUN wget -qO - https://www.mongodb.org/static/pgp/server-5.0.asc | apt-key add - && \
+    echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/5.0 multiverse" | tee /etc/apt/sources.list.d/mongodb-org-5.0.list && \
+    apt update && \
+    apt upgrade -y && \
+    apt install -y gnupg nginx redis-server  mongodb-org && \
+    cd / && \
+    wget https://dl.min.io/server/minio/release/linux-amd64/minio && \
+    chmod +x minio && \
+    mv minio /usr/local/bin && \
+    mkdir /etc/minio && \
+    curl -O https://raw.githubusercontent.com/minio/minio-service/master/linux-systemd/minio.service 
+
+
+# https://www.digitalocean.com/community/tutorials/how-to-set-up-an-object-storage-server-using-minio-on-ubuntu-18-04
+COPY conf/* /etc/.  
+COPY conf/minio.service /etc/systemd/system/minio.service
+COPY conf/minio.conf /etc/default/minio  
+COPY conf/mongod* /etc/.
+COPY conf/nginx.conf /etc/nginx/nginx.conf
+COPY conf/redis.conf /etc/redis.conf
+
+RUN systemctl daemon-reload && \
+    systemctl enable minio & \
+    systemctl enable mongod & \ 
+    systemctl enable redis.service & \
+    ufw allow 80 && ufw enable
+
+
+# setup minoo
+# enable bucket replication
+COPY scripts /scripts
+RUN chmod +x /scripts/* && /scripts/enable-bucket-replication.sh
+
+### TODO
+## TODO!: use latest node
+## TODO: build react,
+
+# Create app directory
+WORKDIR /app
+
+# Install app dependencies
+# A wildcard is used to ensure both package.json AND package-lock.json are copied
+# where available (npm@5+)
+COPY package*.json .
+
+# NODE_ENV is defined in pm2.config.js or package.json
+ENV NODE_ENV=production
+ENV MODE=SATELLITE
+
+RUN npm install && npm install pm2 -g
+
+# Bundle app source
+COPY . .
+RUN npm build 
+
+EXPOSE 80
+# CMD pm2-runtime start pm2.config.js --env PRODUCTION
+CMD ["pm2-runtime", "start",  "pm2.config.js"]
+
+
+# docker start --name argonne -mount: src=env dest=.env
+# /api/setting, append INIT=datetime

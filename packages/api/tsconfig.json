@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "commonjs",
+    "composite": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "noUncheckedIndexedAccess": true,
+    "removeComments": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "typeRoots": ["@types", "node_modules/@types", "node_modules/jest-extended/types"]
+  },
+  "references": [{ "path": "../common" }],
+  "include": ["./src"],
+  "exclude": ["./src/jest.ts", "./src/routes/api/rest-api-test.ts", "./src/**/*.test.ts"]
+}

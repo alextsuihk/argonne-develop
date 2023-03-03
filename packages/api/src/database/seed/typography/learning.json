@@ -1,0 +1,54 @@
+{
+  "technologies": {
+    "title": { "enUS": "Adopted the latest Technologies.", "zhHK": "選用最新衛先進技術", "zhCN": "TODO: placeholder" },
+    "content": {
+      "enUS": "Typescript, Express, Mongo (with Mongoose), Apollo (GraphQL), React, Material-UI, Formik2",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  },
+
+  "prerequisite": {
+    "title": { "enUS": "English Title", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" },
+    "content": { "enUS": "<strong>content..... </strong>", "zhHK": "TODO: placeholder", "zhCN": "TODO: placeholder" }
+  },
+
+  "teaching": {
+    "title": {
+      "enUS": "Customized Training",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    },
+    "content": {
+      "enUS": "Based on students' background & knowledge, we could start with some small modules",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  },
+
+  "freeTutorials": {
+    "title": {
+      "enUS": "Learning Preq",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    },
+    "content": {
+      "enUS": "<p>I don't personally have the bandwidth to handle daily operation. We are seeking non-profit organization to manage the daily operation. Please observe the following criteria.<p><ul><li>I will support technical & financial support of software & service hosting</li><li>You are only allowed to charge no more than 1% of service solely use for dispute cost and free coupon give-a-way.</li><li>You are not allowed to promote any religious or politically beliefs. (it is okay if your organization has religious background.</li><li>I am authorized to monitor & review the transaction records without further permission.</li></ul><p>If you are interested and accept the condition, please feel free to contact me. Additional information of your organization might be to be provided if not reputable.</p>",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  },
+
+  "paidTutorials": {
+    "title": {
+      "enUS": "Seeking for Partner to run daily operation",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    },
+    "content": {
+      "enUS": "<p>I don't personally have the bandwidth to handle daily operation. We are seeking non-profit organization to manage the daily operation. Please observe the following criteria.<p><ul><li>I will support technical & financial support of software & service hosting</li><li>You are only allowed to charge no more than 1% of service solely use for dispute cost and free coupon give-a-way.</li><li>You are not allowed to promote any religious or politically beliefs. (it is okay if your organization has religious background.</li><li>I am authorized to monitor & review the transaction records without further permission.</li></ul><p>If you are interested and accept the condition, please feel free to contact me. Additional information of your organization might be to be provided if not reputable.</p>",
+      "zhHK": "TODO: placeholder",
+      "zhCN": "TODO: placeholder"
+    }
+  }
+}
