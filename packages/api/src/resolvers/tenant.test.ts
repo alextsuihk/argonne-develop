@@ -36,12 +36,8 @@ import User from '../models/user';
 import {
   ADD_TENANT,
   ADD_TENANT_REMARK,
-  BIND_TENANT,
-  GET_TENANT_TOKEN,
   GET_TENANTS,
   REMOVE_TENANT,
-  SEND_TEST_EMAIL,
-  UNBIND_TENANT,
   UPDATE_TENANT_CORE,
   UPDATE_TENANT_EXTRA,
 } from '../queries/tenant';
@@ -52,11 +48,9 @@ const { TENANT } = LOCALE.DB_ENUM;
 // Top tenant of this test suite:
 describe('Tenant GraphQL', () => {
   let guestServer: ApolloServer | null;
+  let normalServer: ApolloServer | null;
   let rootServer: ApolloServer | null;
   let rootUser: LeanDocument<UserDocument> | null;
-  let normalServer: ApolloServer | null;
-  let normalUser: LeanDocument<UserDocument> | null;
-  let tenantId: string | null;
   let htmlUrl: string;
   let htmlUrl2: string;
   let logoUrl: string;
@@ -97,17 +91,16 @@ describe('Tenant GraphQL', () => {
   };
 
   beforeAll(async () => {
-    ({ guestServer, normalServer, normalUser, rootServer, rootUser, tenantId } = await jestSetup(
-      ['guest', 'normal', 'root'],
-      { apollo: true },
-    ));
+    ({ guestServer, normalServer, rootServer, rootUser } = await jestSetup(['guest', 'normal', 'root'], {
+      apollo: true,
+    }));
   });
   afterAll(async () =>
     Promise.all([
-      jestRemoveObject(htmlUrl),
-      jestRemoveObject(htmlUrl2),
-      jestRemoveObject(logoUrl),
-      jestRemoveObject(logoUrl2),
+      htmlUrl && jestRemoveObject(htmlUrl),
+      htmlUrl2 && jestRemoveObject(htmlUrl2),
+      logoUrl && jestRemoveObject(logoUrl),
+      logoUrl2 && jestRemoveObject(logoUrl2),
       jestTeardown(),
     ]),
   );
@@ -118,20 +111,8 @@ describe('Tenant GraphQL', () => {
     apolloExpect(res, 'data', { tenants: expect.arrayContaining([expectedNormalFormat]) });
   });
 
-  test('should fail when non tenantAdmin trying to generate token', async () => {
-    expect.assertions(2);
-
-    const operation = { query: GET_TENANT_TOKEN, variables: { id: tenantId } };
-
-    const res1 = await guestServer!.executeOperation(operation);
-    apolloExpect(res1, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
-
-    const res2 = await normalServer!.executeOperation(operation);
-    apolloExpect(res2, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
-  });
-
-  test('should pass when ADD, ADD_REMARK, ....,  UPDATE, BIND, UNBIND, REMOVE', async () => {
-    expect.assertions(13 + 2);
+  test('should pass when ADD, ADD_REMARK, ....,  UPDATE, REMOVE', async () => {
+    expect.assertions(9);
 
     const schools = await School.find({ deletedAt: { $exists: false } }).lean();
 
@@ -253,39 +234,6 @@ describe('Tenant GraphQL', () => {
     apolloExpect(updateExtraRes3, 'data', {
       updateTenantExtra: { ...expectedRootFormat, ...tenantExtra2, htmlUrl: htmlUrl2, logoUrl: logoUrl2 },
     });
-
-    // send test-mail (as tenantAdmin)
-    const testEmailRes = await tenantAdminServer.executeOperation({
-      query: SEND_TEST_EMAIL,
-      variables: { id: newId, email: users[0].emails[0] },
-    });
-    apolloExpect(testEmailRes, 'data', { sendTestEmail: { code: MSG_ENUM.COMPLETED } });
-
-    // generate tenantToken (as tenantAdmin)
-    const tokenRes = await tenantAdminServer.executeOperation({ query: GET_TENANT_TOKEN, variables: { id: newId } });
-    apolloExpect(tokenRes, 'data', { tenantToken: { token: expect.any(String), expireAt: expect.any(Number) } });
-
-    // bind tenant (as normalUser)
-    const bindRes = await normalServer!.executeOperation({
-      query: BIND_TENANT,
-      variables: { token: tokenRes.data!.tenantToken!.token },
-    });
-    apolloExpect(bindRes, 'data', { bindTenant: { code: MSG_ENUM.COMPLETED } });
-
-    // check userTenants after binding (as normalUser)
-    const user = await User.findOneActive({ _id: normalUser!._id });
-    expect(idsToString(user!.tenants).includes(newId)).toBeTrue();
-
-    // unbind tenant (as adminUser)
-    const unbindRes = await tenantAdminServer.executeOperation({
-      query: UNBIND_TENANT,
-      variables: { id: newId, userId: normalUser!._id.toString() },
-    });
-    apolloExpect(unbindRes, 'data', { unbindTenant: { code: MSG_ENUM.COMPLETED } });
-
-    // check userTenants after unbinding (as normalUser)
-    const unboundUser = await User.findOneActive({ _id: normalUser!._id });
-    expect(idsToString(unboundUser!.tenants).includes(newId)).toBeFalse();
 
     // remove tenant (as root)
     const removedRes = await rootServer!.executeOperation({

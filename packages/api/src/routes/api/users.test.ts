@@ -8,91 +8,158 @@ import type { LeanDocument } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
-import { domain, jestSetup, jestTeardown, shuffle } from '../../jest';
+import {
+  domain,
+  expectedUserFormat,
+  jestSetup,
+  jestTeardown,
+  prob,
+  randomString,
+  shuffle,
+  uniqueTestUser,
+} from '../../jest';
 import type { UserDocument } from '../../models/user';
+import User from '../../models/user';
+import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
 
+const { createUpdateDelete } = commonTest;
+const route = 'users';
+
 // Top level of this test suite:
 describe('User API Routes', () => {
+  let adminUser: LeanDocument<UserDocument> | null;
   let normalUser: LeanDocument<UserDocument> | null;
+  let rootUser: LeanDocument<UserDocument> | null;
   let tenantAdmin: LeanDocument<UserDocument> | null;
   let tenantId: string | null;
 
   beforeAll(async () => {
-    ({ normalUser, tenantAdmin, tenantId } = await jestSetup(['normal', 'tenantAdmin']));
+    ({ adminUser, normalUser, rootUser, tenantAdmin, tenantId } = await jestSetup([
+      'admin',
+      'normal',
+      'root',
+      'tenantAdmin',
+    ]));
   });
 
   afterAll(jestTeardown);
 
-  test('should response true when email is available', async () => {
-    expect.assertions(3);
+  // TODO: findMany() & findOne()
 
-    const res = await request(app).get(`/api/users/isEmailAvailable/brand.new@${domain}`);
-    expect(res.body).toEqual({ data: true });
-    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(res.status).toBe(200);
+  test('should fail when normalUser try to create user', async () => {
+    const { email, name } = uniqueTestUser();
+
+    await createUpdateDelete(route, { 'Jest-User': normalUser!._id }, [
+      {
+        action: 'create',
+        data: { tenantId: tenantId, email, name },
+        expectedResponse: {
+          statusCode: 403,
+          data: { type: 'plain', statusCode: 403, errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }] },
+        },
+      },
+    ]);
   });
 
-  test('should response false when email is not available', async () => {
-    expect.assertions(3);
+  test('should fail when admin try to create user', async () => {
+    const { email, name } = uniqueTestUser();
 
-    const res = await request(app).get(`/api/users/isEmailAvailable/${normalUser!.emails[0]}`);
-    expect(res.body).toEqual({ data: false });
-    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(res.status).toBe(200);
+    await createUpdateDelete(route, { 'Jest-User': adminUser!._id }, [
+      {
+        action: 'create',
+        data: { tenantId: tenantId, email, name },
+        expectedResponse: {
+          statusCode: 403,
+          data: { type: 'plain', statusCode: 403, errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }] },
+        },
+      },
+    ]);
   });
 
-  test('should fail when checking with an invalid email format', async () => {
-    expect.assertions(3);
+  test('should pass when root creates user (e.g. publisherAdmin)', async () => {
+    const { email, name } = uniqueTestUser();
 
-    const res = await request(app).get('/api/users/isEmailAvailable/invalid@@email');
-    expect(res.body).toEqual({
-      errors: [{ code: MSG_ENUM.USER_INPUT_ERROR, param: 'email' }],
-      statusCode: 422,
-      type: 'yup',
-    });
-    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(res.status).toBe(422);
+    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': rootUser!._id }, [
+      {
+        action: 'create',
+        data: { email, name },
+        expectedMinFormat: { ...expectedUserFormat, tenants: [], name, emails: [email.toUpperCase()] }, // email is unverified
+      },
+    ]);
+
+    // clean up
+    await User.deleteOne({ _id: user!._id });
   });
 
-  test.only('should pass when creating a tenantToken (as tenantAdmin)', async () => {
-    expect.assertions(3);
+  test('should fail when school tenantAdmin creates an existing user (who NOT in tenant)', async () => {
+    // create a new user (without tenants)
+    const { email, name, password } = uniqueTestUser();
+    const user = await User.create({ tenants: [], name, emails: [email], password });
 
-    const res = await request(app).get(`/api/users/tenantToken/${tenantId}`).set({ 'Jest-User': tenantAdmin!._id });
-    expect(res.body).toEqual({ data: { token: expect.any(String), expireAt: expect.any(String) } });
-    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(res.status).toBe(200);
+    await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
+      {
+        action: 'create',
+        data: { tenantId: tenantId, email, name },
+        expectedResponse: {
+          statusCode: 400,
+          data: { type: 'plain', statusCode: 400, errors: [{ code: MSG_ENUM.AUTH_EMAIL_ALREADY_REGISTERED }] },
+        },
+      },
+    ]);
+
+    // clean up
+    await User.deleteOne({ _id: user });
   });
 
-  test.only('should fail when creating a tenantToken (as normalUser or guest)', async () => {
-    expect.assertions(3 * 2);
+  test('should pass when school tenantAdmin creates an existing user (who already in tenant)', async () => {
+    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
+      {
+        action: 'create',
+        data: { tenantId: tenantId, email: normalUser!.emails[0], name: 'whatever' },
+        expectedMinFormat: expectedUserFormat,
+      },
+    ]);
 
-    // as non-tenantAdmin
-    const res = await request(app).get(`/api/users/tenantToken/${tenantId}`).set({ 'Jest-User': normalUser!._id });
-    expect(res.body).toEqual({
-      errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }],
-      statusCode: 403,
-      type: 'plain',
-    });
-    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(res.status).toBe(403);
-
-    // as guest
-    const res2 = await request(app).get(`/api/users/tenantToken/${tenantId}`);
-    expect(res2.body).toEqual({
-      errors: [{ code: MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR }],
-      statusCode: 401,
-      type: 'plain',
-    });
-    expect(res2.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(res2.status).toBe(401);
+    // clean up
+    await User.deleteOne({ _id: user!._id });
   });
 
-  // TODO: full suite, verify email, add email, update profile.....  (& clean up)
+  test('should pass when school tenantAdmin creates user and updateSchool()', async () => {
+    const { email, name } = uniqueTestUser();
+    const studentId = prob(0.5) ? randomString() : null;
+
+    // create new user
+    const user = await createUpdateDelete<UserDocument>(
+      route,
+      { 'Jest-User': tenantAdmin!._id },
+      [
+        {
+          action: 'create',
+          data: { tenantId: tenantId, email, name, ...(studentId && { studentId }) },
+          expectedMinFormat: {
+            ...expectedUserFormat,
+            tenants: [tenantId!],
+            name,
+            emails: [email.toUpperCase()], // email is unverified
+            ...(studentId && { studentIds: [`${tenantId}#${studentId}`] }),
+          },
+        },
+      ],
+      { skipAssertion: true },
+    );
+
+    // updateSchool
+
+    // clean up
+    await User.deleteOne({ _id: user!._id });
+  });
+
+  // TODO: full suite,  add/verify(self generate token)/remove email, update profile.....  (& clean up)
 
   test('should pass when update user', async () => {
-    console.log('TODO');
+    console.log('TODO, normalUser updating profile');
     // expect.assertions(13);
     // const [level] = (await Level.find({ deletedAt: { $exists: false } })).sort(shuffle);
     // const [subject] = (await Subject.find({ levels: level._id, deletedAt: { $exists: false } })).sort(shuffle);
@@ -111,4 +178,6 @@ describe('User API Routes', () => {
     // expect(addRes.header['content-type']).toBe('application/json; charset=utf-8');
     // const newlyCreatedSpecialtyId = addRes.body.data.pop()!._id;
   });
+
+  // TODO: tenantAdmin create without tenantId
 });

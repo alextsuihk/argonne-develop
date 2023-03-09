@@ -6,6 +6,7 @@
 
 import { Router } from 'express';
 
+import configLoader from '../../config/config-loader';
 import chatGroupController from '../../controllers/chat-group';
 
 const router = Router();
@@ -23,16 +24,18 @@ router.get('/', findMany);
  */
 router.get('/:id', findOneById);
 
-/**
- * @route   POST api/chat-groups/:to
- * @desc    create a new (empty) chat
- */
-router.post('/:to?', createNew);
+if (configLoader.config.restfulFullAccess) {
+  /**
+   * @route   POST api/chat-groups/:to
+   * @desc    create a new (empty) chat
+   */
+  router.post('/:to?', createNew);
 
-/**
- * @route   PATCH api/chat-groups/:id/:action
- * @desc    append a chat, new member, mark chatContent read to chat
- */
-router.patch('/:id/:action?', updateById);
+  /**
+   * @route   PATCH api/chat-groups/:id/:action
+   * @desc    append a chat, new member, mark chatContent read to chat
+   */
+  router.patch('/:id/:action?', updateById);
+}
 
 export default router;

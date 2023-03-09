@@ -8,14 +8,16 @@ import type { Application } from 'express';
 import configLoader from '../config/config-loader';
 import analyticRoutes from './api/analytics';
 import announcementRoutes from './api/announcements';
+// import assignmentRoutes from './api/assignments'; // TODO
 import authRoutes from './api/auth';
-import authServiceRoutes from './api/auth-service';
+import authServiceRoutes from './api/auth-services';
 import bookRoutes from './api/books';
 import chatGroupsRoutes from './api/chat-groups';
 import chatRoutes from './api/chats';
 import classroomRoutes from './api/classrooms';
 import contactRoutes from './api/contacts';
 import districtRoutes from './api/districts';
+import emailRoutes from './api/email';
 // import jobRoutes from './api/jobs'; // TODO:
 import levelRoutes from './api/levels';
 import logRoutes from './api/logs';
@@ -28,6 +30,7 @@ import subjectRoutes from './api/subjects';
 import syncRoutes from './api/sync';
 import systemRoutes from './api/systems';
 import tagRoutes from './api/tags';
+import tenantBindingRoutes from './api/tenant-binding';
 import tenantRoutes from './api/tenants';
 import tutorRankingRoutes from './api/tutor-rankings';
 import tutorRoutes from './api/tutors';
@@ -41,11 +44,12 @@ export default (app: Application): void => {
   app.use('/api/logs', logRoutes);
 
   if (configLoader.config.mode === 'HUB') {
-    // common database routes
+    // apis available for teaching
+    app.use('/api/announcements', announcementRoutes); // require auth() to access
     app.use('/api/books', bookRoutes);
+    app.use('/api/chat-groups', chatGroupsRoutes); // require auth() to access
     app.use('/api/districts', districtRoutes);
     app.use('/api/levels', levelRoutes);
-    app.use('/api/presigned-urls', presignedUrlRoutes);
     app.use('/api/publishers', publisherRoutes);
     app.use('/api/schools', schoolRoutes);
     app.use('/api/subjects', subjectRoutes);
@@ -55,20 +59,21 @@ export default (app: Application): void => {
     app.use('/api/typographies', typographyRoutes);
 
     if (configLoader.config.restfulFullAccess) {
-      app.use('/api/auth-service', authServiceRoutes);
-      app.use('/api/sync', syncRoutes);
-
-      app.use('/api/announcements', announcementRoutes);
+      // app.use('/api/assignments', assignmentRoutes); // TODO
       app.use('/api/auth', authRoutes);
-      app.use('/api/chat-groups', chatGroupsRoutes);
+      app.use('/api/auth-services', authServiceRoutes);
       app.use('/api/chats', chatRoutes);
       app.use('/api/classrooms', classroomRoutes);
       app.use('/api/contacts', contactRoutes);
+      app.use('/api/emails', emailRoutes);
+      // app.use('/api/jobs', jobRoutes); //TODO
       app.use('/api/password', passwordRoutes);
+      app.use('/api/presigned-urls', presignedUrlRoutes);
       app.use('/api/roles', roleRoutes);
+      app.use('/api/sync', syncRoutes);
+      app.use('/api/tenant-binding', tenantBindingRoutes);
       app.use('/api/tutor-rankings', tutorRankingRoutes);
       app.use('/api/tutors', tutorRoutes);
-
       app.use('/api/users', userRoutes);
       // app.use('/api', webpushRoutes);
     }

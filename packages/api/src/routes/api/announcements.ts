@@ -5,6 +5,7 @@
 
 import { Router } from 'express';
 
+import configLoader from '../../config/config-loader';
 import announcementController from '../../controllers/announcement';
 
 const router = Router();
@@ -23,22 +24,24 @@ router.get('/', findMany);
  */
 router.get('/:id', findOneById);
 
-/**
- * @route   POST api/announcements
- * @desc    add a new announcement
- */
-router.post('/', createNew);
+if (configLoader.config.restfulFullAccess) {
+  /**
+   * @route   POST api/announcements
+   * @desc    add a new announcement
+   */
+  router.post('/', createNew);
 
-/**
- * @route   PATCH api/announcements/:id
- * @desc    update a announcement
- */
-// router.patch('/:id', updateById);
+  /**
+   * @route   PATCH api/announcements/:id
+   * @desc    update a announcement
+   */
+  // router.patch('/:id', updateById);
 
-/**
- * @route   DELETE api/announcements/:id
- * @desc    delete a announcement
- */
-router.delete('/:id', removeById);
+  /**
+   * @route   DELETE api/announcements/:id
+   * @desc    delete a announcement
+   */
+  router.delete('/:id', removeById);
+}
 
 export default router;

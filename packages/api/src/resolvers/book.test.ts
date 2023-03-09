@@ -444,7 +444,7 @@ describe('Book GraphQL', () => {
     // clean-up
     if (!isAdmin)
       await Promise.all([
-        User.deleteOne({ _id: publisherAdmin._id }),
+        User.deleteOne({ _id: publisherAdmin }),
         Publisher.findByIdAndUpdate(publisher, { $pull: { admins: publisherAdmin._id } }).lean(),
       ]);
   };

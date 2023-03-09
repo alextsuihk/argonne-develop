@@ -304,7 +304,7 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // clean-up
-    await User.deleteOne({ _id: user._id });
+    await User.deleteOne({ _id: user });
   });
 
   test('should pass the full suite', async () => {

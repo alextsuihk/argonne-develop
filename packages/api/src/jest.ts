@@ -296,7 +296,7 @@ export const jestSetup = async (
     apollo && types.includes('guest') ? testServer() : null,
     apollo && types.includes('normal') ? testServer(normalUser) : null,
     apollo && types.includes('root') ? testServer(rootUser) : null,
-    tenant && apollo && types.includes('tenantAdmin') ? testServer(tenantAdmin) : null,
+    tenant && apollo && types.includes('tenantAdmin') ? testServer(tenantAdmin!) : null,
   ];
 
   return {

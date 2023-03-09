@@ -24,23 +24,6 @@ export default gql`
     _: String # empty entry
   }
 
-  type Content {
-    _id: ID!
-    flags: [String!]!
-    parents: [String!]!
-    creator: String!
-    data: String!
-    createdAt: Float!
-    updatedAt: Float!
-  }
-
-  type Member {
-    user: String!
-    flags: [String!]!
-    lastViewedAt: Float
-    ranking: Int
-  }
-
   input CoordinatesInput {
     lng: Float
     lat: Float
@@ -56,6 +39,23 @@ export default gql`
     updatedAfter: DateInput
     updatedBefore: DateInput
     skipDeleted: Boolean
+  }
+
+  type Content {
+    _id: ID!
+    flags: [String!]!
+    parents: [String!]!
+    creator: String!
+    data: String!
+    createdAt: Float!
+    updatedAt: Float!
+  }
+
+  type Member {
+    user: String!
+    flags: [String!]!
+    lastViewedAt: Float
+    ranking: Int
   }
 
   type Locale {
@@ -79,5 +79,10 @@ export default gql`
   # standard successful response, code is HTTP status
   type StatusResponse {
     code: String!
+  }
+
+  type TokenWithExpireAt {
+    token: String!
+    expireAt: Float!
   }
 `;

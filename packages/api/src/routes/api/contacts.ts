@@ -26,7 +26,7 @@ router.get('/:id', findOneById);
  * @route   POST api/contacts
  * @desc    add a new contact or generate a token for making friend(s)
  */
-router.post('/:token?', createNew); // (with contact token)
+router.post('/:action?', createNew);
 
 /**
  * @route   PATCH api/contacts/:id

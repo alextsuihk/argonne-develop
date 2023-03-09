@@ -14,6 +14,7 @@ import {
   idsToString,
   jestSetup,
   jestTeardown,
+  prob,
   shuffle,
   testServer,
 } from '../jest';
@@ -62,7 +63,12 @@ describe('Contact GraphQL', () => {
 
   test('should response a single contact from req.user', async () => {
     expect.assertions(1);
-    const [randomContactId] = normalUser!.contacts.map(c => c.user.toString()).sort(shuffle);
+
+    // pick a random contact (who is ACTIVE)
+    const [randomContactId] = normalUser!.contacts
+      .filter(c => idsToString(normalUsers!).includes(c.user.toString()))
+      .map(c => c.user.toString())
+      .sort(shuffle);
     const res = await normalServer!.executeOperation({ query: GET_CONTACT, variables: { id: randomContactId! } });
     apolloExpect(res, 'data', { contact: expectedFormat });
   });
@@ -116,13 +122,18 @@ describe('Contact GraphQL', () => {
     await cleanUp(normalUser!._id, friendId);
 
     // generate contactToken
-    const contactTokenRes = await friendServer.executeOperation({ query: GET_CONTACT_TOKEN });
-    apolloExpect(contactTokenRes, 'data', { contactToken: expect.any(String) });
+    const contactTokenRes = await friendServer.executeOperation({
+      query: GET_CONTACT_TOKEN,
+      variables: prob(0.5) ? { expiresIn: 5 } : {},
+    });
+    apolloExpect(contactTokenRes, 'data', {
+      contactToken: { token: expect.any(String), expireAt: expect.any(Number) },
+    });
 
     // add contact
     const addContactRes = await normalServer!.executeOperation({
       query: ADD_CONTACT,
-      variables: { token: contactTokenRes.data!.contactToken },
+      variables: { token: contactTokenRes.data!.contactToken.token },
     });
     apolloExpect(addContactRes, 'data', {
       addContact: { ...expectedFormat, _id: friendId, name: friend.name },

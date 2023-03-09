@@ -6,9 +6,7 @@
 
 import { LOCALE } from '@argonne/common';
 import type { LeanDocument } from 'mongoose';
-import request from 'supertest';
 
-import app from '../../app';
 import {
   domain,
   expectedIdFormat,
@@ -40,7 +38,6 @@ const route = 'tenants';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: LeanDocument<UserDocument> | null;
   let rootUser: LeanDocument<UserDocument> | null;
   let htmlUrl: string;
   let logoUrl: string;
@@ -66,15 +63,17 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   };
 
   beforeAll(async () => {
-    ({ normalUser, rootUser } = await jestSetup(['normal', 'root']));
+    ({ rootUser } = await jestSetup(['root']));
   });
 
-  afterAll(async () => Promise.all([jestRemoveObject(htmlUrl), jestRemoveObject(logoUrl), jestTeardown()]));
+  afterAll(async () =>
+    Promise.all([htmlUrl && jestRemoveObject(htmlUrl), logoUrl && jestRemoveObject(logoUrl), jestTeardown()]),
+  );
 
   test('should response a tenant list as guest user', async () => getMany(route, {}, expectedMinFormat, {}));
 
-  test('should pass when ADD, ADD_REMARK, UPDATE, BIND, UNBIND, REMOVE', async () => {
-    expect.assertions(3 * 4 + 3 * 1 + 3 * 3 + 3 + 3 + 1 + 3 + 1 + 6 * 1);
+  test('should pass when ADD, ADD_REMARK, UPDATE, REMOVE', async () => {
+    expect.assertions(3 * 4 + 3 * 1 + 3 * 2 + 6 * 1);
 
     const schools = await School.find({ deletedAt: { $exists: false } }).lean();
 
@@ -188,47 +187,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { ...tenantExtra, htmlUrl: '', logoUrl },
           expectedMinFormat: { ...expectedMinFormat, ...tenantExtra, logoUrl },
         },
-        {
-          action: 'get#sendTestEmail',
-          data: { id: tenantId, email: users[0].emails[0] },
-          expectedResponse: { statusCode: 200, data: { code: MSG_ENUM.COMPLETED } },
-        },
       ],
       { skipAssertion: true, overrideId: tenantId },
     );
-
-    // generate tenantToken (as tenantAdmin)
-    const tokenRes = await request(app)
-      .post(`/api/tenants/token`)
-      .send({ id: tenantId, ...(prob(0.5) && { expiresIn: 3600 }) })
-      .set({ 'Jest-User': users[0]._id });
-    expect(tokenRes.body).toEqual({ data: { token: expect.any(String), expireAt: expect.any(String) } });
-    expect(tokenRes.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(tokenRes.status).toBe(200);
-    const { token } = tokenRes.body.data;
-
-    // bind tenant (as normalUser)
-    const bindRes = await request(app).post('/api/tenants/bind').send({ token }).set({ 'Jest-User': normalUser!._id });
-    expect(bindRes.body).toEqual({ code: MSG_ENUM.COMPLETED });
-    expect(bindRes.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(bindRes.status).toBe(200);
-
-    // check userTenants after binding (as normalUser)
-    const user = await User.findOneActive({ _id: normalUser!._id });
-    expect(idsToString(user!.tenants).includes(tenantId)).toBeTrue();
-
-    // unbind tenant (as newAdmin)
-    const unbindRes = await request(app)
-      .post(`/api/tenants/unbind`)
-      .send({ id: tenantId, userId: normalUser!._id })
-      .set({ 'Jest-User': users[0]._id });
-    expect(unbindRes.body).toEqual({ code: MSG_ENUM.COMPLETED });
-    expect(unbindRes.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(unbindRes.status).toBe(200);
-
-    // check userTenants after unbinding (as normalUser)
-    const unboundUser = await User.findOneActive({ _id: normalUser!._id });
-    expect(idsToString(unboundUser!.tenants).includes(tenantId)).toBeFalse();
 
     // remove
     await createUpdateDelete<TenantDocument>(

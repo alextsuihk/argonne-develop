@@ -7,16 +7,12 @@ import { gql } from 'apollo-server-express';
 export default gql`
   extend type Query {
     tenants(query: QueryInput): [Tenant!]! @cacheControl(maxAge: 3600)
-    tenantToken(id: ID!, expiresIn: Int): TenantToken!
   }
 
   extend type Mutation {
     addTenant(tenant: TenantCoreInput!): Tenant!
     addTenantRemark(id: ID!, remark: String): Tenant!
-    bindTenant(token: String!): StatusResponse!
     removeTenant(id: ID!, remark: String): StatusResponse!
-    sendTestEmail(id: ID!, email: String!): StatusResponse!
-    unbindTenant(id: ID!, userId: String!): StatusResponse!
     updateTenantCore(id: ID!, tenant: TenantCoreInput!): Tenant!
     updateTenantExtra(id: ID!, tenant: TenantExtraInput!): Tenant!
   }
@@ -73,10 +69,5 @@ export default gql`
     createdAt: Float!
     updatedAt: Float!
     deletedAt: Float
-  }
-
-  type TenantToken {
-    token: String!
-    expireAt: Float!
   }
 `;

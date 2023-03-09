@@ -135,7 +135,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     ]);
 
     // clean-up
-    await User.deleteOne({ _id: user._id });
+    await User.deleteOne({ _id: user });
   });
 
   test('should pass the full suite', async () => {

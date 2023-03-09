@@ -4,6 +4,7 @@
  */
 
 import { LOCALE, yupSchema } from '@argonne/common';
+import { addSeconds } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
 import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
@@ -55,11 +56,11 @@ const transform = (
 /**
  * Generate a token with auth-user Id for other to make friend
  */
-const contactToken = async (req: Request, args: unknown): Promise<string> => {
+const createToken = async (req: Request, args: unknown): Promise<{ token: string; expireAt: Date }> => {
   const { userId } = auth(req);
   const { expiresIn = DEFAULTS.CONTACT.TOKEN_EXPIRES_IN } = await optionalExpiresInSchema.validate(args);
 
-  return token.signEvent(userId, 'contact', expiresIn);
+  return { token: await token.signEvent(userId, 'contact', expiresIn), expireAt: addSeconds(new Date(), expiresIn) };
 };
 
 /**
@@ -133,14 +134,14 @@ const create = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl
 };
 
 /**
- * Create New User Contact or Generate Token (RESTful)
+ * Create New User Contact or Create Token (RESTful)
  *
  */
-const createNew: RequestHandler<{ token?: 'token' }> = async (req, res, next) => {
+const createNew: RequestHandler<{ action?: 'createToken' }> = async (req, res, next) => {
   try {
-    req.params.token === 'token'
+    req.params.action === 'createToken'
       ? res.status(200).json({
-          data: await contactToken(
+          data: await createToken(
             req,
             typeof req.body.expiresIn === 'number' ? { expiresIn: Number(req.body.expiresIn) } : {},
           ),
@@ -282,11 +283,11 @@ const updateById: RequestHandler<{ id: string }> = async (req, res, next) => {
 export default {
   create,
   createNew,
+  createToken,
   find,
   findMany,
   findOne,
   findOneById,
-  contactToken,
   remove,
   removeById,
   update,

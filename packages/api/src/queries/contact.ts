@@ -19,8 +19,11 @@ const CONTACT_FIELDS = gql`
 `;
 
 export const GET_CONTACT_TOKEN = gql`
-  query GetContactToken {
-    contactToken
+  query GetContactToken($expiresIn: Int) {
+    contactToken(expiresIn: $expiresIn) {
+      token
+      expireAt
+    }
   }
 `;
 

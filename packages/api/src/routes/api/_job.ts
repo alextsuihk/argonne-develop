@@ -8,6 +8,7 @@
 import { LOCALE } from '@argonne/common';
 import { Router } from 'express';
 
+import configLoader from '../../config/config-loader';
 import Job from '../../models/job';
 import type { UserDocument } from '../../models/user';
 import User from '../../models/user';

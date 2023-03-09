@@ -552,7 +552,7 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
   const [tokensResponse, createdUserReadBack] = await Promise.all([
     token.generate(createdUser, { isPublic, force: true, ip: req.ip, ua: req.ua }),
     User.findOneActive({ _id: createdUser }, userNormalSelect), // read back with proper selected fields
-    mail.confirmEmail(createdUser, email), // send registration confirmation email
+    mail.confirmEmail(name, createdUser.locale, email), // send registration confirmation email
     AuthEvent.log(createdUser._id, 'register', req.ua, req.ip, coordinates),
   ]);
 

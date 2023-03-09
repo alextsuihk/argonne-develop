@@ -10,7 +10,7 @@ import type { LeanDocument, Types } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
-import { expectedIdFormat, FAKE, jestSetup, jestTeardown } from '../../jest';
+import { expectedIdFormat, FAKE, jestSetup, jestTeardown, prob } from '../../jest';
 import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
@@ -63,12 +63,15 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       ._id.toString();
     await cleanUp(normalUser!._id, friendId); // this is unnecessary
 
-    // generate contactToken
-    const tokenRes = await request(app).post('/api/contacts/token').set({ 'Jest-User': friendId });
-    expect(tokenRes.body).toEqual({ data: expect.any(String) });
+    // create contactToken
+    const tokenRes = await request(app)
+      .post('/api/contacts/createToken')
+      .send(prob(0.5) ? { expiresIn: 5 } : {})
+      .set({ 'Jest-User': friendId });
+    expect(tokenRes.body).toEqual({ data: { token: expect.any(String), expireAt: expect.any(String) } });
     expect(tokenRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(tokenRes.status).toBe(200);
-    const token = tokenRes.body.data;
+    const { token } = tokenRes.body.data;
 
     // add contact
     const addRes = await request(app).post(`/api/contacts`).send({ token }).set({ 'Jest-User': normalUser!._id });

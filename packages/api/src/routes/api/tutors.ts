@@ -6,7 +6,6 @@
 
 import { Router } from 'express';
 
-import configLoader from '../../config/config-loader';
 import tutorController from '../../controllers/tutor';
 
 const router = Router();
@@ -26,24 +25,22 @@ router.get('/:id', findOneById);
 
 router.get('/:id', findOneById);
 
-if (configLoader.config.restfulFullAccess) {
-  /**
-   * @route   POST api/tutors
-   * @desc    add a new tutor
-   */
-  router.post('/', createNew);
+/**
+ * @route   POST api/tutors
+ * @desc    add a new tutor
+ */
+router.post('/', createNew);
 
-  /**
-   * @route   PATCH api/tutors/:id
-   * @desc    update a tutor
-   */
-  router.patch('/:id/:action?', updateById);
+/**
+ * @route   PATCH api/tutors/:id
+ * @desc    update a tutor
+ */
+router.patch('/:id/:action?', updateById);
 
-  /**
-   * @route   DELETE api/tutors/:id
-   * @desc    delete a tutor
-   */
-  router.delete('/:id', removeById);
-}
+/**
+ * @route   DELETE api/tutors/:id
+ * @desc    delete a tutor
+ */
+router.delete('/:id', removeById);
 
 export default router;

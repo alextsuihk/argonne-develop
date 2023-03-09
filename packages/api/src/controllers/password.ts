@@ -83,7 +83,7 @@ const resetRequest = async (req: Request, args: unknown): Promise<StatusResponse
     const resetToken = await token.signEvent(user._id, 'password', DEFAULTS.AUTH.PASSWORD_RESET_EXPIRES_IN);
 
     await Promise.all([
-      mail.resetPassword(user, email, resetToken),
+      mail.resetPassword(user.name, user.locale, email, resetToken),
       AuthEvent.log(user._id, 'passwordResetRequest', req.ua, req.ip, null),
     ]);
   }

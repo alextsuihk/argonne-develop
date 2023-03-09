@@ -1,27 +1,20 @@
 /**
- * Apollo TypeDef: Auth (login, register & OAuth2)
+ * Apollo TypeDef: User
  */
 
 import { gql } from 'apollo-server-express';
 
 export default gql`
   extend type Query {
-    isEmailAvailable(email: String!): Boolean
-    tenantToken(id: ID!, expiresIn: Int): TenantToken!
     user(id: ID!): User
     users(query: QueryInput): [User!]!
   }
 
   extend type Mutation {
-    addEmail(email: String!): User!
     addUser(tenantId: String!, email: String!): User!
-    # bindTenant(token: String!): StatusResponse!
-    removeEmail(email: String!): User!
-    # unbindTenant(id: ID!, userId: String!): StatusResponse!
     updateUserNetworkStatus(networkStatus: String!): User!
     updateUserProfile(user: UserProfileInput!): User!
     updateUserSchool(id: ID!, tenantId: String!, year: String!, level: String!, schoolClass: String!): User!
-    verifyEmail(email: String!): StatusResponse!
     verifyId(userId: String!): User!
   }
 

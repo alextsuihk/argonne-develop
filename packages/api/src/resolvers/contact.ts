@@ -9,13 +9,13 @@ import { tryCatch } from './root';
 
 type unk = unknown;
 
-const { find, findOne, create, contactToken, update, remove } = contactController;
+const { find, findOne, create, createToken, update, remove } = contactController;
 
 export default {
   Query: {
     contact: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => findOne(req, args)),
     contacts: async (_: unk, __: unk, { req }: Ctx) => tryCatch(() => find(req)),
-    contactToken: (_: unk, args: unk, { req }: Ctx) => tryCatch(() => contactToken(req, args)),
+    contactToken: (_: unk, args: unk, { req }: Ctx) => tryCatch(() => createToken(req, args)),
   },
   Mutation: {
     addContact: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),

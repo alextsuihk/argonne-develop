@@ -181,10 +181,13 @@ describe('Classroom GraphQL', () => {
     const [subject] = subjects.sort(shuffle);
     const schoolClass = `${level.toString().slice(-1)}-A`;
 
-    const [student0, student1, ...students] = genClassroomUsers(tenantId!, tenant!.school!, level, schoolClass, 30);
-    const [teacher0, ...teachers] = genClassroomUsers(tenantId!, tenant!.school!, teacherLevelId, schoolClass, 3);
+    const newStudents = genClassroomUsers(tenantId!, tenant!.school!, level, schoolClass, 30);
+    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevelId, schoolClass, 3);
 
-    await User.create([student0, student1, ...students, teacher0, ...teachers]);
+    await User.create([...newStudents, ...newTeachers]);
+
+    const [student0, student1, ...students] = newStudents;
+    const [teacher0, ...teachers] = newTeachers;
 
     const student0Id = student0._id.toString();
     const student1Id = student1._id.toString();
@@ -334,6 +337,6 @@ describe('Classroom GraphQL', () => {
     apolloExpect(finalRemovedRes, 'data', { removeClassroom: { code: MSG_ENUM.COMPLETED } });
 
     // clean up
-    await User.deleteMany({ _id: { $in: [...students, ...teachers] } });
+    await User.deleteMany({ _id: { $in: [...newStudents, ...newTeachers] } });
   });
 });

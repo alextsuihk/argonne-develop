@@ -13,6 +13,7 @@ import chatGroupResolvers from './chat-group';
 import classroomResolvers from './classroom';
 import contactResolvers from './contact';
 import districtResolvers from './district';
+import emailResolvers from './email';
 import levelResolvers from './level';
 import passwordResolvers from './password';
 import presignedUrlResolvers from './presigned-url';
@@ -25,6 +26,7 @@ import subjectResolvers from './subject';
 import systemResolvers from './system';
 import tagResolvers from './tag';
 import tenantResolvers from './tenant';
+import tenantBindingResolvers from './tenant-binding';
 import tutorResolvers from './tutor';
 import tutorRankingResolvers from './tutor-ranking';
 import typographyResolvers from './typography';
@@ -42,6 +44,7 @@ export default [
   classroomResolvers,
   contactResolvers,
   districtResolvers,
+  emailResolvers,
   levelResolvers,
   passwordResolvers,
   presignedUrlResolvers,
@@ -52,6 +55,7 @@ export default [
   systemResolvers,
   subjectResolvers,
   tagResolvers,
+  tenantBindingResolvers,
   tenantResolvers,
   typographyResolvers,
   tutorRankingResolvers,

@@ -4,24 +4,20 @@
  */
 
 import { LOCALE, yupSchema } from '@argonne/common';
-import { addSeconds } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
 import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
-import configLoader from '../config/config-loader';
 import DatabaseEvent from '../models/event/database';
 import type { TenantDocument } from '../models/tenant';
 import Tenant, { searchableFields } from '../models/tenant';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';
-import { messageToAdmin, startChatGroup } from '../utils/chat';
-import { idsToString, randomString } from '../utils/helper';
-import { notify } from '../utils/messaging';
+import { messageToAdmin } from '../utils/chat';
+import { randomString } from '../utils/helper';
 import mail from '../utils/sendmail';
 import storage from '../utils/storage';
 import syncSatellite from '../utils/sync-satellite';
-import token from '../utils/token';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -29,21 +25,10 @@ type Action = 'addRemark' | 'updateCore';
 
 const { MSG_ENUM } = LOCALE;
 const { USER } = LOCALE.DB_ENUM;
-const { DEFAULTS } = configLoader;
 
 const { assertUnreachable, auth, hubModeOnly, DELETED, DELETED_LOCALE, isRoot, paginateSort, searchFilter } = common;
-const {
-  emailSchema,
-  idSchema,
-  optionalExpiresInSchema,
-  querySchema,
-  remarkSchema,
-  removeSchema,
-  tenantCoreSchema,
-  tenantExtraSchema,
-  tokenSchema,
-  userIdSchema,
-} = yupSchema;
+const { emailSchema, idSchema, querySchema, remarkSchema, removeSchema, tenantCoreSchema, tenantExtraSchema } =
+  yupSchema;
 
 export const select = (userRoles?: string[]) => `${common.select(userRoles)} -apiKey -meta`;
 
@@ -224,131 +209,6 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 };
 
 /**
- * Send Test Email
- * only tenantAdmins could test email
- */
-const sendTestEmail = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId, userLocale, userName, userRoles } = auth(req);
-  const { id, email } = await emailSchema.concat(idSchema).validate(args);
-  const [user] = await Promise.all([
-    User.findOneActive({ _id: userId }),
-    Tenant.findByTenantId(id, userId, isRoot(userRoles)), // only tenantAdmins or root can proceed
-  ]);
-
-  if (!user || (!user.emails.includes(email.toUpperCase()) && !user.emails.includes(email)))
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const sendSuccess = await mail.testEmail(userName, userLocale, email);
-  if (!sendSuccess) throw { statusCode: 400, code: MSG_ENUM.SENDMAIL_ERROR };
-
-  return { code: MSG_ENUM.COMPLETED };
-};
-
-/**
- * Generate a token with tenantId
- */
-const tenantToken = async (req: Request, args: unknown): Promise<{ token: string; expireAt: Date }> => {
-  const { userId } = auth(req);
-  const { id, expiresIn = DEFAULTS.TENANT.TOKEN_EXPIRES_IN } = await idSchema
-    .concat(optionalExpiresInSchema)
-    .validate(args);
-
-  await Tenant.findByTenantId(id, userId); // only tenant.admins could generate token
-
-  return { token: await token.signEvent(id, 'tenant', expiresIn), expireAt: addSeconds(new Date(), expiresIn) };
-};
-
-const tenantTokenRestApi: RequestHandler = async (req, res, next) => {
-  try {
-    res.status(200).json({ data: await tenantToken(req, req.body) });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * An User binds himself to a tenant
- *  note: user (while at old tenant domain), binds to another tenant
- */
-const tenantBind = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId, userLocale, userName, userTenants } = auth(req);
-  const { token: tenantToken } = await tokenSchema.validate(args);
-  const { id } = await token.verifyEvent(tenantToken, 'tenant');
-  const tenant = await Tenant.findByTenantId(id);
-
-  if (!userTenants.includes(id)) {
-    const msg = {
-      enUS: `${userName} (userId: ${userId}), welcome to join us ${tenant.name.enUS}.`,
-      zhCN: `${userName} (userId: ${userId})，欢迎你加入我们 ${tenant.name.zhCN}。`,
-      zhHK: `${userName} (userId: ${userId})，歡迎你加入我們 ${tenant.name.zhHK}。`,
-    };
-    await Promise.all([
-      User.findByIdAndUpdate(userId, { $push: { tenants: id } }).lean(),
-      startChatGroup(tenant._id, msg, [userId, ...tenant.admins], userLocale, `TENANT#${id}-USER#${userId}`),
-      DatabaseEvent.log(userId, `/users/${userId}`, 'BIND', { tenant: id }),
-      notify([userId], 'RE-AUTH'),
-      syncSatellite({ tenantId: tenant._id, userIds: [userId] }, { userIds: [userId] }),
-    ]);
-  }
-
-  return { code: MSG_ENUM.COMPLETED };
-};
-
-const tenantBindRestApi: RequestHandler = async (req, res, next) => {
-  try {
-    res.status(200).json(await tenantBind(req, req.body));
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Tenant admin unbinding an user
- * ! ONLY tenantAdmins could unbind an user
- */
-const tenantUnbind = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId: adminId, userLocale: adminLocale } = auth(req);
-  const { id, userId } = await idSchema.concat(userIdSchema).validate(args);
-  const [tenant, defaultTenant] = await Promise.all([Tenant.findByTenantId(id, adminId), Tenant.findDefault()]);
-
-  const user = await User.findOneAndUpdate(
-    { _id: userId, tenants: id },
-    { $pull: { tenants: id } },
-    { new: true },
-  ).lean();
-  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  // ensure user is in defaultTenant
-  if (!idsToString(user.tenants).includes(defaultTenant._id.toString()))
-    await User.findOneAndUpdate(
-      { _id: userId, tenants: { $ne: defaultTenant._id } },
-      { $push: { tenants: defaultTenant._id } },
-    ).lean();
-
-  const msg = {
-    enUS: `${user.name}, you have been unbound ${tenant.name.enUS}.`,
-    zhCN: `${user.name}，你已被解除绑定 ${tenant.name.zhCN}。`,
-    zhHK: `${user.name}，你已被解除綁定 ${tenant.name.zhHK}。`,
-  };
-  await Promise.all([
-    startChatGroup(id, msg, [adminId, userId, ...tenant.admins], adminLocale, `TENANT#${id}`),
-    startChatGroup(null, msg, [userId], user.locale, `USER#${user._id}`),
-    DatabaseEvent.log(adminId, `/users/${userId}`, 'UNBIND', { tenant: id, admin: adminId, user: userId }),
-    notify([userId], 'RE-AUTH'),
-    syncSatellite({ tenantId: id, userIds: [userId] }, { userIds: [userId] }),
-  ]);
-
-  return { code: MSG_ENUM.COMPLETED };
-};
-const tenantUnbindRestApi: RequestHandler<{ userId: string }> = async (req, res, next) => {
-  try {
-    res.status(200).json(await tenantUnbind(req, req.body));
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
  * Update Tenant (core)
  * !note: ONLY root could update
  */
@@ -489,13 +349,6 @@ export default {
   findMany,
   remove,
   removeById,
-  sendTestEmail,
-  tenantBind,
-  tenantBindRestApi,
-  tenantToken,
-  tenantTokenRestApi,
-  tenantUnbind,
-  tenantUnbindRestApi,
   updateById,
   updateCore,
   updateExtra,

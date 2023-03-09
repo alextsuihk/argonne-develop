@@ -13,6 +13,7 @@ import classroomTypes from './classroom';
 import contactTypes from './contact';
 import contributionTypes from './contribution';
 import districtTypes from './district';
+import emailTypes from './email';
 import levelTypes from './level';
 import passwordTypes from './password';
 import presignedUrlTypes from './presigned-url';
@@ -26,6 +27,7 @@ import subjectTypes from './subject';
 import systemTypes from './system';
 import tagTypes from './tag';
 import tenantTypes from './tenant';
+import tenantBindingTypes from './tenant-binding';
 import tutorTypes from './tutor';
 import tutorRankingTypes from './tutor-ranking';
 import typographyTypes from './typography';
@@ -43,6 +45,7 @@ export default [
   contactTypes,
   contributionTypes,
   districtTypes,
+  emailTypes,
   levelTypes,
   passwordTypes,
   presignedUrlTypes,
@@ -53,6 +56,7 @@ export default [
   subjectTypes,
   systemTypes,
   tagTypes,
+  tenantBindingTypes,
   tenantTypes,
   classroomTypes,
   typographyTypes,

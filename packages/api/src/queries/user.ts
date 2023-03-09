@@ -1,5 +1,3 @@
-// TODO: WIP: just stated 2021-07-12
-
 /**
  * Apollo Query: User
  *
@@ -106,7 +104,7 @@ export const USER_FIELDS = gql`
   }
 `;
 
-export const ADD__USER = gql`
+export const ADD_USER = gql`
   ${USER_FIELDS}
   mutation AddUser($tenantId: String!, $email: String!) {
     addUser(tenantId: $tenantId, email: $email) {

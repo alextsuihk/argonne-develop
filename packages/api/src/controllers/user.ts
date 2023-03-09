@@ -7,7 +7,6 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import { userIdSchema } from '@argonne/common/src/validators';
-import { addSeconds } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
 import type { LeanDocument, Types, UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
@@ -28,19 +27,14 @@ import type { StatusResponse } from './common';
 import common from './common';
 
 type UpdateAction =
-  | 'addEmail'
   | 'addPaymentMethod'
-  | 'bindTenant'
   | 'clearFeature'
-  | 'removeEmail'
   | 'removePaymentMethod'
   | 'setFeature'
   | 'suspend'
   | 'updateLocale'
   | 'updateNetworkStatus'
   | 'updateSchool'
-  | 'unbindTenant'
-  | 'verifyEmail'
   | 'verifyId';
 
 const { MSG_ENUM } = LOCALE;
@@ -50,7 +44,6 @@ const { assertUnreachable, auth, authGetUser, guest, isRoot, paginateSort, searc
 const {
   emailSchema,
   idSchema,
-  optionalExpiresInSchema,
   querySchema,
   tenantIdSchema,
   tokenSchema,
@@ -137,7 +130,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<UserDoc
  */
 const createNew: RequestHandler = async (req, res, next) => {
   try {
-    res.status(201).json({ data: await create(req, { user: req.body }) });
+    res.status(201).json({ data: await create(req, req.body) });
   } catch (error) {
     next(error);
   }
@@ -233,30 +226,6 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
 };
 
 /**
- *
- * Check if Email is available
- */
-const isEmailAvailable = async (req: Request, args: unknown): Promise<boolean> => {
-  const { email } = await emailSchema.validate(args);
-  const user = await User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, '-id');
-  return !user;
-};
-
-/**
- * TenantAdmin Generate a token (for binding)
- */
-const tenantToken = async (req: Request, args: unknown): Promise<{ token: string; expireAt: Date }> => {
-  const { userId } = auth(req);
-  const { tenantId, expiresIn = DEFAULTS.TENANT.TOKEN_EXPIRES_IN } = await optionalExpiresInSchema
-    .concat(tenantIdSchema)
-    .validate(args);
-
-  await Tenant.findByTenantId(tenantId, userId); // only tenant.admins could generate token
-
-  return { token: await token.signEvent(tenantId, 'tenant', expiresIn), expireAt: addSeconds(new Date(), expiresIn) };
-};
-
-/**
  * Common Code Helper: save update, send notification
  */
 const saveUpdate = async (
@@ -278,43 +247,44 @@ const saveUpdate = async (
 /**
  *  Update Email (add, remove, verify)
  */
-const updateEmail = async (
-  req: Request,
-  args: unknown,
-  action: Extract<UpdateAction, 'addEmail' | 'removeEmail' | 'verifyEmail'>,
-): Promise<LeanDocument<UserDocument>> => {
-  const { userId } = auth(req);
-  const { email } = await emailSchema.validate(args);
+//! TODO: removing !!!
+// const updateEmail = async (
+//   req: Request,
+//   args: unknown,
+//   action: Extract<UpdateAction, 'addEmail' | 'removeEmail' | 'verifyEmail'>,
+// ): Promise<LeanDocument<UserDocument>> => {
+//   const { userId } = auth(req);
+//   const { email } = await emailSchema.validate(args);
 
-  const user =
-    action === 'addEmail'
-      ? await User.findOneAndUpdate(
-          { _id: userId, emails: { $nin: [email, email.toUpperCase()] } },
-          { $push: { emails: email.toUpperCase() } },
-          { fields: userNormalSelect, new: true },
-        ).lean()
-      : action == 'removeEmail'
-      ? await User.findOneAndUpdate(
-          { _id: userId, emails: { $in: [email, email.toUpperCase()] } },
-          { $pull: { emails: { $in: [email, email.toUpperCase()] } } },
-          { fields: userNormalSelect, new: true },
-        ).lean()
-      : await User.findOneAndUpdate(
-          { _id: userId, emails: { $in: [email, email.toUpperCase()] } },
-          { 'email.$': email },
-          { fields: userNormalSelect, new: true },
-        ).lean();
-  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+//   const user =
+//     action === 'addEmail'
+//       ? await User.findOneAndUpdate(
+//           { _id: userId, emails: { $nin: [email, email.toUpperCase()] } },
+//           { $push: { emails: email.toUpperCase() } },
+//           { fields: userNormalSelect, new: true },
+//         ).lean()
+//       : action == 'removeEmail'
+//       ? await User.findOneAndUpdate(
+//           { _id: userId, emails: { $in: [email, email.toUpperCase()] } },
+//           { $pull: { emails: { $in: [email, email.toUpperCase()] } } },
+//           { fields: userNormalSelect, new: true },
+//         ).lean()
+//       : await User.findOneAndUpdate(
+//           { _id: userId, emails: { $in: [email, email.toUpperCase()] } },
+//           { 'email.$': email },
+//           { fields: userNormalSelect, new: true },
+//         ).lean();
+//   if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await Promise.all([
-    notify([userId], 'RE-AUTH'), // force all sessions (access tokens) to reload user
-    DatabaseEvent.log(userId, `/users/${userId}`, action, { email }),
-    syncSatellite({ userIds: [userId.toString()] }, { userIds: [userId] }),
-    action === 'addEmail' && mail.confirmEmail(user, email),
-  ]);
+//   await Promise.all([
+//     notify([userId], 'RE-AUTH'), // force all sessions (access tokens) to reload user
+//     DatabaseEvent.log(userId, `/users/${userId}`, action, { email }),
+//     syncSatellite({ userIds: [userId.toString()] }, { userIds: [userId] }),
+//     action === 'addEmail' && mail.confirmEmail(user, email),
+//   ]);
 
-  return user;
-};
+//   return user;
+// };
 
 /**
  * updateFeature
@@ -509,31 +479,32 @@ const updateSchool = async (req: Request, args: unknown): Promise<LeanDocument<U
 /**
  * Confirm email is valid
  */
-const verifyEmail = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  guest(req);
-  const { token: confirmToken } = await tokenSchema.validate(args);
-  const { id: email } = await token.verifyEvent(confirmToken, 'email');
+// !TODO
+// const verifyEmail = async (req: Request, args: unknown): Promise<StatusResponse> => {
+//   guest(req);
+//   const { token: confirmToken } = await tokenSchema.validate(args);
+//   const { id: email } = await token.verifyEvent(confirmToken, 'email');
 
-  // TODO: debug
-  // const original = await User.findOneActive({ emails: { $in: [email, email.toUpperCase()] }  });
-  // console.log('verifyEmail original User.emails', original?.emails);
+//   // TODO: debug
+//   // const original = await User.findOneActive({ emails: { $in: [email, email.toUpperCase()] }  });
+//   // console.log('verifyEmail original User.emails', original?.emails);
 
-  // if (!user) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
-  // // TODO:
-  // const user = await User.findOneActive({ emails: { $in: [email, email.toUpperCase()] }  });
+//   // if (!user) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
+//   // // TODO:
+//   // const user = await User.findOneActive({ emails: { $in: [email, email.toUpperCase()] }  });
 
-  const user = await User.findOneAndUpdate(
-    { emails: { $in: [email, email.toUpperCase()] } },
-    { $set: { 'emails.$': email } },
-    { fields: userNormalSelect, new: true },
-  ).lean();
-  if (!user) throw { statusCode: 422, code: MSG_ENUM.TOKEN_ERROR };
+//   const user = await User.findOneAndUpdate(
+//     { emails: { $in: [email, email.toUpperCase()] } },
+//     { $set: { 'emails.$': email } },
+//     { fields: userNormalSelect, new: true },
+//   ).lean();
+//   if (!user) throw { statusCode: 422, code: MSG_ENUM.TOKEN_ERROR };
 
-  await syncSatellite({ userIds: [user._id.toString()] }, { userIds: [user._id.toString()] });
-  console.log('verifyEmail updated User.emails', user?.emails, email);
+//   await syncSatellite({ userIds: [user._id.toString()] }, { userIds: [user._id.toString()] });
+//   console.log('verifyEmail updated User.emails', user?.emails, email);
 
-  return { code: MSG_ENUM.COMPLETED };
-};
+//   return { code: MSG_ENUM.COMPLETED };
+// };
 
 /**
  * Verify UserId
@@ -559,32 +530,6 @@ const verifyId = async (req: Request, args: unknown): Promise<LeanDocument<UserD
 };
 
 /**
- * Get Actions (RESTful)
- */
-const getAction: RequestHandler<{
-  action: 'isEmailAvailable' | 'tenantToken';
-  extra?: string;
-  extra2?: string;
-}> = async (req, res, next) => {
-  const { action, extra, extra2 } = req.params;
-
-  try {
-    switch (action) {
-      case 'isEmailAvailable':
-        return res.status(200).json({ data: await isEmailAvailable(req, { email: extra }) });
-      case 'tenantToken':
-        return res.status(200).json({
-          data: await tenantToken(req, { tenantId: extra, ...(Number(extra2) && { expiresIn: Number(extra2) }) }),
-        });
-      default:
-        assertUnreachable(action);
-    }
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
  * Update UserDocument (RESTful)
  */
 const updateAction: RequestHandler<{ action?: UpdateAction }> = async (req, res, next) => {
@@ -594,17 +539,9 @@ const updateAction: RequestHandler<{ action?: UpdateAction }> = async (req, res,
     switch (action) {
       case undefined:
         return res.status(200).json({ data: await updateProfile(req, req.body) });
-      case 'addEmail':
-      case 'removeEmail':
-        return res.status(200).json({ data: await updateEmail(req, req.body, action) });
       case 'addPaymentMethod':
       case 'removePaymentMethod':
         return res.status(200).json({ data: await updatePaymentMethod(req, req.body, action) });
-      case 'bindTenant':
-        console.log(
-          'bindTenant, !!!!! auto unbind other school-tenants, and $push: {studentIds: `schoolId#studentId`}',
-        );
-        break;
       case 'clearFeature':
       case 'setFeature':
         return res.status(200).json({ data: await updateFeature(req, req.body, action) });
@@ -617,11 +554,6 @@ const updateAction: RequestHandler<{ action?: UpdateAction }> = async (req, res,
         return res.status(200).json({ data: await updateNetworkStatus(req, req.body) });
       case 'updateSchool':
         return res.status(200).json({ data: await updateSchool(req, req.body) });
-      case 'unbindTenant':
-        console.log('WIP');
-        break;
-      case 'verifyEmail':
-        return res.status(200).json({ data: await verifyEmail(req, req.body) });
       case 'verifyId':
         return res.status(200).json({ data: await verifyId(req, req.body) });
       default:
@@ -639,15 +571,10 @@ export default {
   findMany,
   findOne,
   findOneById,
-  getAction,
-  isEmailAvailable,
-  tenantToken,
-  updateEmail,
   updateNetworkStatus,
   updatePaymentMethod,
   updateProfile,
   updateAction,
   updateSchool,
-  verifyEmail,
   verifyId,
 };

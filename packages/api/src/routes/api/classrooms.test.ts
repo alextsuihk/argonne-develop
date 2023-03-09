@@ -110,9 +110,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const [subject] = subjects.sort(shuffle);
     const schoolClass = `${level.toString().slice(-1)}-A`;
 
-    const [student0, ...students] = genClassroomUsers(tenantId!, tenant!.school!, level, schoolClass, 20);
-    const [teacher0, ...teachers] = genClassroomUsers(tenantId!, tenant!.school!, teacherLevelId, schoolClass, 3);
-    await User.create([student0, ...students, teacher0, ...teachers]);
+    const newStudents = genClassroomUsers(tenantId!, tenant!.school!, level, schoolClass, 20);
+    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevelId, schoolClass, 3);
+    await User.create([...newStudents, ...newTeachers]);
+
+    const [student0, ...students] = newStudents;
+    const [teacher0, ...teachers] = newTeachers;
 
     const create = {
       level: level.toString(),
@@ -213,6 +216,6 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
 
     // clean up
-    await User.deleteMany({ _id: { $in: [...students, ...teachers] } });
+    await User.deleteMany({ _id: { $in: [...newStudents, ...newTeachers] } });
   });
 });

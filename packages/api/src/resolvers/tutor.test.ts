@@ -188,7 +188,7 @@ describe('Tutor GraphQL', () => {
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
 
     // clean-up
-    await User.deleteOne({ _id: user._id });
+    await User.deleteOne({ _id: user });
   });
 
   test('should pass the full suite', async () => {
@@ -320,7 +320,7 @@ describe('Tutor GraphQL', () => {
     });
 
     // final, clean up
-    await User.deleteOne({ _id: user._id });
+    await User.deleteOne({ _id: user });
   });
 
   test('should fail when adding specialty without lang, level, subject', async () => {

@@ -72,7 +72,7 @@ const fake = async (code: string, assignedServices: string[], levelGroups?: stri
   });
 
   // Part2: create tenantAdmins & other users
-  const tenantAdmins = Array(2)
+  const tenantAdmins = Array(2) // 2 tenantAdmins are needed to JEST test (1 for apollo, 1 for REST, testing in parallel)
     .fill(0)
     .map(
       (_, idx) =>
@@ -83,7 +83,7 @@ const fake = async (code: string, assignedServices: string[], levelGroups?: stri
           name: `${code} tenantAdmin (${idx + 1})`,
           formalName: { enUS: `${code}-${idx}`, zhCN: `${code}-${idx}`, zhHK: `${code}-${idx}` },
           scopes: ['systems:r'],
-          emails: [`${code}-tenantAdmin${idx}@${DEFAULTS.DOMAIN}`],
+          emails: [`${code.toLowerCase()}-tenant-admin${idx}@${DEFAULTS.DOMAIN}`],
           password: User.genValidPassword(`${code}_`),
           identifiedAt: new Date(),
         }),

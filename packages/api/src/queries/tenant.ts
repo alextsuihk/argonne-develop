@@ -61,15 +61,6 @@ export const ADD_TENANT_REMARK = gql`
   }
 `;
 
-export const BIND_TENANT = gql`
-  ${STATUS_RESPONSE}
-  mutation BindTenant($token: String!) {
-    bindTenant(token: $token) {
-      ...StatusResponse
-    }
-  }
-`;
-
 export const GET_TENANTS = gql`
   ${TENANT_FIELDS}
   query GetTenants($query: QueryInput) {
@@ -79,37 +70,10 @@ export const GET_TENANTS = gql`
   }
 `;
 
-export const GET_TENANT_TOKEN = gql`
-  query GetTenantToken($id: ID!, $expiresIn: Int) {
-    tenantToken(id: $id, expiresIn: $expiresIn) {
-      token
-      expireAt
-    }
-  }
-`;
-
 export const REMOVE_TENANT = gql`
   ${STATUS_RESPONSE}
   mutation RemoveTenant($id: ID!, $remark: String) {
     removeTenant(id: $id, remark: $remark) {
-      ...StatusResponse
-    }
-  }
-`;
-
-export const SEND_TEST_EMAIL = gql`
-  ${STATUS_RESPONSE}
-  mutation SendTestEmail($id: ID!, $email: String!) {
-    sendTestEmail(id: $id, email: $email) {
-      ...StatusResponse
-    }
-  }
-`;
-
-export const UNBIND_TENANT = gql`
-  ${STATUS_RESPONSE}
-  mutation UnbindTenant($id: ID!, $userId: String!) {
-    unbindTenant(id: $id, userId: $userId) {
       ...StatusResponse
     }
   }

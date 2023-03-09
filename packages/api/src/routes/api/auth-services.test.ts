@@ -1,5 +1,5 @@
 /**
- * JEST Test: check /api/auth-service/*
+ * JEST Test: check /api/auth-services/*
  *
  */
 
@@ -13,7 +13,7 @@ import Tenant from '../../models/tenant';
 const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
-describe('Auth-Service API (token)', () => {
+describe('Auth-Services API (token)', () => {
   let accessToken: string;
 
   const { email, name, password } = uniqueTestUser();
@@ -39,7 +39,7 @@ describe('Auth-Service API (token)', () => {
     expect.assertions(3);
 
     const cascade = await Tenant.findOne({ code: 'CASCADE' });
-    const res = await request(app).post(`/api/auth-service`).send({ email, password, apiKey: cascade?.apiKey });
+    const res = await request(app).post(`/api/auth-services`).send({ email, password, apiKey: cascade?.apiKey });
 
     expect(res.body).toEqual({
       data: {
@@ -60,7 +60,7 @@ describe('Auth-Service API (token)', () => {
     expect.assertions(3 * 2);
 
     // post /auth-service without apiKey
-    const res1 = await request(app).post(`/api/auth-service`).send({ email, password });
+    const res1 = await request(app).post(`/api/auth-services`).send({ email, password });
     expect(res1.body).toEqual({
       errors: [{ code: MSG_ENUM.USER_INPUT_ERROR, param: 'apiKey' }],
       type: 'yup',
@@ -70,7 +70,7 @@ describe('Auth-Service API (token)', () => {
     expect(res1.status).toBe(422);
 
     // post /auth-service with invalid apiKey
-    const res2 = await request(app).post(`/api/auth-service`).send({ email, password, apiKey: 'WRONG' });
+    const res2 = await request(app).post(`/api/auth-services`).send({ email, password, apiKey: 'WRONG' });
     expect(res2.body).toEqual({ errors: [{ code: MSG_ENUM.TENANT_ERROR }], type: 'plain', statusCode: 400 });
     expect(res2.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res2.status).toBe(400);

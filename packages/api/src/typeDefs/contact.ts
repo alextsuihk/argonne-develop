@@ -8,7 +8,7 @@ export default gql`
   extend type Query {
     contact(id: ID!): Contact
     contacts: [Contact!]!
-    contactToken: String!
+    contactToken(expiresIn: Int): TokenWithExpireAt!
   }
 
   extend type Mutation {
