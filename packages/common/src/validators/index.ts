@@ -229,7 +229,7 @@ export const optionalIdSchema = yup.object({ id: optionalId });
 export const optionalTimestampSchema = yup.object({ timestamp: yup.date().optional() });
 export const optionalTitleSchema = yup.object({ title: yup.string().trim().optional() });
 export const passwordChangeSchema = yup.object({
-  currPassword: password,
+  currPassword: yup.string().trim().required(),
   newPassword: password,
   refreshToken: yup.string().trim().required(),
   coordinates,

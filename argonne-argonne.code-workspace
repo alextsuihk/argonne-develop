@@ -6,6 +6,16 @@
   ],
   "settings": {
     "typescript.tsdk": "node_modules\\typescript\\lib",
-    "cSpell.words": ["bootcamp", "codegen", "Codegen", "languagedetector", "loglevel", "minio", "upsert", "webpush"]
+    "cSpell.words": [
+      "bootcamp",
+      "codegen",
+      "Codegen",
+      "languagedetector",
+      "loglevel",
+      "minio",
+      "upsert",
+      "webpush",
+      "yarnpkg"
+    ]
   }
 }

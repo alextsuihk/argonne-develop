@@ -1,5 +1,15 @@
 ### TODO List
 
+userController
+findMany (tenantAdmin, or, admin could fetch users without tenant )
+
+const userTenantSelect = '\_id name emails avatarUrl histories'
+const userSchoolSelect = `${userNonSchoolSelect} history`
+
+passwordController add forceChange = (newPassword) => Promise<StatusResponse>
+
+####
+
 ### API
 
 - HUB, tenant.version = satelliteVersion, pause sync if outdated.

@@ -5,6 +5,7 @@
 
 import { gql } from 'apollo-server-core';
 
+import { STATUS_RESPONSE } from './common';
 import { USER_FIELDS } from './user';
 
 export const BIND_TENANT = gql`
@@ -26,10 +27,10 @@ export const GET_TENANT_TOKEN = gql`
 `;
 
 export const UNBIND_TENANT = gql`
-  ${USER_FIELDS}
+  ${STATUS_RESPONSE}
   mutation UnbindTenant($tenantId: String!, $userId: String!) {
     unbindTenant(tenantId: $tenantId, userId: $userId) {
-      ...UserFields
+      ...StatusResponse
     }
   }
 `;

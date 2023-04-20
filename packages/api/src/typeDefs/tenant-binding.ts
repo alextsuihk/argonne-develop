@@ -11,6 +11,6 @@ export default gql`
 
   extend type Mutation {
     bindTenant(token: String!): User!
-    unbindTenant(tenantId: String!, userId: String!): User!
+    unbindTenant(tenantId: String!, userId: String!): StatusResponse!
   }
 `;

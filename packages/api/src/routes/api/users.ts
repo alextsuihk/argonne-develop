@@ -26,7 +26,7 @@ router.get('/:id', findOneById);
 
 /**
  * @route   POST api/users
- * @desc    add a new user (by tenantAdmin, root), or check isEmailAvailable
+ * @desc    add a new user (by tenantAdmin, root)
  */
 router.post('/:action?', createNew);
 

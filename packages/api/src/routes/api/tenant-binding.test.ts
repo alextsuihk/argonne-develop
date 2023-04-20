@@ -104,7 +104,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       .delete('/api/tenant-binding')
       .send({ tenantId: tenantId!, userId: user._id })
       .set({ 'Jest-User': tenantAdmin!._id });
-    expect(unBindRes.body).toEqual({ data: expect.objectContaining({ ...expectedUserFormat, tenants: [] }) });
+    expect(unBindRes.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(unBindRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(unBindRes.status).toBe(200);
 

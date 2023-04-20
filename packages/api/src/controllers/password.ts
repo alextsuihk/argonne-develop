@@ -19,6 +19,7 @@ import common from './common';
 type PostAction = 'change' | 'reset-confirm' | 'reset-request';
 
 const { MSG_ENUM } = LOCALE;
+const { USER } = LOCALE.DB_ENUM;
 const { assertUnreachable, auth, authGetUser, guest } = common;
 const { DEFAULTS } = configLoader;
 const { emailSchema, passwordChangeSchema, passwordConfirmResetSchema } = yupSchema;
@@ -39,7 +40,7 @@ const change = async (req: Request, args: unknown): Promise<StatusResponse> => {
     throw { statusCode: 401, code: MSG_ENUM.AUTH_CREDENTIALS_ERROR };
 
   await Promise.all([
-    User.findByIdAndUpdate(user, { password: newPassword }), // encrypting password in model
+    User.findByIdAndUpdate(user, { password: newPassword, $pull: { flags: USER.FLAG.REQUIRE_PASSWORD_CHANGE } }), // encrypting password in model
     token.revokeOthers(user._id, refreshToken), // revoke others JWT
     AuthEvent.log(user._id, 'passwordChange', req.ua, req.ip, coordinates),
     syncSatellite({ userIds: [userId] }, { userIds: [userId] }),

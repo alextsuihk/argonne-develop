@@ -36,7 +36,7 @@ router.post('/:action?', async (req, res, next) => {
  */
 router.delete('/', async (req, res, next) => {
   try {
-    res.status(200).json({ data: await unbind(req, req.body) });
+    res.status(200).json(await unbind(req, req.body));
   } catch (error) {
     next(error);
   }

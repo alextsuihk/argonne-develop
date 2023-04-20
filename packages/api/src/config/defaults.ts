@@ -141,7 +141,7 @@ export default {
   },
 
   TENANT: {
-    TOKEN_EXPIRES_IN: 60 * 60 * 24, // expires in a day
+    TOKEN_EXPIRES_IN: 60 * 60 * 24 * 7, // expires in 7 day
   },
 
   DARK_MODE: false,

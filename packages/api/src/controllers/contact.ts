@@ -50,7 +50,7 @@ const transform = (
   name: name ?? friend.name,
   identifiedAt: friend.identifiedAt,
   status: friend.networkStatus ?? friend.isOnline ? USER.NETWORK_STATUS.ONLINE : USER.NETWORK_STATUS.OFFLINE,
-  tenants: idsToString(user.tenants).filter(x => idsToString(friend.tenants).includes(x)),
+  tenants: idsToString(user.tenants).filter(x => idsToString(friend.tenants).includes(x)), // only show intersected tenant
 });
 
 /**

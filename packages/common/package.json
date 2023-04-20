@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "localized messages (API & database) shared among back-end & front-end",
   "keywords": [],
-  "author": "Alex Tsui <alex.wt.tsui@gmail.com>",
+  "author": "Alex Tsui <alex@inspire.hk>",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

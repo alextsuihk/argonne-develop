@@ -135,10 +135,11 @@ const findCommonFilter = async (req: Request, args: unknown) => {
     Tenant.find({ admins: userId }).lean(),
   ]);
 
+  const valid = { deletedAt: { $exists: false } };
   return searchFilter<ClassroomDocument>(
     searchableFields,
     { query },
-    { $or: [{ teachers: userId }, { students: userId }, { tenant: { $in: adminTenants } }] },
+    { $or: [{ teachers: userId, ...valid }, { students: userId, ...valid }, { tenant: { $in: adminTenants } }] },
   );
 };
 

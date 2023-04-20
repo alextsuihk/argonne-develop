@@ -7,7 +7,7 @@ import { LOCALE } from '@argonne/common';
 import request from 'supertest';
 
 import app from '../../app';
-import { expectedIdFormat, jestSetup, jestTeardown, uniqueTestUser } from '../../jest';
+import { expectedUserFormat, jestSetup, jestTeardown, uniqueTestUser } from '../../jest';
 import Tenant from '../../models/tenant';
 
 const { MSG_ENUM } = LOCALE;
@@ -44,9 +44,9 @@ describe('Auth-Services API (token)', () => {
     expect(res.body).toEqual({
       data: {
         user: expect.objectContaining({
-          _id: expectedIdFormat,
-          tenants: expect.arrayContaining([expect.any(String)]),
-          name: expect.any(String),
+          _id: expectedUserFormat._id,
+          tenants: expectedUserFormat.tenants,
+          name: expectedUserFormat.name,
           password: expect.stringContaining('*'),
           // avatarUrl: expect.any(String), // could be undefined
         }),

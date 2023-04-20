@@ -71,7 +71,7 @@ if (isProdMode)
  *
  * encapsulate error message, match the format of Express-Validator, { errors: [{code: number}] }
  */
-app.use(async (err: ControllerError, req: Request, res: Response, next: NextFunction) => {
+app.use(async (err: ControllerError, req: Request, res: Response, _next: NextFunction) => {
   const error = await formatError(req, err);
   res.status(error.statusCode).json(error);
 });

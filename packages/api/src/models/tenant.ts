@@ -48,7 +48,7 @@ interface TenantModel extends Model<TenantDocument> {
     adminId?: string | Types.ObjectId,
     isAdmin?: boolean,
   ): Promise<LeanDocument<TenantDocument>>;
-  findDefault(): Promise<LeanDocument<TenantDocument>>;
+  findTutor(): Promise<LeanDocument<TenantDocument>>;
   findPrimary(): Promise<LeanDocument<TenantDocument> | null>;
   findSatellites(): Promise<LeanDocument<TenantDocument>[]>;
 }
@@ -113,27 +113,27 @@ tenantSchema.static(
 );
 
 /**
- * Find the defaultTenant
+ * Find the tutorTenant
  */
-// tenantSchema.static('findDefault', async (): Promise<LeanDocument<TenantDocument>> => {
-//   const defaultTenant =
+// tenantSchema.static('findTutor', async (): Promise<LeanDocument<TenantDocument>> => {
+//   const tutorTenant =
 //     (await redisCache.get<LeanDocument<TenantDocument>>('default-tenant')) ??
 //     (await redisCache.set<LeanDocument<TenantDocument>>(
 //       'default-tenant',
 //       await Tenant.findOne({ code: 'TUTOR' }).lean(),
 //     ));
 
-//   if (!defaultTenant) throw { statusCode: 500, code: MSG_ENUM.TENANT_ERROR };
-//   return defaultTenant;
+//   if (!tutorTenant) throw { statusCode: 500, code: MSG_ENUM.TENANT_ERROR };
+//   return tutorTenant;
 // });
-tenantSchema.static('findDefault', async (): Promise<LeanDocument<TenantDocument>> => {
-  const defaultTenant = await Tenant.findOne({ code: 'TUTOR' }).lean();
-  if (!defaultTenant) throw { statusCode: 500, code: MSG_ENUM.TENANT_ERROR };
-  return defaultTenant;
+tenantSchema.static('findTutor', async (): Promise<LeanDocument<TenantDocument>> => {
+  const tutorTenant = await Tenant.findOne({ code: 'TUTOR' }).lean();
+  if (!tutorTenant) throw { statusCode: 500, code: MSG_ENUM.TENANT_ERROR };
+  return tutorTenant;
 });
 
 tenantSchema.static('findPrimary', async () =>
-  config.mode === 'HUB' ? Tenant.findDefault() : Tenant.findOne({ code: { $ne: 'TUTOR' } }).lean(),
+  config.mode === 'HUB' ? Tenant.findTutor() : Tenant.findOne({ code: { $ne: 'TUTOR' } }).lean(),
 );
 
 /**

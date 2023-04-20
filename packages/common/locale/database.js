@@ -326,6 +326,8 @@ module.exports = {
 
     FLAG: {
       EDA,
+      REQUIRE_PASSWORD_CHANGE: { enUS: 'Require Password Change' },
+      SCHOOL_LOCK: { enUS: 'School Lock' }, // not allow to bind another school
       // TRUSTED_ADVERTISER: { enUS: 'Trusted Advertiser', zhHK: '高信譽廣告商', zhCN: '高信誉广告商' },
       // TRUSTED_ORGANIZER: { enUS: 'Trusted Event Organizer', zhHK: '高信譽活動主辦者', zhCN: '高信誉活动主办者' },
       // TRUSTED_TUTOR: { enUS: 'Trusted Tutor', zhHK: '高信譽導師', zhCN: '高信誉导师' },

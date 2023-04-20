@@ -83,9 +83,7 @@ describe('TenantBinding GraphQL', () => {
       query: UNBIND_TENANT,
       variables: { tenantId: tenantId!, userId: user._id.toString() },
     });
-    apolloExpect(unBindRes, 'data', {
-      unbindTenant: expect.objectContaining({ ...expectedUserFormatApollo, tenants: [] }),
-    });
+    apolloExpect(unBindRes, 'data', { unbindTenant: { code: MSG_ENUM.COMPLETED } });
   });
 
   test('should fail when creating a tenantToken with invalid parameters', async () => {

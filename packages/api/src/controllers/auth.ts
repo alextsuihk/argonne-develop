@@ -421,8 +421,8 @@ const oAuth2 = async (req: Request, args: unknown): Promise<AuthResponse> => {
 
   // otherwise, try to register
   hubModeOnly();
-  const [defaultTenant, oAuthTaken] = await Promise.all([Tenant.findDefault(), User.exists({ oAuth2s: oAuthId })]);
-  if (oAuthTaken) throw { statusCode: 400, code: MSG_ENUM.AUTH_OAUTH_ALREADY_REGISTERED };
+  const isOAuthTaken = await User.exists({ oAuth2s: oAuthId });
+  if (isOAuthTaken) throw { statusCode: 400, code: MSG_ENUM.AUTH_OAUTH_ALREADY_REGISTERED };
 
   // if user does not exists, create new user
   const createdUser = new User<Partial<UserDocument>>({
@@ -432,7 +432,7 @@ const oAuth2 = async (req: Request, args: unknown): Promise<AuthResponse> => {
     ...(oAuthPayload.avatarUrl && { avatarUrl: await storage.fetchToLocal(oAuthPayload.avatarUrl) }),
     password: User.genValidPassword(), // generate a valid , but random password
     flags: DEFAULTS.USER.FLAGS,
-    tenants: [defaultTenant._id],
+    tenants: [], // non school-created users has no tenants
   });
   await createdUser.save();
 
@@ -533,10 +533,7 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
   await authenticateClient(clientHash);
 
   // check if email already exists
-  const [existingUser, defaultTenant] = await Promise.all([
-    User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, '_id'), // check if either lowerCase() or upperCase() email is taken
-    Tenant.findDefault(),
-  ]);
+  const existingUser = await User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, '_id'); // check if either lowerCase() or upperCase() email is taken
   if (existingUser) throw { statusCode: 400, code: MSG_ENUM.AUTH_EMAIL_ALREADY_REGISTERED };
 
   // create a new user & store into database, password encryption is achieved in model hook
@@ -546,7 +543,7 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
     password,
     flags: DEFAULTS.USER.FLAGS,
     roles: [],
-    tenants: [defaultTenant._id],
+    tenants: [], // non school-created users has no tenants
   });
 
   const [tokensResponse, createdUserReadBack] = await Promise.all([

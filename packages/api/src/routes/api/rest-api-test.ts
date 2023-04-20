@@ -189,6 +189,7 @@ const getMany = async <T>(
   if (testGetById) {
     if (!allDocs.length) throw `rest-api-test.ts:${route} getMany() return empty array`;
     const randomItemId = randomId(allDocs);
+
     const getByIdRes = await request(app).get(`/api/${route}/${randomItemId}`).set(headers);
     expect(getByIdRes.body).toEqual({ data: expect.objectContaining(expectedMinFormat) });
     expect(getByIdRes.header['content-type']).toBe('application/json; charset=utf-8');

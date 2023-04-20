@@ -120,7 +120,7 @@ const { MSG_ENUM } = LOCALE;
 const { SYSTEM, USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
 
-const searchFields: string[] = ['name', 'emails', 'mobile', 'whatsapp', 'tenant']; // non internationalized fields
+const searchFields: string[] = ['_id', 'name', 'emails', 'mobile', 'whatsapp', 'tenant']; // non internationalized fields
 const searchLocaleFields: string[] = ['formalName']; // internationalized fields
 export const searchableFields = [
   ...searchFields,
@@ -130,6 +130,7 @@ export const searchableFields = [
 export const userAdminSelect = '-__v -password -tags -idx -tokens -apiKeys.value -estimate -contacts';
 export const userNormalSelect = `${userAdminSelect} -remarks -deletedAt`;
 export const userLoginSelect = `${userNormalSelect.replace('-password ', '')}`; // get password
+export const userTenantSelect = '_id flags tenants name emails avatarUrl studentIds histories';
 
 const userSchema = new Schema<UserDocument>(
   {

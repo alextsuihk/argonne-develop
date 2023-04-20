@@ -133,7 +133,7 @@ describe('Email API Routes', () => {
 
     // check update user email
     const user = await User.findById(_id, 'emails').lean();
-    expect(user!.emails.some(e => e === email.toLowerCase())).toBeTrue();
+    expect(user!.emails.includes(email.toLowerCase())).toBeTrue();
 
     // clean-up (undo verification, restore original values [uppercase or lowercase case])
     await User.findByIdAndUpdate(_id, { emails }).lean();

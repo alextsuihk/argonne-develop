@@ -11,13 +11,12 @@ import type { LeanDocument } from 'mongoose';
 import configLoader from '../config/config-loader';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
-import { UserDocument, userNormalSelect } from '../models/user';
-import User from '../models/user';
+import User, { UserDocument, userNormalSelect } from '../models/user';
 import { startChatGroup } from '../utils/chat';
-import { idsToString } from '../utils/helper';
 import { notify } from '../utils/messaging';
 import syncSatellite from '../utils/sync-satellite';
 import token from '../utils/token';
+import type { StatusResponse } from './common';
 import common from './common';
 
 const { MSG_ENUM } = LOCALE;
@@ -34,11 +33,12 @@ export const select = (userRoles?: string[]) => `${common.select(userRoles)} -ap
  */
 const bind = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
   const { userId, userLocale, userName, userTenants } = auth(req);
-  const { token: tenantToken } = await tokenSchema.validate(args);
-  const { id } = await token.verifyEvent(tenantToken, 'tenant');
-  const tenant = await Tenant.findByTenantId(id);
+  const { token: tok } = await tokenSchema.validate(args);
+  const { id } = await token.verifyEvent(tok, 'tenant');
 
-  if (userTenants.includes(id)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  const [tenantId, studentId] = id.split('#');
+  if (!tenantId || userTenants.includes(tenantId)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  const tenant = await Tenant.findByTenantId(tenantId);
 
   const msg = {
     enUS: `${userName} (userId: ${userId}), welcome to join us ${tenant.name.enUS}.`,
@@ -46,9 +46,18 @@ const bind = async (req: Request, args: unknown): Promise<LeanDocument<UserDocum
     zhHK: `${userName} (userId: ${userId})，歡迎你加入我們 ${tenant.name.zhHK}。`,
   };
   const [user] = await Promise.all([
-    User.findByIdAndUpdate(userId, { $push: { tenants: id } }, { fields: userNormalSelect, new: true }).lean(),
-    startChatGroup(tenant._id, msg, [userId, ...tenant.admins], userLocale, `TENANT#${id}-USER#${userId}`),
-    DatabaseEvent.log(userId, `/users/${userId}`, 'BIND', { tenant: id }),
+    User.findByIdAndUpdate(
+      userId,
+      {
+        $push: {
+          tenants: tenant.school ? { $each: [tenantId], $position: 0 } : tenantId, // if tenant is a school, it becomes the primary tenant (tenants[0])
+          ...(tenant.school && studentId && { studentIds: { $each: [`${tenantId}#${studentId}`], $position: 0 } }),
+        },
+      },
+      { fields: userNormalSelect, new: true },
+    ).lean(),
+    startChatGroup(tenant._id, msg, [userId, ...tenant.admins], userLocale, `TENANT#${studentId}-USER#${userId}`),
+    DatabaseEvent.log(userId, `/users/${userId}`, 'BIND', { tenant: tenantId }),
     notify([userId], 'RE-AUTH'),
     syncSatellite({ tenantId: tenant._id, userIds: [userId] }, { userIds: [userId] }),
   ]);
@@ -71,12 +80,12 @@ const createToken = async (req: Request, args: unknown): Promise<{ token: string
 
 /**
  * Tenant admin unbinding an user
- * ! ONLY tenantAdmins could unbind an user
+ * ! ONLY tenantAdmins could unbind an user (remove user from tenant)
  */
-const unbind = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
+const unbind = async (req: Request, args: unknown): Promise<StatusResponse> => {
   const { userId: adminId, userLocale: adminLocale } = auth(req);
   const { tenantId, userId } = await tenantIdSchema.concat(userIdSchema).validate(args);
-  const [tenant, defaultTenant] = await Promise.all([Tenant.findByTenantId(tenantId, adminId), Tenant.findDefault()]);
+  const tenant = await Tenant.findByTenantId(tenantId, adminId);
 
   const user = await User.findOneAndUpdate(
     { _id: userId, tenants: tenantId },
@@ -84,13 +93,6 @@ const unbind = async (req: Request, args: unknown): Promise<LeanDocument<UserDoc
     { fields: userNormalSelect, new: true },
   ).lean();
   if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  // ensure user is in defaultTenant
-  if (!idsToString(user.tenants).includes(defaultTenant._id.toString()))
-    await User.findOneAndUpdate(
-      { _id: userId, tenants: { $ne: defaultTenant._id } },
-      { $push: { tenants: defaultTenant._id } },
-    ).lean();
 
   const msg = {
     enUS: `${user.name}, you have been unbound ${tenant.name.enUS}.`,
@@ -105,7 +107,7 @@ const unbind = async (req: Request, args: unknown): Promise<LeanDocument<UserDoc
     syncSatellite({ tenantId, userIds: [userId] }, { userIds: [userId] }),
   ]);
 
-  return user;
+  return { code: MSG_ENUM.COMPLETED };
 };
 
 export default {

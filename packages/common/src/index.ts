@@ -66,11 +66,11 @@ export type DocumentSync = {
   msg?: string;
 };
 
-export interface Locale {
+export type Locale = {
   enUS: string;
   zhCN?: string;
   zhHK: string;
-}
+};
 
 export type RedirectAction = {
   url: string;

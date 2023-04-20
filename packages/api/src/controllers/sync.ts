@@ -78,7 +78,7 @@ const create: RequestHandler = async (req, res, next) => {
 
     // TODO: add more document models, refer to packages\common\src\index.ts
     const [
-      defaultTenant,
+      tutorTenant,
       announcements,
       books,
       chatGroups,
@@ -92,7 +92,7 @@ const create: RequestHandler = async (req, res, next) => {
       users,
       { alexId },
     ] = await Promise.all([
-      Tenant.findDefault(),
+      Tenant.findTutor(),
       Announcement.find({ tenant, beginAt: { $gte: new Date() } }).lean(),
       Book.find().lean(),
       ChatGroup.find({ $or: [{ tenant }, { tenant: { $exists: false } }] }).lean(),
@@ -139,7 +139,7 @@ const create: RequestHandler = async (req, res, next) => {
       typographies.length && syncJob({ typographyIds: idsToString(typographies) }),
       users.length && syncJob({ userIds: idsToString(users) }),
       syncJob({ userIds: [alexId] }),
-      syncJob({ tenantIds: [defaultTenant._id.toString()] }), // last item to send sync update
+      syncJob({ tenantIds: [tutorTenant._id.toString()] }), // last item to send sync update
     ]);
 
     res.status(200).json({ code: MSG_ENUM.COMPLETED, tenant });

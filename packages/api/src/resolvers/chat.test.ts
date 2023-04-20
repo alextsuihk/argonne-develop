@@ -124,7 +124,7 @@ describe('Chat GraphQL', () => {
       variables: { id: randomId(contents), token: contentsToken },
     });
     apolloExpect(contentRes, 'data', { content: expectedContentFormat });
-    expect(contentRes.data!.content.parents.some(p => p === `/chats/${_id}`)).toBeTrue();
+    expect(contentRes.data!.content.parents.includes(`/chats/${_id}`)).toBeTrue();
 
     // fail with invalid ID
     const invalidIdRes = await server.executeOperation({ query: GET_CHAT, variables: { id: 'INVALID-ID' } });

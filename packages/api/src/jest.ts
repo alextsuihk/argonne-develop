@@ -133,7 +133,8 @@ export const expectedUserFormat = {
   _id: expectedIdFormat,
   flags: expect.any(Array),
 
-  tenants: expect.arrayContaining([expect.any(String)]),
+  // tenants: expect.arrayContaining([expect.any(String)]),
+  tenants: expect.any(Array), // newly registered user & user added by ROOT (e.g publisher) does not tenant
   status: USER.STATUS.ACTIVE,
   name: expect.any(String),
   // formalName: expect.any(Object),

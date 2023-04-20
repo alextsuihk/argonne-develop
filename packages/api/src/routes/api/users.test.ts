@@ -10,6 +10,7 @@ import request from 'supertest';
 import app from '../../app';
 import {
   domain,
+  expectedIdFormat,
   expectedUserFormat,
   jestSetup,
   jestTeardown,
@@ -18,13 +19,14 @@ import {
   shuffle,
   uniqueTestUser,
 } from '../../jest';
+import Tenant from '../../models/tenant';
 import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
 
-const { createUpdateDelete } = commonTest;
+const { createUpdateDelete, getMany } = commonTest;
 const route = 'users';
 
 // Top level of this test suite:
@@ -34,6 +36,16 @@ describe('User API Routes', () => {
   let rootUser: LeanDocument<UserDocument> | null;
   let tenantAdmin: LeanDocument<UserDocument> | null;
   let tenantId: string | null;
+
+  const expectedUserTenantMinFormat = {
+    _id: expectedIdFormat,
+    flags: expectedUserFormat.flags,
+    tenants: expect.any(Array), // could be empty array for publisher
+    name: expectedUserFormat.name,
+    emails: expectedUserFormat.emails,
+    histories: expectedUserFormat.histories,
+    studentIds: expectedUserFormat.studentIds,
+  };
 
   beforeAll(async () => {
     ({ adminUser, normalUser, rootUser, tenantAdmin, tenantId } = await jestSetup([
@@ -46,7 +58,20 @@ describe('User API Routes', () => {
 
   afterAll(jestTeardown);
 
-  // TODO: findMany() & findOne()
+  test('should pass when getMany & getById (by TenantAdmin)', async () =>
+    getMany(
+      route,
+      { 'Jest-User': tenantAdmin!._id },
+      { ...expectedUserTenantMinFormat, tenants: expect.arrayContaining([expect.any(String)]) },
+      { testGetById: true, testInvalidId: true, testNonExistingId: true },
+    ));
+
+  test('should pass when getMany & getById (by ROOT)', async () =>
+    getMany(route, { 'Jest-User': rootUser!._id }, expectedUserTenantMinFormat, {
+      testGetById: true,
+      testInvalidId: true,
+      testNonExistingId: true,
+    }));
 
   test('should fail when normalUser try to create user', async () => {
     const { email, name } = uniqueTestUser();
@@ -85,7 +110,7 @@ describe('User API Routes', () => {
       {
         action: 'create',
         data: { email, name },
-        expectedMinFormat: { ...expectedUserFormat, tenants: [], name, emails: [email.toUpperCase()] }, // email is unverified
+        expectedMinFormat: { ...expectedUserTenantMinFormat, tenants: [], name, emails: [email.toUpperCase()] }, // email is unverified
       },
     ]);
 
@@ -118,7 +143,7 @@ describe('User API Routes', () => {
       {
         action: 'create',
         data: { tenantId: tenantId, email: normalUser!.emails[0], name: 'whatever' },
-        expectedMinFormat: expectedUserFormat,
+        expectedMinFormat: expectedUserTenantMinFormat,
       },
     ]);
 
@@ -130,6 +155,8 @@ describe('User API Routes', () => {
     const { email, name } = uniqueTestUser();
     const studentId = prob(0.5) ? randomString() : null;
 
+    const tutorTenant = await Tenant.findTutor();
+
     // create new user
     const user = await createUpdateDelete<UserDocument>(
       route,
@@ -139,8 +166,8 @@ describe('User API Routes', () => {
           action: 'create',
           data: { tenantId: tenantId, email, name, ...(studentId && { studentId }) },
           expectedMinFormat: {
-            ...expectedUserFormat,
-            tenants: [tenantId!],
+            ...expectedUserTenantMinFormat,
+            tenants: [tenantId!, tutorTenant._id.toString()],
             name,
             emails: [email.toUpperCase()], // email is unverified
             ...(studentId && { studentIds: [`${tenantId}#${studentId}`] }),
@@ -151,6 +178,7 @@ describe('User API Routes', () => {
     );
 
     // updateSchool
+    // !TODO
 
     // clean up
     await User.deleteOne({ _id: user!._id });

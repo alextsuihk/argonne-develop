@@ -118,12 +118,12 @@ const decodeApi = async (token: string): Promise<ApiPayload> => verify<ApiPayloa
 /**
  * Generate tokens (access + refresh)
  */
-interface Generate {
+type Generate = {
   <T extends boolean>(user: LeanDocument<UserDocument>, extra: Omit<Extra, 'force'> & { force: T }): Promise<
     T extends true ? TokensResponseSuccessful : TokensResponseSuccessful | TokensResponseConflict
   >;
   (user: LeanDocument<UserDocument>, extra: Extra): Promise<TokensResponseSuccessful | TokensResponseConflict>;
-}
+};
 
 const generate: Generate = async (user: LeanDocument<UserDocument>, extra: Extra) => {
   const { ip, ua, authUserId, force } = extra;

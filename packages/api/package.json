@@ -20,7 +20,7 @@
     "web-push-gen-key": "web-push generate-vapid-keys"
   },
   "dependencies": {
-    "@argonne/common": "1.0.0",
+    "@argonne/common": "workspace:^",
     "@socket.io/redis-adapter": "8.1.0",
     "apollo-server-express": "^3.11.1",
     "axios": "^1.3.2",
