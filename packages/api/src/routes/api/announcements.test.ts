@@ -5,11 +5,10 @@
 
 import { LOCALE } from '@argonne/common';
 import { addDays } from 'date-fns';
-import type { LeanDocument } from 'mongoose';
 
 import { expectedIdFormat, FAKE, jestSetup, jestTeardown } from '../../jest';
 import type { AnnouncementDocument } from '../../models/announcement';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -18,9 +17,9 @@ const route = 'announcements';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: LeanDocument<UserDocument> | null;
-  let normalUser: LeanDocument<UserDocument> | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
+  let normalUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantId: string | null;
 
   // expected MINIMUM single announcement format

@@ -5,14 +5,14 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
-import type { DistrictDocument } from '../models/district';
+import type { DistrictDocument, Id } from '../models/district';
 import District, { searchableFields } from '../models/district';
 import DatabaseEvent from '../models/event/database';
 import { messageToAdmin } from '../utils/chat';
-import syncSatellite from '../utils/sync-satellite';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -27,7 +27,7 @@ const select = (userRoles?: string[]) => `-rates ${common.select(userRoles)}`;
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<DistrictDocument>> => {
+const addRemark = async (req: Request, args: unknown): Promise<DistrictDocument & Id> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -47,7 +47,7 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<Dist
 /**
  * Create
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<DistrictDocument>> => {
+const create = async (req: Request, args: unknown): Promise<DistrictDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { district: fields } = await districtSchema.validate(args);
@@ -66,7 +66,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<Distric
     district.save(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/districts/${_id}`, 'CREATE', { district: fields }),
-    syncSatellite({}, { districtIds: [_id.toString()] }),
+    notifySync('CORE', {}, { districtIds: [_id] }),
   ]);
 
   return district;
@@ -86,7 +86,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<DistrictDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<DistrictDocument & Id[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<DistrictDocument>(searchableFields, { query });
@@ -117,7 +117,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<DistrictDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<(DistrictDocument & Id) | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<DistrictDocument>(searchableFields, { query }, { _id: id });
@@ -175,7 +175,7 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   await Promise.all([
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/districts/${id}`, 'DELETE', { remark, original }),
-    syncSatellite({}, { districtIds: [id] }),
+    notifySync('CORE', {}, { districtIds: [id] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -197,7 +197,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update
  */
-const update = async (req: Request, args: unknown): Promise<LeanDocument<DistrictDocument>> => {
+const update = async (req: Request, args: unknown): Promise<DistrictDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { id, district: fields } = await districtSchema.concat(idSchema).validate(args);
@@ -217,10 +217,11 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<Distric
     District.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/districts/${id}`, 'UPDATE', { original, update: fields }),
-    syncSatellite({}, { districtIds: [id] }),
+    notifySync('CORE', {}, { districtIds: [id] }),
   ]);
-
-  return district!;
+  if (district) return district;
+  log('error', `districtController:update()`, { id, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

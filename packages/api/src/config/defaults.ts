@@ -66,13 +66,14 @@ export default {
     EXPIRES: {
       ADVERTISEMENT: '400d',
       ANNOUNCEMENT: '90d',
+      APPROVAL: '90d',
       GIFT_CARD: '120d',
       JOB: '90d',
       LOG: '400d',
       OPINION: '30d',
-      RANKING: '180d',
       REDIRECT: '5d',
       REFERRAL: '30d',
+      TUTOR_RANKING: '180d',
       USER: '400d',
     },
     SCHEMA_OPTS: {
@@ -115,7 +116,7 @@ export default {
   PAGINATION: 20, // limit 20 documents in pagination
 
   QUESTION: {
-    BYGONE_DAYS: 365 * 3,
+    CLOSE_DAYS: 14,
   },
 
   REDIRECT: {

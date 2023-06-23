@@ -7,7 +7,7 @@ import { Router } from 'express';
 
 import userController from '../../controllers/user';
 
-const { createNew, findMany, findOneById, updateAction } = userController;
+const { createNew, findMany, findOneById, updateById } = userController;
 
 const router = Router();
 
@@ -35,6 +35,6 @@ router.post('/:action?', createNew);
  * @desc    tenantAdmin (school only) & user himself could update
  *
  */
-router.patch('/:id/:action?', updateAction);
+router.patch('/:id/:action?', updateById);
 
 export default router;

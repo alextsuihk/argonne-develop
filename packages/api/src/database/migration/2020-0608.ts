@@ -7,13 +7,12 @@
 
 import { LOCALE } from '@argonne/common';
 import chalk from 'chalk';
-import type { LeanDocument } from 'mongoose';
 
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
 
 const { USER } = LOCALE.DB_ENUM;
-let originalData: LeanDocument<UserDocument>[] = []; // backup for roll-back if needed
+let originalData: (UserDocument & Id)[] = []; // backup for roll-back if needed
 
 /**
  * Proceed Migration
@@ -36,7 +35,9 @@ const proceed = async (): Promise<string> => {
  */
 const rollback = async (): Promise<string> => {
   // restore the original data
-  for (const user of originalData) await User.findByIdAndUpdate(user._id, { virtualCoin: user.virtualCoin }).lean();
+  // for (const user of originalData) await User.findByIdAndUpdate(user._id, { virtualCoin: user.virtualCoin }).lean();
+
+  await Promise.all(originalData.map(user => User.updateOne(user._id, { virtualCoin: user.virtualCoin })));
 
   return `(${chalk.green(originalData.length)} restored)`;
 };

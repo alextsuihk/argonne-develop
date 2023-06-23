@@ -12,17 +12,9 @@ export default gql`
 
   extend type Mutation {
     addAssignment(assignment: AssignmentInput!): Assignment!
+    gradeAssignment(id: ID!, homeworkId: String!, content: String, score: Int): Assignment!
     removeAssignment(id: ID!, remark: String): StatusResponse!
-    updateAssignment(
-      id: ID!
-      homeworkId: String!
-      content: String
-      answer: String
-      timeSpent: Int
-      score: Int
-      viewExample: Int
-      shareTo: String
-    ): Assignment
+    updateAssignment(id: ID!, deadline: DateInput!): Assignment
   }
 
   input AssignmentInput {
@@ -30,13 +22,13 @@ export default gql`
     flags: [String!]!
     chapter: String
     title: String
-    deadline: Float!
+    deadline: DateInput!
     questions: [String!]!
     maxScores: [Int]!
-    homeworks: [HomeworkInput!]!
+    homeworks: [AssignmentHomeworkInput!]!
   }
 
-  input HomeworkInput {
+  input AssignmentHomeworkInput {
     user: String!
     assignmentIdx: Int!
     dynParamIdx: Int
@@ -45,28 +37,42 @@ export default gql`
   type Assignment {
     _id: ID!
     flags: [String!]!
-    classroom: String
-    chapter: String!
+    classroom: String!
+    chapter: String
     title: String
     deadline: Float!
 
     bookAssignments: [BookAssignment!]!
+    manualAssignments: [String!]!
+    maxScores: [Int!]!
+
+    job: String
+    homeworks: [AssignmentHomework!]!
 
     createdAt: Float!
     updatedAt: Float!
+    deletedAt: Float
+
+    contentsToken: String!
   }
 
-  type Homework {
+  type AssignmentHomework {
     _id: ID!
+    flags: [String!]!
+
     user: String!
     assignmentIdx: Int!
     dynParamIdx: Int
+
     contents: [String!]!
     answer: String
     answeredAt: Float
+
     timeSpent: Int
     viewedExamples: [Int!]
-    score: Int
+    scores: [Int!]!
+
+    questions: [String!]!
 
     createdAt: Float!
     updatedAt: Float!

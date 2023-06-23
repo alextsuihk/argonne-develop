@@ -6,25 +6,26 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import { addSeconds } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
+import type { Types } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
+import Classroom from '../models/classroom';
 import DatabaseEvent from '../models/event/database';
-import type { UserDocument } from '../models/user';
+import Tenant from '../models/tenant';
+import { Id, UserDocument, userNormalSelect } from '../models/user';
 import User from '../models/user';
-import { messageToAdmin, startChatGroup } from '../utils/chat';
-import { idsToString } from '../utils/helper';
-import log from '../utils/log';
-import { notify } from '../utils/messaging';
-import syncSatellite from '../utils/sync-satellite';
+import { startChatGroup } from '../utils/chat';
+import { idsToString, schoolYear, uniqueIds } from '../utils/helper';
+import { notifySync } from '../utils/notify-sync';
 import token from '../utils/token';
 import type { StatusResponse } from './common';
 import common from './common';
 
 type ContactWithAvatarUrl = {
-  _id: string;
-  avatarUrl: string | null;
+  _id: Types.ObjectId;
+  flags: string[];
+  avatarUrl?: string;
   name: string;
   identifiedAt?: Date;
   status: string;
@@ -32,26 +33,32 @@ type ContactWithAvatarUrl = {
 };
 
 const { MSG_ENUM } = LOCALE;
-const { USER } = LOCALE.DB_ENUM;
+const { CONTACT, USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
-const { auth, authGetUser } = common;
+const { auth, authGetUser, paginateSort } = common;
 const { contactNameSchema, idSchema, optionalExpiresInSchema, tokenSchema } = yupSchema;
+
+const CONTACT_TOKEN_PREFIX = 'CONTACT';
 
 /**
  * transform user to contact format
  */
 const transform = (
-  user: LeanDocument<UserDocument>,
-  friend: LeanDocument<UserDocument>,
-  name?: string,
-): ContactWithAvatarUrl => ({
-  _id: friend._id.toString(),
-  avatarUrl: friend.avatarUrl || null,
-  name: name ?? friend.name,
-  identifiedAt: friend.identifiedAt,
-  status: friend.networkStatus ?? friend.isOnline ? USER.NETWORK_STATUS.ONLINE : USER.NETWORK_STATUS.OFFLINE,
-  tenants: idsToString(user.tenants).filter(x => idsToString(friend.tenants).includes(x)), // only show intersected tenant
-});
+  userTenants: string[],
+  friend: UserDocument & Id,
+  userContacts: UserDocument['contacts'],
+): ContactWithAvatarUrl => {
+  const myContact = userContacts.find(c => c.user.toString() === friend._id.toString());
+  return {
+    _id: friend._id,
+    flags: myContact ? [CONTACT.FLAG.FRIEND] : [],
+    avatarUrl: friend.avatarUrl,
+    name: myContact?.name ?? friend.name,
+    identifiedAt: friend.identifiedAt,
+    status: friend.networkStatus ?? friend.isOnline ? USER.NETWORK_STATUS.ONLINE : USER.NETWORK_STATUS.OFFLINE,
+    tenants: userTenants.filter(x => idsToString(friend.tenants).includes(x)), // only show intersected tenant
+  };
+};
 
 /**
  * Generate a token with auth-user Id for other to make friend
@@ -60,16 +67,21 @@ const createToken = async (req: Request, args: unknown): Promise<{ token: string
   const { userId } = auth(req);
   const { expiresIn = DEFAULTS.CONTACT.TOKEN_EXPIRES_IN } = await optionalExpiresInSchema.validate(args);
 
-  return { token: await token.signEvent(userId, 'contact', expiresIn), expireAt: addSeconds(new Date(), expiresIn) };
+  return {
+    token: await token.signStrings([CONTACT_TOKEN_PREFIX, userId], expiresIn),
+    expireAt: addSeconds(new Date(), expiresIn),
+  };
 };
 
 /**
  * Create New User Contact (bi-directional)
  */
 const create = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl> => {
-  const { userId, userLocale, userRoles, userTenants } = auth(req);
+  const { userId, userLocale, userTenants } = auth(req);
   const { token: contactToken } = await tokenSchema.validate(args);
-  const { id: friendId } = await token.verifyEvent(contactToken, 'contact');
+
+  const [prefix, friendId] = await token.verifyStrings(contactToken);
+  if (prefix !== CONTACT_TOKEN_PREFIX || !friendId) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 
   // cross tenant NOT allowed
   const [user, friend] = await Promise.all([
@@ -78,59 +90,25 @@ const create = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl
   ]);
   if (!friend || userId === friendId) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  // check if users & friend's contacts are consistent
-  const userContactIds = user.contacts.map(c => c.user.toString());
-  const friendContactIds = friend.contacts.map(c => c.user.toString());
-  const userKnowsFriend = userContactIds.includes(friendId);
-  const friendKnowsUser = friendContactIds.includes(userId);
-  if ((userKnowsFriend && !friendKnowsUser) || (!userKnowsFriend && friendKnowsUser)) {
-    const msg = {
-      enUS: 'We have detected discrepancy when binding you two as friends. If you two are not able to see each other name, please reply into this chat.',
-      zhCN: '当绑定好友失败时，我们发现数据库异常，如果你们不能看见彼此名字，請回覆此聊天室。',
-      zhHK: '當綁定好友失敗時，我們發現數據庫異常，如果你們不能看見彼此名字，請回覆此聊天室。',
-    };
-
-    await Promise.all([
-      log(
-        'error',
-        `[DISCREPANCY-CONTACT] user: ${userId}, friend: ${friendId}`,
-        { user: userContactIds, friend: friendContactIds },
-        userId,
-      ),
-      messageToAdmin(msg, userId, userLocale, userRoles, [friendId], `USER#${userId}-${friendId}`),
-    ]);
-  }
-
-  if (userKnowsFriend && friendKnowsUser) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
   const msg = {
     enUS: `friend linked ${user.name} & ${friend.name}`,
     zhCN: `${user.name} & ${friend.name} 成为朋友。`,
     zhHK: `${user.name} & ${friend.name} 成為朋友。`,
   };
 
-  const [updatedUser, updatedFriend] = await Promise.all([
-    User.findOneAndUpdate(
-      { _id: userId, 'contacts.user': { $ne: friendId } },
-      { $push: { contacts: { user: friendId, name: friend.name } } },
-      { new: true },
-    ).lean(),
+  const [updatedFriend] = await Promise.all([
     User.findOneAndUpdate(
       { _id: friendId, 'contacts.user': { $ne: userId } },
-      { $push: { contacts: { user: userId, name: user.name } } },
+      { $push: { contacts: { user: userId } } },
       { new: true },
     ).lean(),
+    User.updateOne({ _id: userId, 'contacts.user': { $ne: friendId } }, { $push: { contacts: { user: friendId } } }),
     startChatGroup(null, msg, [userId, friendId], userLocale, `FRIEND#${[userId, friendId].sort().join('-')}`),
-    DatabaseEvent.log(userId, `/users/${userId}`, 'CREATE', { user: userId, friend: friendId }),
+    DatabaseEvent.log(userId, `/contacts/${userId}`, 'CREATE', { user: userId, friend: friendId }),
+    notifySync('CONTACT', { userIds: [userId, friendId] }, { userIds: [userId, friendId] }),
   ]);
-  if (updatedFriend)
-    await Promise.all([
-      notify([friendId], 'CONTACT', { userIds: [userId] }),
-      syncSatellite({ userIds: [userId, friendId] }, { userIds: [userId, friendId] }),
-    ]);
 
-  if (!updatedUser) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  return transform(updatedUser, friend);
+  return transform(userTenants, updatedFriend || friend, [{ user: friendId }]);
 };
 
 /**
@@ -152,24 +130,65 @@ const createNew: RequestHandler<{ action?: 'createToken' }> = async (req, res, n
   }
 };
 
+// (helper) to get all contactIds (contacts, platform admin, tenantAdmins, classroom teachers & classmates)
+const myContactIds = async (userId: string, userTenants: string[]) => {
+  const [user, classrooms, { adminIds, accountId, accountWithheldId, robotIds, alexId }, tenants] = await Promise.all([
+    User.findOneActive({ _id: userId }),
+    Classroom.find({
+      tenant: { $in: userTenants },
+      $or: [{ students: userId }, { teachers: userId }],
+      year: { $in: [schoolYear(-1), schoolYear(0), schoolYear(1)] },
+    }).lean(),
+    User.findSystemAccountIds(),
+    Tenant.find({ _id: { $in: userTenants } }).lean(),
+  ]);
+
+  if (!user) throw { statusCode: 401, code: MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR };
+
+  return {
+    user,
+    contactIds: uniqueIds([
+      ...user.contacts.map(c => c.user), // user's contacts
+      ...adminIds, // system admins
+      accountId,
+      accountWithheldId,
+      ...robotIds,
+      alexId,
+      ...tenants.map(t => [...t.admins, ...t.supports, ...t.marshals, ...t.counselors]).flat(), // admins of tenant(s)
+      ...classrooms.map(c => [...c.teachers, ...c.students]).flat(), // teachers & classmates
+      ...user.favoriteTutors,
+    ]),
+  };
+};
 /**
- * Return My Contacts
+ * Return My Contacts (& system adminId, admins of userTenants)
  */
 const find = async (req: Request): Promise<ContactWithAvatarUrl[]> => {
-  const user = await authGetUser(req);
-  const friends = await User.find({ status: USER.STATUS.ACTIVE, _id: { $in: user.contacts.map(c => c.user) } }).lean();
+  const { userId, userTenants } = auth(req);
+  const { user, contactIds } = await myContactIds(userId, userTenants);
+  const contacts = await User.find({ status: USER.STATUS.ACTIVE, _id: { $in: contactIds } }).lean();
 
-  return friends.map(friend =>
-    transform(user, friend, user.contacts.find(c => c.user.toString() === friend._id.toString())?.name),
-  );
+  return contacts.map(friend => transform(userTenants, friend, user.contacts));
 };
 
 /**
- * Find Multiple Districts with queryString (RESTful)
+ * Find Multiple Contacts with queryString (RESTful)
  */
 const findMany: RequestHandler = async (req, res, next) => {
   try {
-    res.status(200).json({ data: await find(req) });
+    const { userId, userTenants } = auth(req);
+    const { user, contactIds } = await myContactIds(userId, userTenants);
+    const options = paginateSort(req.query, { name: 1 });
+
+    const [total, contacts] = await Promise.all([
+      User.countDocuments({ status: USER.STATUS.ACTIVE, _id: { $in: contactIds } }),
+      User.find({ status: USER.STATUS.ACTIVE, _id: { $in: contactIds } }, userNormalSelect, options).lean(),
+    ]);
+
+    res.status(200).json({
+      meta: { total, ...options },
+      data: contacts.map(friend => transform(userTenants, friend, user.contacts)),
+    });
   } catch (error) {
     next(error);
   }
@@ -179,13 +198,15 @@ const findMany: RequestHandler = async (req, res, next) => {
  * Find One Contact by ID
  */
 const findOne = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl | null> => {
-  const [user, { id: friendId }] = await Promise.all([authGetUser(req), idSchema.validate(args)]);
+  const { userId, userTenants } = auth(req);
+  const [{ user, contactIds }, { id: friendId }] = await Promise.all([
+    myContactIds(userId, userTenants),
+    idSchema.validate(args),
+  ]);
 
-  const contact = user.contacts.find(c => c.user.toString() === friendId);
-  const friend = contact && (await User.findOneActive({ _id: friendId }));
-  if (!contact || !friend) return null;
-
-  return transform(user, friend, contact.name);
+  if (userId === friendId || !idsToString(contactIds).includes(friendId)) return null;
+  const friend = await User.findOneActive({ _id: friendId });
+  return friend && transform(userTenants, friend, user.contacts);
 };
 
 /**
@@ -206,27 +227,26 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  * Delete contact by friend User ID
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId, userLocale } = auth(req);
+  const { userId, userLocale, userName } = auth(req);
   const { id: friendId } = await idSchema.validate(args);
 
-  const [user, friend] = await Promise.all([
-    User.findByIdAndUpdate(userId, { $pull: { contacts: { user: friendId } } }, { new: true }).lean(),
+  const [friend] = await Promise.all([
     User.findByIdAndUpdate(friendId, { $pull: { contacts: { user: userId } } }, { new: true }).lean(),
+    User.updateOne({ _id: userId }, { $pull: { contacts: { user: friendId } } }, { new: true }),
   ]);
 
-  if (!friend || !user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (!friend) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const msg = {
-    enUS: `friend unlinked: ${user.name} & ${friend.name}.`,
-    zhCN: `取消朋关系友：${user.name} & ${friend.name}。`,
-    zhHK: `取消朋友關係：${user.name} & ${friend.name}。`,
+    enUS: `friend unlinked: ${userName} & ${friend.name}.`,
+    zhCN: `取消朋关系友：${userName} & ${friend.name}。`,
+    zhHK: `取消朋友關係：${userName} & ${friend.name}。`,
   };
 
   await Promise.all([
     startChatGroup(null, msg, [userId, friendId], userLocale, `FRIEND#${[userId, friendId].sort().join('-')}`),
-    DatabaseEvent.log(userId, `/users/${userId}`, 'DELETE', { user: userId, friend: friendId }),
-    notify([friendId], 'CONTACT', { userIds: [userId] }), // notify friend that contacts has changed
-    syncSatellite({ userIds: [userId, friendId] }, { userIds: [userId, friendId] }),
+    DatabaseEvent.log(userId, `/contacts/${userId}`, 'DELETE', { user: userId, friend: friendId }),
+    notifySync('CONTACT', { userIds: [userId, friendId] }, { userIds: [userId, friendId] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -250,20 +270,19 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
  * Update Contact Name
  */
 const update = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl> => {
-  const { userId } = auth(req);
+  const { userId, userTenants } = auth(req);
   const { id: friendId, name } = await contactNameSchema.concat(idSchema).validate(args);
 
   const friend = await User.findOneActive({ _id: friendId });
   if (!friend) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const user = await User.findOneAndUpdate(
+  const { modifiedCount } = await User.updateOne(
     { _id: userId, 'contacts.user': friendId },
     name ? { $set: { 'contacts.$.name': name } } : { $unset: { 'contacts.$.name': 1 } },
-    { new: true },
-  ).lean();
-  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  );
+  if (!modifiedCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  return transform(user, friend, name);
+  return transform(userTenants, friend, [{ user: friendId, name }]);
 };
 
 /**

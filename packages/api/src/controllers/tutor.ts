@@ -7,7 +7,7 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import { addYears } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument, Types } from 'mongoose';
+import type { Types } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
@@ -15,12 +15,13 @@ import DatabaseEvent from '../models/event/database';
 import Level from '../models/level';
 import Subject from '../models/subject';
 import Tenant from '../models/tenant';
-import type { TutorDocument } from '../models/tutor';
+import type { Id, TutorDocument } from '../models/tutor';
 import Tutor, { searchableFields } from '../models/tutor';
 import User from '../models/user';
 import { startChatGroup } from '../utils/chat';
 import { idsToString } from '../utils/helper';
-import { notify } from '../utils/messaging';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -54,7 +55,7 @@ const {
 /**
  * hide deleted specialties ; hide credential's proofs for non-owner, non tenantAdmin, remove deleted specialties
  */
-const transform = (tutor: LeanDocument<TutorDocument>, userId: string | Types.ObjectId, isAdmin?: boolean) => ({
+const transform = (tutor: TutorDocument & Id, userId: string | Types.ObjectId, isAdmin?: boolean) => ({
   ...tutor,
 
   credentials: tutor.credentials.map(({ proofs, ...rest }) => ({
@@ -71,14 +72,14 @@ const transform = (tutor: LeanDocument<TutorDocument>, userId: string | Types.Ob
  * Add Remark
  * only tenantAdmin could addRemark
  */
-const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument>> => {
+const addRemark = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId } = auth(req);
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
 
   const original = await Tutor.findOne({ _id: id, deleted: { $exists: false } }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  const { admins } = await Tenant.findByTenantId(original.tenant);
+  const { admins } = await Tenant.findByTenantId(original.tenant, userId);
 
   const [tutor] = await Promise.all([
     Tutor.findByIdAndUpdate(
@@ -87,10 +88,11 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<Tuto
       { fields: select([USER.ROLE.ADMIN]), new: true },
     ).lean(),
     DatabaseEvent.log(userId, `/tutors/${id}`, 'REMARK', { remark }),
-    notify(admins, 'TUTOR', { tutorIds: [id] }),
+    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, original.user] }, { tutorIds: [id] }),
   ]);
-
-  return transform(tutor!, userId, true);
+  if (tutor) return transform(tutor, userId, true);
+  log('error', 'tutorController:addRemark()', { id, remark }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
@@ -100,7 +102,7 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<Tuto
  *
  * ! ONLY identifiable User could be added as tutor
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument>> => {
+const create = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
 
   const { userId, userLocale } = auth(req);
@@ -119,7 +121,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<TutorDo
   if (!tutorUser) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const newTutor = new Tutor<Partial<TutorDocument>>({ user: tutorUserId, tenant: tenantId });
-  const tutor = existingTutor ?? newTutor;
+  const tutorId = (existingTutor ?? newTutor)._id;
 
   const msg = {
     enUS: `${tutorUser.name}, you are now a tutor of ${tenant.name.enUS}.`,
@@ -127,23 +129,26 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<TutorDo
     zhHK: `${tutorUser.name},你已成為${tenant.name.zhHK}的導師。`,
   };
 
-  const [finalTutor] = await Promise.all([
-    existingTutor
-      ? Tutor.findByIdAndUpdate(
-          existingTutor,
-          {
-            $unset: { deletedAt: 1 },
-            specialties: existingTutor.specialties.map(({ deletedAt: _, ...specialty }) => specialty),
-          },
-          { fields: select([USER.ROLE.ADMIN]), new: true },
-        )
-      : newTutor.save(), // save as new tutor if not previously exists
-    startChatGroup(tenantId, msg, [...tenant.admins, tutorUserId], userLocale, `TUTOR#${tutor._id}`),
-    DatabaseEvent.log(userId, `/tutors/${tutor._id}`, 'CREATE', { tenantId, tutorUserId }),
-    notify([...tenant.admins, tutorUserId], 'TUTOR', { tutorIds: [tutor._id.toString()] }),
+  const [updatedTutor] = await Promise.all([
+    existingTutor &&
+      Tutor.findByIdAndUpdate(
+        existingTutor,
+        {
+          $unset: { deletedAt: 1 },
+          specialties: existingTutor.specialties.map(({ deletedAt: _, ...specialty }) => specialty),
+        },
+        { fields: select([USER.ROLE.ADMIN]), new: true },
+      ).lean(),
+    !existingTutor && newTutor.save(), // save as new tutor if not previously exists
+    startChatGroup(tenantId, msg, [...tenant.admins, tutorUserId], userLocale, `TUTOR#${tutorId}`),
+    DatabaseEvent.log(userId, `/tutors/${tutorId}`, 'CREATE', { tenantId, tutorUserId }),
+    notifySync('TUTOR', { tenantId, userIds: [...tenant.admins, tutorUserId] }, { tutorIds: [tutorId] }),
   ]);
 
-  return transform(finalTutor!.toObject(), userId, true);
+  if (!existingTutor) return transform(newTutor.toObject(), userId, true);
+  if (updatedTutor) return transform(updatedTutor, userId, true);
+  log('error', 'tutorController:create()', { tenantId, tutorUserId }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
@@ -190,7 +195,7 @@ const findCommonFilter = async (req: Request, args: unknown) => {
 /**
  * Find Multiple Tutors (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<(TutorDocument & Id)[]> => {
   const { userId } = auth(req);
   const { filter, adminTenants } = await findCommonFilter(req, args);
 
@@ -224,7 +229,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One Tutor by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<(TutorDocument & Id) | null> => {
   const { userId, userTenants } = auth(req);
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
@@ -255,7 +260,7 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  * Add a Credential
  * (by tutor)
  */
-const addCredential = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument>> => {
+const addCredential = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req);
   const { id, ...fields } = await idSchema.concat(tutorCredentialSchema).validate(args);
@@ -280,17 +285,17 @@ const addCredential = async (req: Request, args: unknown): Promise<LeanDocument<
   await Promise.all([
     startChatGroup(tutor.tenant, msg, [...admins, userId], userLocale, `TUTOR#${id}`),
     DatabaseEvent.log(userId, `/tutors/${id}`, 'addCredential', { credentialId, ...fields }),
-    notify([...admins, userId], 'TUTOR', { tutorIds: [id] }),
+    notifySync('TUTOR', { tenantId: tutor.tenant, userIds: [...admins, userId] }, { tutorIds: [id] }),
   ]);
 
-  return transform(tutor, userId);
+  return transform(tutor, userId, idsToString(admins).includes(userId));
 };
 
 /**
  * Remove a credential
  * (by tutor)
  */
-const removeCredential = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument>> => {
+const removeCredential = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId } = auth(req);
   const { id, credentialId } = await idSchema.concat(tutorCredentialIdSchema).validate(args);
@@ -303,6 +308,8 @@ const removeCredential = async (req: Request, args: unknown): Promise<LeanDocume
   }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
+  const { admins } = await Tenant.findByTenantId(original.tenant);
+
   const [tutor] = await Promise.all([
     Tutor.findByIdAndUpdate(
       id,
@@ -313,17 +320,19 @@ const removeCredential = async (req: Request, args: unknown): Promise<LeanDocume
       credentialId,
       originalCredential: original.credentials.find(c => c._id.toString() === credentialId),
     }),
-    notify([userId], 'TUTOR', { tutorIds: [id] }),
+    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, original.user] }, { tutorIds: [id] }),
   ]);
 
-  return transform(tutor!, userId);
+  if (tutor) return transform(tutor, userId, idsToString(admins).includes(userId));
+  log('error', 'tutorController:removeCredential()', { id, credentialId }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
  * Verify
  * only tenantAdmin could verify credentials
  */
-const verifyCredential = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument>> => {
+const verifyCredential = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req);
   const { id, credentialId } = await idSchema.concat(tutorCredentialIdSchema).validate(args);
@@ -348,17 +357,19 @@ const verifyCredential = async (req: Request, args: unknown): Promise<LeanDocume
     ).lean(),
     startChatGroup(original.tenant, msg, [...admins, original.user], userLocale, `TUTOR#${id}`),
     DatabaseEvent.log(userId, `/tutors/${id}`, 'verifyCredential', { credentialId }),
-    notify([...admins, original.user], 'TUTOR', { tutorIds: [id] }),
+    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, original.user] }, { tutorIds: [id] }),
   ]);
 
-  return transform(tutor!, userId, true);
+  if (tutor) return transform(tutor, userId, true);
+  log('error', 'tutorController:verifyCredential()', { id, credentialId }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
  *  Add a Specialty
  * (by tutor)
  */
-const addSpecialty = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument>> => {
+const addSpecialty = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req);
   const { id, ...fields } = await idSchema.concat(tutorSpecialtySchema).validate(args);
@@ -400,19 +411,21 @@ const addSpecialty = async (req: Request, args: unknown): Promise<LeanDocument<T
           { $push: { specialties: { ...fields, priority: 0, ranking: { updatedAt: new Date() } } } },
           { fields: select(), new: true },
         ).lean(),
-    startChatGroup(original!.tenant, msg, [...admins, userId], userLocale, `TUTOR#${id}`),
+    startChatGroup(original.tenant, msg, [...admins, userId], userLocale, `TUTOR#${id}`),
     DatabaseEvent.log(userId, `/tutors/${id}`, 'addSpecialty', { specialtyId, ...fields }),
-    notify([...admins, userId], 'TUTOR', { tutorIds: [id] }),
+    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, userId] }, { tutorIds: [id] }),
   ]);
 
-  return transform(tutor!, userId);
+  if (tutor) return transform(tutor, userId, idsToString(admins).includes(userId));
+  log('error', 'tutorController:addSpecialty()', { id, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
  * Delete Specialty by ID (by tutor)
  * ! (to keep ranking info, only update deletedAt, to hide the entry)
  */
-const removeSpecialty = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument>> => {
+const removeSpecialty = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId } = auth(req);
   const { id, specialtyId } = await idSchema.concat(tutorSpecialtyIdSchema).validate(args);
@@ -424,12 +437,13 @@ const removeSpecialty = async (req: Request, args: unknown): Promise<LeanDocumen
   ).lean();
   if (!tutor) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
+  const { admins } = await Tenant.findByTenantId(tutor.tenant);
   await Promise.all([
     DatabaseEvent.log(userId, `/tutors/${id}`, 'removeSpecialty', { specialtyId }),
-    notify([userId], 'TUTOR', { tutorIds: [id] }),
+    notifySync('TUTOR', { tenantId: tutor.tenant, userIds: [...admins, userId] }, { tutorIds: [id] }),
   ]);
 
-  return transform(tutor, userId);
+  return transform(tutor, userId, idsToString(admins).includes(userId));
 };
 
 /**
@@ -448,15 +462,18 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   const { admins } = await Tenant.findByTenantId(original.tenant, userId);
 
   await Promise.all([
-    Tutor.findByIdAndUpdate(id, {
-      $unset: { intro: 1, officeHour: 1 },
-      credentials: [],
-      specialties: original.specialties.map(specialty => ({ ...specialty, deletedAt: new Date() })),
-      deletedAt: new Date(),
-      ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-    }).lean(),
+    Tutor.updateOne(
+      { _id: id },
+      {
+        $unset: { intro: 1, officeHour: 1 },
+        credentials: [],
+        specialties: original.specialties.map(specialty => ({ ...specialty, deletedAt: new Date() })),
+        deletedAt: new Date(),
+        ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
+      },
+    ),
     DatabaseEvent.log(userId, `/tutors/${id}`, 'DELETE', { remark, original }),
-    notify(admins, 'TUTOR', { tutorIds: [id] }),
+    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, original.user] }, { tutorIds: [id] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -478,7 +495,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Tutor (intro & officeHour)
  */
-const update = async (req: Request, args: unknown): Promise<LeanDocument<TutorDocument>> => {
+const update = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId } = auth(req);
   const { id, ...fields } = await idSchema.concat(tutorSchema).validate(args);
@@ -494,10 +511,12 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<TutorDo
       officeHour: original.officeHour,
       update: fields,
     }),
-    notify([...admins, userId], 'TUTOR', { tutorIds: [id] }),
+    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, userId] }, { tutorIds: [id] }),
   ]);
 
-  return transform(tutor!, userId);
+  if (tutor) return transform(tutor, userId, idsToString(admins).includes(userId));
+  log('error', 'tutorController:update()', { id, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

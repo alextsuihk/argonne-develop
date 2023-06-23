@@ -19,7 +19,6 @@ export default gql`
     addBookRevision(id: ID!, revision: BookRevisionInput!): Book!
     addBookRevisionImage(id: ID!, revisionId: String!, url: String!): Book!
     addBookSupplement(id: ID!, supplement: BookSupplementInput!): Book!
-    joinBookChat(id: ID!): StatusResponse!
     removeBook(id: ID!, remark: String): StatusResponse!
     removeBookAssignment(id: ID!, assignmentId: String!, remark: String): Book!
     removeBookRevision(id: ID!, revisionId: String!, remark: String): Book!
@@ -69,7 +68,7 @@ export default gql`
     subTitle: String
     chatGroup: String!
 
-    assignments: [BookAssignment!]
+    assignments: [BookAssignment!]!
     supplements: [BookSupplement!]!
     revisions: [BookRevision!]!
 
@@ -78,17 +77,21 @@ export default gql`
     createdAt: Float!
     updatedAt: Float!
     deletedAt: Float
+
+    contentsToken: String!
   }
 
   type BookAssignment {
     _id: ID!
+    flags: [String!]!
     contribution: Contribution!
     chapter: String!
-    content: Content!
+    content: String!
     dynParams: [String!]!
     solutions: [String!]!
-    examples: [Content!]!
+    examples: [String!]!
 
+    remarks: [Remark!]
     createdAt: Float!
     updatedAt: Float!
     deletedAt: Float

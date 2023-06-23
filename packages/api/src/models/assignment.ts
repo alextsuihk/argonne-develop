@@ -1,31 +1,20 @@
 /**
  * Model: Assignment
+ *
+ * teacher assigns assignment to multiple students (as homework)
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument, Types } from 'mongoose';
+import type { Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import type { BookAssignmentDocument } from './book';
-import type { BaseDocument } from './common';
+import type { BaseDocument, Id } from './common';
 import { baseDefinition } from './common';
-import type { ContentDocument } from './content';
+import type { HomeworkDocument } from './homework';
 
-export interface HomeworkDocument extends BaseDocument {
-  user: string | Types.ObjectId; // student's userId
-  assignmentIdx: number;
-  dynParamIdx?: number;
-
-  contents: (string | Types.ObjectId | ContentDocument | LeanDocument<ContentDocument>)[];
-  answer?: string;
-  answeredAt?: Date;
-
-  timeSpent?: number;
-  viewedExamples?: number[]; // viewed example index
-
-  score?: number; // (final) grade by teacher
-}
+export type { Id } from './common';
 
 export interface AssignmentDocument extends BaseDocument {
   classroom: string | Types.ObjectId;
@@ -33,12 +22,12 @@ export interface AssignmentDocument extends BaseDocument {
   title?: string;
   deadline: Date;
 
-  bookAssignments: (string | Types.ObjectId | BookAssignmentDocument | LeanDocument<BookAssignmentDocument>)[];
+  bookAssignments: (string | Types.ObjectId | (BookAssignmentDocument & Id))[];
   manualAssignments: string[]; // e.g. Chapter# 1, question# 2B
-  maxScores?: number[];
+  maxScores: number[];
 
   job?: string | Types.ObjectId; // grading job
-  homeworks: (string | Types.ObjectId | HomeworkDocument | LeanDocument<HomeworkDocument>)[];
+  homeworks: (string | Types.ObjectId | (HomeworkDocument & Id))[];
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -55,7 +44,7 @@ const assignmentSchema = new Schema<AssignmentDocument>(
   {
     ...baseDefinition,
 
-    classroom: { type: Schema.Types.ObjectId, ref: 'Classroom', index: true },
+    classroom: { type: Schema.Types.ObjectId, ref: 'Classroom' },
     chapter: String,
     title: String,
     deadline: Date,
@@ -72,27 +61,5 @@ const assignmentSchema = new Schema<AssignmentDocument>(
 
 assignmentSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Assignment = model<AssignmentDocument>('Assignment', assignmentSchema);
-
-const homeworkSchema = new Schema<HomeworkDocument>(
-  {
-    ...baseDefinition,
-
-    user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
-    assignmentIdx: Number,
-    dynParamIdx: Number,
-
-    contents: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
-    answer: String,
-    answeredAt: Date,
-
-    timeSpent: Number,
-    viewedExamples: [Number],
-
-    score: Number,
-  },
-  DEFAULTS.MONGOOSE.SCHEMA_OPTS,
-);
-
-export const Homework = model<HomeworkDocument>('Homework', homeworkSchema);
 
 export default Assignment;

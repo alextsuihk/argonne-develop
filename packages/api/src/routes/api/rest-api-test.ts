@@ -6,11 +6,10 @@
 
 import { LOCALE } from '@argonne/common';
 import type { Types } from 'mongoose';
-import mongoose from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
-import { FAKE, prob, randomId } from '../../jest';
+import { FAKE, FAKE_ID, prob, randomId } from '../../jest';
 import type { BaseDocument } from '../../models/common/base';
 
 type LooseAutocomplete<T extends string> = T | Omit<string, T>;
@@ -71,7 +70,7 @@ const createUpdateDelete = async <T extends BaseDocument>(
           .send(data)
           .set(task.headers ?? headers);
 
-    console.log('restful debug >>> ', action, extra);
+    console.log('restful debug [action, extra] >>> ', action, extra);
 
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
 
@@ -204,8 +203,7 @@ const getMany = async <T>(
   }
 
   if (testNonExistingId) {
-    const nonExistingId = new mongoose.Types.ObjectId();
-    const nonExistingIdRes = await request(app).get(`/api/${route}/${nonExistingId}`).set(headers);
+    const nonExistingIdRes = await request(app).get(`/api/${route}/${FAKE_ID}`).set(headers);
     expect(nonExistingIdRes.body).toEqual({ errors: [{ code: MSG_ENUM.NOT_FOUND }], statusCode: 404, type: 'plain' });
     expect(nonExistingIdRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(nonExistingIdRes.status).toBe(404);

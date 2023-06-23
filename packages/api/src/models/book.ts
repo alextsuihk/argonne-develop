@@ -1,7 +1,6 @@
 /**
  * Model: Book
  *
- * BookAssignment might contains large data, therefore, break out from book model
  */
 
 import { LOCALE } from '@argonne/common';
@@ -9,19 +8,20 @@ import type { Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from './common';
+import type { BaseDocument, Id } from './common';
 import { baseDefinition } from './common';
-import type { ContentDocument } from './content';
 import type { ContributionDocument } from './contribution';
 
+export type { Id } from './common';
+
 export interface BookAssignmentDocument extends BaseDocument {
-  contribution: string | Types.ObjectId | ContributionDocument;
+  contribution: string | Types.ObjectId | (ContributionDocument & Id);
 
   chapter: string; // e.g 1.2#33, chapter 1.2, homework#33
-  content: string | Types.ObjectId | ContentDocument;
+  content: string | Types.ObjectId;
   dynParams: string[];
-  solutions: string[];
-  examples: (string | Types.ObjectId | ContentDocument)[];
+  solutions: string[]; // should be small data
+  examples: (string | Types.ObjectId)[];
 }
 
 export interface BookDocument extends BaseDocument {
@@ -32,11 +32,11 @@ export interface BookDocument extends BaseDocument {
   subTitle?: string;
   chatGroup: string | Types.ObjectId;
 
-  assignments: (string | Types.ObjectId | BookAssignmentDocument)[];
+  assignments: (string | Types.ObjectId | (BookAssignmentDocument & Id))[];
 
   supplements: {
     _id: string | Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
-    contribution: string | Types.ObjectId | ContributionDocument;
+    contribution: string | Types.ObjectId | (ContributionDocument & Id);
     chapter: string;
     deletedAt?: Date;
   }[];
@@ -88,7 +88,7 @@ const bookSchema = new Schema<BookDocument>(
     subjects: [{ type: Schema.Types.ObjectId, ref: 'Subject', index: true }],
     title: String,
     subTitle: String,
-    chatGroup: { type: Schema.Types.ObjectId, ref: 'Chat' },
+    chatGroup: { type: Schema.Types.ObjectId, ref: 'Chat', index: true },
 
     assignments: [{ type: Schema.Types.ObjectId, ref: BookAssignment }],
     supplements: [

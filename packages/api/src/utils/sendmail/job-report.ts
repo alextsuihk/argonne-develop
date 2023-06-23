@@ -3,17 +3,16 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import configLoader from '../../config/config-loader';
 import type { JobDocument } from '../../models/job';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import { sendmail } from './common';
 
 const { zhCN, zhHK } = LOCALE.DB_ENUM.SYSTEM.LOCALE;
 const { config } = configLoader;
 
-export default async (user: LeanDocument<UserDocument>, job: JobDocument): Promise<void> => {
+export default async (user: UserDocument & Id, job: JobDocument & Id): Promise<void> => {
   const { name, locale, emails } = user;
 
   if (emails[0]) {

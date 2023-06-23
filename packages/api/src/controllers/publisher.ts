@@ -5,16 +5,18 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
+import Book from '../models/book';
+import ChatGroup from '../models/chat-group';
 import DatabaseEvent from '../models/event/database';
-import type { PublisherDocument } from '../models/publisher';
+import type { Id, PublisherDocument } from '../models/publisher';
 import Publisher, { searchableFields } from '../models/publisher';
 import User from '../models/user';
 import { messageToAdmin } from '../utils/chat';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import storage from '../utils/storage';
-import syncSatellite from '../utils/sync-satellite';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -27,7 +29,7 @@ const { idSchema, publisherSchema, querySchema, remarkSchema, removeSchema } = y
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<PublisherDocument>> => {
+const addRemark = async (req: Request, args: unknown): Promise<PublisherDocument & Id> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -46,19 +48,19 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<Publ
 /**
  * Create New Publisher
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<PublisherDocument>> => {
+const create = async (req: Request, args: unknown): Promise<PublisherDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const {
     publisher: { logoUrl, ...fields },
   } = await publisherSchema.validate(args);
 
-  const [admins] = await Promise.all([
-    User.find({ _id: { $in: fields.admins } }).lean(),
+  const [adminCount] = await Promise.all([
+    User.countDocuments({ _id: { $in: fields.admins } }),
     logoUrl && storage.validateObject(logoUrl, userId),
   ]);
 
-  if (fields.admins.length !== admins.length) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (fields.admins.length !== adminCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const publisher = new Publisher<Partial<PublisherDocument>>({ ...fields, ...(logoUrl && { logoUrl }) });
   const { _id, name } = publisher;
@@ -74,7 +76,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<Publish
     publisher.save(),
     messageToAdmin(msg, userId, userLocale, userRoles, publisher.admins, `PUBLISHER#${_id}`),
     DatabaseEvent.log(userId, `/publishers/${_id}`, 'CREATE', { publisher: { ...fields, logoUrl } }),
-    syncSatellite({}, { publisherIds: [_id.toString()], ...(logoUrl && { minioAddItems: [logoUrl] }) }),
+    notifySync('CORE', {}, { publisherIds: [_id], ...(logoUrl && { minioAddItems: [logoUrl] }) }),
   ]);
 
   return publisher;
@@ -94,7 +96,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple Publishers (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<PublisherDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<(PublisherDocument & Id)[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<PublisherDocument>(searchableFields, { query });
@@ -126,7 +128,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One Publisher by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<PublisherDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<(PublisherDocument & Id) | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<PublisherDocument>(searchableFields, { query }, { _id: id });
@@ -179,7 +181,7 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
     original.logoUrl && storage.removeObject(original.logoUrl), // delete file in Minio if exists
     messageToAdmin(msg, userId, userLocale, userRoles, [], `PUBLISHER#${id}`),
     DatabaseEvent.log(userId, `/publishers/${id}`, 'DELETE', { remark, original }),
-    syncSatellite({}, { publisherIds: [id], ...(original.logoUrl && { minioRemoveItems: [original.logoUrl] }) }),
+    notifySync('CORE', {}, { publisherIds: [id], ...(original.logoUrl && { minioRemoveItems: [original.logoUrl] }) }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -201,7 +203,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Publisher
  */
-const update = async (req: Request, args: unknown): Promise<LeanDocument<PublisherDocument>> => {
+const update = async (req: Request, args: unknown): Promise<PublisherDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const {
@@ -209,14 +211,15 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<Publish
     publisher: { logoUrl, ...fields },
   } = await idSchema.concat(publisherSchema).validate(args);
 
-  const [original, admins] = await Promise.all([
+  const [original, adminCount] = await Promise.all([
     Publisher.findOne({ _id: id, deletedAt: { $exists: false } }).lean(),
-    User.find({ _id: { $in: fields.admins } }).lean(),
+    User.countDocuments({ _id: { $in: fields.admins } }),
   ]);
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  if (fields.admins.length !== admins.length) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (fields.admins.length !== adminCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await Promise.all([
+  const [books] = await Promise.all([
+    Book.find({ publisher: id }).lean(),
     logoUrl && original.logoUrl !== logoUrl && storage.validateObject(logoUrl, userId), // only need to validate NEW logoUrl
     original.logoUrl && original.logoUrl !== logoUrl && storage.removeObject(original.logoUrl), // remove old logoUrl from minio if exists and is different from new logoUrl
   ]);
@@ -234,9 +237,14 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<Publish
       { ...fields, ...(logoUrl ? { logoUrl } : { $unset: { logoUrl: 1 } }) },
       { fields: select(userRoles), new: true },
     ).lean(),
+    ChatGroup.updateMany(
+      { _id: { $in: books.map(({ _id }) => `BOOK#${_id}`) } },
+      { admins: fields.admins, $addToSet: { users: fields.admins } },
+    ),
     messageToAdmin(msg, userId, userLocale, userRoles, fields.admins, `PUBLISHER#${id}`),
     DatabaseEvent.log(userId, `/publishers/${id}`, 'UPDATE', { original, update: args }),
-    syncSatellite(
+    notifySync(
+      'CORE',
       {},
       {
         publisherIds: [id],
@@ -245,7 +253,9 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<Publish
       },
     ),
   ]);
-  return publisher!;
+  if (publisher) return publisher;
+  log('error', `publisherController:update()`, { id, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

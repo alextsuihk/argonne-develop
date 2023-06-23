@@ -2,7 +2,6 @@
  * Socket.IO Server
  */
 
-import type { DocumentSync } from '@argonne/common';
 import { LOCALE, NOTIFY_EVENTS } from '@argonne/common';
 import { createAdapter } from '@socket.io/redis-adapter'; //! NOTE: need to use version 7.1.0
 import type { Server as HttpServer } from 'http';
@@ -28,8 +27,8 @@ const subClient = pubClient.duplicate();
 /**
  * Emit Message to all socket clients of a SINGLE User
  */
-const emit = (userIds: string[], event: NotifyEvent, payload?: DocumentSync): void =>
-  userIds.forEach(userId => io?.to(`user:${userId}`).emit<NotifyEvent>(event, payload)); // socket-server is not available in test-mode
+const emit = (userIds: string[], event: NotifyEvent, msg?: string): void =>
+  userIds.forEach(userId => io?.to(`user:${userId}`).emit<NotifyEvent>(event, msg)); // socket-server is not available in test-mode
 
 const listSockets = async (userId: string) => (io ? Array.from(await io.in(`user:${userId}`).allSockets()) : []); // socket-server is not available in test-mode
 
@@ -38,10 +37,10 @@ const listSockets = async (userId: string) => (io ? Array.from(await io.in(`user
  */
 const start = async (httpServer: HttpServer): Promise<void> => {
   // when client is joining
-  const clientJoining = async (socket: Socket, msgToken: string): Promise<void> => {
+  const clientJoining = async (socket: Socket, accessToken: string): Promise<void> => {
     // join Socket.IO Client to (`user:${userId}`) room, notify friends
     try {
-      const { userId } = await token.verify<{ userId?: string }>(msgToken);
+      const { userId } = await token.verifyAuth(accessToken);
 
       console.log('socketServer:join() >>>> welcome ', userId, socket.id);
 
@@ -49,17 +48,17 @@ const start = async (httpServer: HttpServer): Promise<void> => {
       if (!userId || !user) throw 'Invalid ID';
 
       await socket.join(`user:${userId}`); // join room
-      socket.emit('JOIN', { socket: socket.id, token: msgToken, msg: 'Welcome !' }); // send Welcome message back to socket
+      socket.emit('JOIN', { socket: socket.id, token: accessToken, msg: 'Welcome !' }); // send Welcome message back to socket
 
       if (user.contacts.length && !user.networkStatus) {
         emit(
           user.contacts.map(c => c.user.toString()),
-          'CONTACT_STATUS',
-          { userIds: [userId], userNetworkStatus: user.networkStatus ?? USER.NETWORK_STATUS.ONLINE },
+          'CONTACT-STATUS',
+          `${userId}#${user.networkStatus ?? USER.NETWORK_STATUS.ONLINE}`,
         ); // notify friends
       }
     } catch (error) {
-      socket.emit('JOIN', { token: msgToken, error }); // send error message back
+      socket.emit('JOIN', { token: accessToken, error }); // send error message back
     }
   };
 
@@ -85,8 +84,8 @@ const start = async (httpServer: HttpServer): Promise<void> => {
       if (user.contacts.length && !user.networkStatus)
         emit(
           user.contacts.map(c => c.user.toString()),
-          'CONTACT_STATUS',
-          { userIds: [userId], userNetworkStatus: USER.NETWORK_STATUS.OFFLINE },
+          'CONTACT-STATUS',
+          `${userId}#${USER.NETWORK_STATUS.OFFLINE}`,
         ); // notify friends
     } catch (error) {
       log('warn', 'clientLeaving fails', { userId });

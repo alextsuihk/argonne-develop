@@ -33,13 +33,14 @@ import { OAuth2Client } from 'google-auth-library';
 
 import configLoader from '../config/config-loader';
 
-export type OAuthPayload = {
+type OAuthPayload = {
   subId: string;
   email?: string;
   avatarUrl?: string;
 };
 
 const { MSG_ENUM } = LOCALE;
+const { USER } = LOCALE.DB_ENUM;
 
 // TODO: https://codeburst.io/react-authentication-with-twitter-google-facebook-and-github-862d59583105
 // TODO: https://medium.com/authpack/facebook-auth-with-node-js-c4bb90d03fc0
@@ -73,4 +74,14 @@ const google = async (code: string): Promise<OAuthPayload> => {
   }
 };
 
-export default { facebook, google };
+export default async (code: string, provider: string): Promise<OAuthPayload> => {
+  switch (provider) {
+    case USER.OAUTH2.PROVIDER.FACEBOOK:
+    case USER.OAUTH2.PROVIDER.GITHUB:
+      throw { statusCode: 999, code: MSG_ENUM.WIP };
+    case USER.OAUTH2.PROVIDER.GOOGLE:
+      return google(code);
+    default:
+      throw { statusCode: 401, code: MSG_ENUM.OAUTH2_UNSUPPORTED_PROVIDER };
+  }
+};

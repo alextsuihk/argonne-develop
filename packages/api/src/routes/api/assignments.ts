@@ -10,7 +10,7 @@ import assignmentController from '../../controllers/assignment';
 
 const router = Router();
 // const { createNew, findMany, findOneById, updateById, removeById } = assignmentController;
-const { createNew, findMany, findOneById, removeById } = assignmentController;
+const { createNew, findMany, findOneById, removeById, updateById } = assignmentController;
 
 /**
  * @route   GET api/assignments
@@ -35,7 +35,7 @@ if (configLoader.config.restfulFullAccess) {
    * @route   PATCH api/assignments/:id
    * @desc    update a assignment
    */
-  // router.patch('/:id', updateById);
+  router.patch('/:id/:action?', updateById);
 
   /**
    * @route   DELETE api/assignments/:id

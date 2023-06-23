@@ -6,7 +6,6 @@
 import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   apolloExpect,
@@ -30,7 +29,7 @@ import {
 import District from '../models/district';
 import Level from '../models/level';
 import School from '../models/school';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import {
   ADD_SCHOOL,
   ADD_SCHOOL_REMARK,
@@ -46,7 +45,7 @@ const { SCHOOL } = LOCALE.DB_ENUM;
 // Top level of this test suite:
 describe('School GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let url: string;
@@ -161,7 +160,7 @@ describe('School GraphQL', () => {
       Level.find({ code: { $regex: '[S][1-6]' }, deletedAt: { $exists: false } }),
     ]);
 
-    [url, url2] = await Promise.all([jestPutObject(adminUser!), jestPutObject(adminUser!)]);
+    [url, url2] = await Promise.all([jestPutObject(adminUser!._id), jestPutObject(adminUser!._id)]);
 
     // add a document
     const create = {
@@ -222,7 +221,7 @@ describe('School GraphQL', () => {
       variables: { id: newId, remark: FAKE },
     });
     apolloExpect(addRemarkRes, 'data', {
-      addSchoolRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!, FAKE, true) },
+      addSchoolRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
     });
 
     // delete newly created document

@@ -4,12 +4,11 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
 import { jestSetup, jestTeardown } from '../../jest';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -19,8 +18,8 @@ const { getByIdNonExisting } = commonTest;
 
 // Top level of this test suite:
 describe('Role API Routes', () => {
-  let adminUser: LeanDocument<UserDocument> | null;
-  let normalUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
+  let normalUser: (UserDocument & Id) | null;
 
   beforeAll(async () => {
     ({ adminUser, normalUser } = await jestSetup(['admin', 'normal']));
@@ -75,7 +74,7 @@ describe('Role API Routes', () => {
     const header = { 'Jest-User': adminUser!._id };
 
     // remove JEST_FAKE_ROLE before testing
-    await User.findByIdAndUpdate(normalUser!._id, { $pull: { roles: role } });
+    await User.updateOne(normalUser!, { $pull: { roles: role } });
 
     // adding role
     const addRes = await request(app).post(`/api/roles/${normalUser!._id}`).send({ role }).set(header);

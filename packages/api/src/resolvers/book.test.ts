@@ -6,33 +6,31 @@
 import 'jest-extended';
 
 import { CONTENT_PREFIX, LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   apolloExpect,
   ApolloServer,
-  expectedContentFormat,
   expectedContributionFormat,
   expectedIdFormat,
   expectedRemark,
   FAKE,
   FAKE2,
+  genUser,
   jestPutObject,
   jestRemoveObject,
   jestSetup,
   jestTeardown,
   prob,
   randomId,
-  randomString,
   shuffle,
   testServer,
 } from '../jest';
-import Book from '../models/book';
+import Book, { BookAssignment } from '../models/book';
 import Level from '../models/level';
 import Publisher from '../models/publisher';
 import School from '../models/school';
 import Subject from '../models/subject';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_BOOK,
@@ -44,7 +42,6 @@ import {
   GET_BOOK,
   GET_BOOKS,
   IS_ISBN_AVAILABLE,
-  JOIN_BOOK_CHAT,
   REMOVE_BOOK,
   REMOVE_BOOK_ASSIGNMENT,
   REMOVE_BOOK_REVISION,
@@ -58,11 +55,12 @@ const { MSG_ENUM } = LOCALE;
 // Top level of this test suite:
 describe('Book GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
-  let normalUsers: LeanDocument<UserDocument>[] | null;
+  let normalUsers: (UserDocument & Id)[] | null;
   let normalServer: ApolloServer | null;
-  let url: string; // test as admin
+  let url: string;
+  let teacherLevelId: string;
 
   const expectedFormat = {
     _id: expectedIdFormat,
@@ -73,32 +71,31 @@ describe('Book GraphQL', () => {
     title: expect.any(String),
     subTitle: expect.toBeOneOf([null, expect.any(String)]),
     chatGroup: expect.any(String),
-    assignments: null,
+
+    assignments: expect.any(Array),
     supplements: expect.any(Array),
     revisions: expect.any(Array),
-    remarks: null,
+
+    remarks: expect.any(Array),
     createdAt: expect.any(Number),
     updatedAt: expect.any(Number),
     deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+
+    contentsToken: expect.any(String),
   };
 
   const expectedAssignmentFormat = {
     _id: expectedIdFormat,
+    flags: expect.any(Array),
     contribution: expectedContributionFormat,
     chapter: expect.any(String),
-    content: expectedContentFormat,
-    dynParams: expect.arrayContaining([expect.any(String)]),
-    solutions: expect.arrayContaining([expect.any(String)]),
+    content: expect.any(String),
+    dynParams: expect.any(Array),
+    solutions: expect.any(Array),
     examples: expect.any(Array),
+    remarks: expect.any(Array),
     createdAt: expect.any(Number),
     updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
-  };
-
-  const expectedSupplementFormat = {
-    _id: expectedIdFormat,
-    contribution: expectedContributionFormat,
-    chapter: expect.any(String),
     deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
   };
 
@@ -113,71 +110,99 @@ describe('Book GraphQL', () => {
     deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
   };
 
+  const expectedSupplementFormat = {
+    _id: expectedIdFormat,
+    contribution: expectedContributionFormat,
+    chapter: expect.any(String),
+    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+  };
+
   beforeAll(async () => {
     ({ adminServer, adminUser, guestServer, normalServer, normalUsers } = await jestSetup(
       ['admin', 'guest', 'normal'],
       { apollo: true },
     ));
+
+    const teacher = await Level.findOne({ code: 'TEACHER' }).lean();
+    if (!teacher) throw 'no valid teacher-level';
+    teacherLevelId = teacher._id.toString();
   });
 
-  afterAll(async () => Promise.all([jestRemoveObject(url), jestTeardown()]));
+  afterAll(async () => jestTeardown());
 
-  test('should response an array of data when GET all', async () => {
-    expect.assertions(1);
+  afterEach(async () => url && jestRemoveObject(url));
 
-    const res = await guestServer!.executeOperation({ query: GET_BOOKS });
-    apolloExpect(res, 'data', {
-      books: expect.arrayContaining([expectedFormat]),
+  test('should response a single object when GET All & GET One by ID (as non-teacher)', async () => {
+    expect.assertions(2);
+
+    const nonTeacher = normalUsers!.find(
+      ({ schoolHistories }) => schoolHistories[0]?.level.toString() !== teacherLevelId,
+    );
+
+    // Get all
+    const resAll = await testServer(nonTeacher!).executeOperation({ query: GET_BOOKS });
+    apolloExpect(resAll, 'data', {
+      books: expect.arrayContaining([
+        { ...expectedFormat, remarks: [], assignments: expect.arrayContaining([expectedAssignmentFormat]) },
+      ]),
+    });
+
+    // Get One
+    const books = await Book.find({ deletedAt: { $exists: false } }).lean();
+    const resOne = await testServer(nonTeacher!).executeOperation({
+      query: GET_BOOK,
+      variables: { id: randomId(books) },
+    });
+    apolloExpect(resOne, 'data', {
+      book: { ...expectedFormat, remarks: [], assignments: expect.arrayContaining([expectedAssignmentFormat]) },
     });
   });
 
-  test('should response a single object when GET One by ID', async () => {
+  test('should response a single object when GET One by ID [with assignments solution] (as teacher)', async () => {
     expect.assertions(1);
 
-    const books = await Book.find({ deletedAt: { $exists: false } }).lean();
-    const id = randomId(books);
-    const res = await guestServer!.executeOperation({ query: GET_BOOK, variables: { id } });
-    apolloExpect(res, 'data', { book: expectedFormat });
-  });
-
-  test('should response a single object when GET One by ID [with assignments & supplements] (as teacher)', async () => {
-    expect.assertions(1);
-
-    const [books, teacherLevel] = await Promise.all([
-      Book.find({
-        'assignments.0': { $exists: true },
-        'supplements.0': { $exists: true },
-        deletedAt: { $exists: false },
-      }).lean(),
-      Level.findOne({ code: 'TEACHER' }).lean(),
-    ]);
-
-    if (!books.length || !teacherLevel)
-      throw 'teacherLevel & a book (with assignments and supplements) are needed for testing.';
+    const bookAssignments = await BookAssignment.find({ solutions: { $ne: [] } }).lean();
+    const books = await Book.find({ assignments: { $in: bookAssignments } }).lean();
 
     const teacher = normalUsers!.find(
-      ({ histories }) => histories[0]?.level.toString() === teacherLevel!._id.toString(),
-    )!;
+      ({ schoolHistories }) => schoolHistories[0] && schoolHistories[0]?.level.toString() === teacherLevelId,
+    );
 
     const res = await testServer(teacher).executeOperation({ query: GET_BOOK, variables: { id: randomId(books) } });
     apolloExpect(res, 'data', {
       book: {
         ...expectedFormat,
-        assignments: expect.arrayContaining([expectedAssignmentFormat]),
-        supplements: expect.arrayContaining([expectedSupplementFormat]),
+        remarks: [],
+        assignments: expect.arrayContaining([
+          { ...expectedAssignmentFormat, solutions: expect.arrayContaining([expect.any(String)]) },
+        ]),
       },
     });
   });
 
+  // guest user could get books
+  // test('should fail when GET All or Get One as guest', async () => {
+  //   expect.assertions(2);
+  //   const resAll = await guestServer!.executeOperation({ query: GET_BOOKS });
+  //   apolloExpect(resAll, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
+
+  //   const books = await Book.find({ deletedAt: { $exists: false } }).lean();
+  //   const resOne = await guestServer!.executeOperation({
+  //     query: GET_BOOK,
+  //     variables: { id: randomId(books) },
+  //   });
+  //   apolloExpect(resOne, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
+  // });
+
   test('should fail when GET non-existing document without ID argument', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({ query: GET_BOOK });
+    const res = await normalServer!.executeOperation({ query: GET_BOOK });
     apolloExpect(res, 'error', 'Variable "$id" of required type "ID!" was not provided.');
   });
 
   test('should fail when GET non-existing document without valid Mongo ID argument', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({ query: GET_BOOK, variables: { id: 'invalid-mongoID' } });
+    const res = await normalServer!.executeOperation({ query: GET_BOOK, variables: { id: 'invalid-mongoID' } });
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.INVALID_ID}`);
   });
 
@@ -208,18 +233,18 @@ describe('Book GraphQL', () => {
     });
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
-    // add remark (admin ONLY)
+    // add remark
     const book = await Book.findOne().lean();
     const res2 = await normalServer!.executeOperation({
       query: ADD_BOOK_REMARK,
       variables: { id: book!._id.toString(), remark: FAKE },
     });
-    apolloExpect(res2, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ADMIN}`);
+    apolloExpect(res2, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
   });
 
   // test set for admin or publisherAdmin
   const combinedTest = async (isAdmin: boolean) => {
-    expect.assertions(isAdmin ? 16 : 11);
+    expect.assertions(isAdmin ? 15 : 10);
 
     const [teacherLevel, allPublishers, allSchools, allSubjects] = await Promise.all([
       Level.findOne({ code: 'TEACHER' }).lean(),
@@ -234,35 +259,26 @@ describe('Book GraphQL', () => {
     const [subject] = allSubjects.sort(shuffle);
     const level = randomId(subject.levels);
     const subjects = [subject._id.toString()];
-    const [pub] = allPublishers.sort(shuffle);
-    const publisher = pub._id.toString();
-
-    const publisherAdmin = new User<Partial<UserDocument>>({
-      name: 'publisherAdmin',
-      emails: [`publishAdmin@${randomString()}.com`],
-      password: User.genValidPassword(),
-    });
+    const publisher = randomId(allPublishers);
+    const publisherAdmin = genUser(null, 'publisherAdmin');
 
     if (!isAdmin)
       await Promise.all([
         publisherAdmin.save(),
-        Publisher.findByIdAndUpdate(publisher, { $push: { admins: publisherAdmin._id } }).lean(),
+        Publisher.updateOne({ _id: publisher }, { $push: { admins: publisherAdmin._id } }),
       ]);
 
-    const [isbn, server, expected] = isAdmin
-      ? [FAKE, adminServer!, { ...expectedFormat, assignments: expect.any(Array), remarks: expect.any(Array) }]
-      : [FAKE2, testServer(publisherAdmin), expectedFormat];
-
-    url = await jestPutObject(isAdmin ? adminUser! : publisherAdmin);
+    const [isbn, server] = isAdmin ? [FAKE, adminServer!] : [FAKE2, testServer(publisherAdmin)];
+    url = await jestPutObject(isAdmin ? adminUser!._id : publisherAdmin._id);
 
     // add a document
     const createdRes = await server.executeOperation({
       query: ADD_BOOK,
-      variables: { book: { publisher, level, subjects, title: FAKE, ...(prob(0.5) && { subTitle: FAKE }) } },
+      variables: {
+        book: { publisher, level, subjects, title: FAKE, ...(prob(0.5) && { subTitle: FAKE }) },
+      },
     });
-    apolloExpect(createdRes, 'data', {
-      addBook: { ...expected, assignments: [], remarks: [], publisher, level, subjects, title: FAKE },
-    });
+    apolloExpect(createdRes, 'data', { addBook: { ...expectedFormat, publisher, level, subjects, title: FAKE } });
     const newId: string = createdRes.data!.addBook._id;
 
     // update newly created document
@@ -273,7 +289,7 @@ describe('Book GraphQL', () => {
         book: { publisher, level, subjects, title: FAKE2, ...(prob(0.5) && { subTitle: FAKE2 }) },
       },
     });
-    apolloExpect(updatedRes, 'data', { updateBook: { ...expected, publisher, level, subjects, title: FAKE2 } });
+    apolloExpect(updatedRes, 'data', { updateBook: { ...expectedFormat, publisher, level, subjects, title: FAKE2 } });
 
     if (isAdmin) {
       // addRemark (admin ONLY)
@@ -281,7 +297,9 @@ describe('Book GraphQL', () => {
         query: ADD_BOOK_REMARK,
         variables: { id: newId, remark: FAKE },
       });
-      apolloExpect(addRemarkRes, 'data', { addBookRemark: { ...expected, ...expectedRemark(adminUser!, FAKE, true) } });
+      apolloExpect(addRemarkRes, 'data', {
+        addBookRemark: { ...expectedFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
+      });
 
       // addAssignment (admin ONLY)
       const addAssignmentRes = await adminServer!.executeOperation({
@@ -310,7 +328,12 @@ describe('Book GraphQL', () => {
         },
       });
       apolloExpect(addAssignmentRes, 'data', {
-        addBookAssignment: { ...expected, assignments: [expectedAssignmentFormat] },
+        addBookAssignment: {
+          ...expectedFormat,
+          assignments: [
+            { ...expectedAssignmentFormat, chapter: FAKE, dynParams: ['A', 'B', 'C'], solutions: ['AA', 'BB', 'CC'] },
+          ],
+        },
       });
       const assignmentId = addAssignmentRes.data!.addBookAssignment.assignments[0]._id.toString();
 
@@ -321,7 +344,7 @@ describe('Book GraphQL', () => {
       });
       apolloExpect(removeAssignmentRes, 'data', {
         removeBookAssignment: {
-          ...expected,
+          ...expectedFormat,
           assignments: [{ ...expectedAssignmentFormat, deletedAt: expect.any(Number) }],
         },
       });
@@ -343,7 +366,7 @@ describe('Book GraphQL', () => {
         },
       });
       apolloExpect(addSupplementRes, 'data', {
-        addBookSupplement: { ...expected, supplements: [expectedSupplementFormat] },
+        addBookSupplement: { ...expectedFormat, supplements: [{ ...expectedSupplementFormat, chapter: FAKE }] },
       });
       const supplementId = addSupplementRes.data!.addBookSupplement.supplements[0]._id.toString();
 
@@ -354,21 +377,11 @@ describe('Book GraphQL', () => {
       });
       apolloExpect(removeSupplementRes, 'data', {
         removeBookSupplement: {
-          ...expected,
+          ...expectedFormat,
           supplements: [{ ...expectedSupplementFormat, deletedAt: expect.any(Number) }],
         },
       });
     }
-
-    // joinChat
-    const teacher = normalUsers!.find(
-      ({ histories }) => histories[0]?.level.toString() === teacherLevel!._id.toString(),
-    )!;
-    const joinBookChatRes = await testServer(teacher).executeOperation({
-      query: JOIN_BOOK_CHAT,
-      variables: { id: newId },
-    });
-    apolloExpect(joinBookChatRes, 'data', { joinBookChat: { code: MSG_ENUM.COMPLETED } });
 
     //  check isbn availability
     const isbnRes = await guestServer!.executeOperation({ query: IS_ISBN_AVAILABLE, variables: { isbn } });
@@ -383,7 +396,7 @@ describe('Book GraphQL', () => {
       },
     });
     apolloExpect(addRevisionRes, 'data', {
-      addBookRevision: { ...expected, revisions: [{ ...expectRevisionFormat, rev: FAKE, isbn, year: 2020 }] },
+      addBookRevision: { ...expectedFormat, revisions: [{ ...expectRevisionFormat, rev: FAKE, isbn, year: 2020 }] },
     });
     const revisionId = addRevisionRes.data!.addBookRevision.revisions[0]._id.toString();
 
@@ -405,7 +418,7 @@ describe('Book GraphQL', () => {
     });
     apolloExpect(addRevisionImageRes, 'data', {
       addBookRevisionImage: {
-        ...expected,
+        ...expectedFormat,
         revisions: [{ ...expectRevisionFormat, _id: revisionId, imageUrls: [url] }],
       },
     });
@@ -417,8 +430,8 @@ describe('Book GraphQL', () => {
     });
     apolloExpect(removeRevisionImageRes, 'data', {
       removeBookRevisionImage: {
-        ...expected,
-        revisions: [{ ...expectRevisionFormat, _id: revisionId, imageUrls: [`${CONTENT_PREFIX.BLOCKED}${url}`] }],
+        ...expectedFormat,
+        revisions: [{ ...expectRevisionFormat, _id: revisionId, imageUrls: [`${CONTENT_PREFIX.BLOCKED}#${url}`] }],
       },
     });
 
@@ -429,7 +442,7 @@ describe('Book GraphQL', () => {
     });
     apolloExpect(removeRevisionRes, 'data', {
       removeBookRevision: {
-        ...expected,
+        ...expectedFormat,
         revisions: [{ ...expectRevisionFormat, _id: revisionId, deletedAt: expect.any(Number) }],
       },
     });
@@ -445,11 +458,11 @@ describe('Book GraphQL', () => {
     if (!isAdmin)
       await Promise.all([
         User.deleteOne({ _id: publisherAdmin }),
-        Publisher.findByIdAndUpdate(publisher, { $pull: { admins: publisherAdmin._id } }).lean(),
+        Publisher.updateOne({ _id: publisher }, { $pull: { admins: publisherAdmin._id } }),
       ]);
   };
 
-  test('should pass when ADD, JOIN_CHAT, ADD_REMARK, UPDATE, ADD_REVISION, REMOVE_REVISION & DELETE (as admin)', async () =>
+  test('should pass when ADD, ADD_REMARK, UPDATE, ADD_REVISION, REMOVE_REVISION & DELETE (as admin)', async () =>
     combinedTest(true));
 
   test('should pass when ADD, ADD_REMARK, UPDATE, ADD_REVISION, REMOVE_REVISION & DELETE (as publisherAdmin)', async () =>

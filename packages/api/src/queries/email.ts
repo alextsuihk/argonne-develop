@@ -5,14 +5,14 @@
 
 import { gql } from 'apollo-server-core';
 
+import { AUTH_USER_FIELDS } from './auth';
 import { STATUS_RESPONSE } from './common';
-import { USER_FIELDS } from './user';
 
 export const ADD_EMAIL = gql`
-  ${USER_FIELDS}
+  ${AUTH_USER_FIELDS}
   mutation AddEmail($email: String!) {
     addEmail(email: $email) {
-      ...UserFields
+      ...AuthUserFields
     }
   }
 `;
@@ -24,10 +24,10 @@ export const IS_EMAIL_AVAILABLE = gql`
 `;
 
 export const REMOVE_EMAIL = gql`
-  ${USER_FIELDS}
+  ${AUTH_USER_FIELDS}
   mutation RemoveEmail($email: String!) {
     removeEmail(email: $email) {
-      ...UserFields
+      ...AuthUserFields
     }
   }
 `;

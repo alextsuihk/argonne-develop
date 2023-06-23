@@ -14,11 +14,18 @@ import { shuffle } from '../../utils/helper';
 /**
  * Generate (factory)
  *
+ * @param codes: tenantCodes
+ * @param count: for all tenants
+ * @param tenantCount: per tenant
+ *
  */
-const fake = async (count = 10): Promise<string> => {
-  const tenants = await Tenant.find({ deletedAt: { $exists: false } }).lean();
+const fake = async (codes: string[], count = 10, tenantCount = 3): Promise<string> => {
+  const tenants = await Tenant.find({
+    ...(codes.length && { code: { $in: codes } }),
+    deletedAt: { $exists: false },
+  }).lean();
 
-  const genAnnouncements = (tenant?: string) =>
+  const fakeAnnouncements = (count: number, tenant?: string) =>
     Array(count)
       .fill(0)
       .map(
@@ -32,12 +39,13 @@ const fake = async (count = 10): Promise<string> => {
           }),
       );
 
-  const announcements = [
-    ...genAnnouncements(),
-    ...tenants.map(tenant => genAnnouncements(tenant._id.toString())).flat(),
-  ];
-
-  await Announcement.create(announcements.sort(shuffle));
+  const announcements = await Announcement.create([
+    ...fakeAnnouncements(count),
+    ...tenants
+      .sort(shuffle)
+      .map(tenant => fakeAnnouncements(tenantCount, tenant._id.toString()))
+      .flat(),
+  ]);
 
   return `(${chalk.green(announcements.length)} created)`;
 };

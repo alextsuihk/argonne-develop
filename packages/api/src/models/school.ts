@@ -11,6 +11,8 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument, Locale, Point } from './common';
 import { baseDefinition, localeDefinition, pointSchema } from './common';
 
+export type { Id } from './common';
+
 export interface SchoolDocument extends BaseDocument {
   code: string;
   name: Locale;

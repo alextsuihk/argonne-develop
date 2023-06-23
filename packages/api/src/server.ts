@@ -21,7 +21,7 @@ import app from './app';
 import configLoader from './config/config-loader';
 import jobRunner from './job-runner';
 import DatabaseEvent from './models/event/database';
-import type { TenantDocument } from './models/tenant';
+import type { Id, TenantDocument } from './models/tenant';
 import Tenant from './models/tenant';
 import { redisClient } from './redis';
 import socketServer from './socket-server';
@@ -29,7 +29,7 @@ import { isDevMode, isProdMode } from './utils/environment';
 import log from './utils/log';
 import scheduler from './utils/scheduler';
 
-type AxiosResponse = { tenant: TenantDocument };
+type AxiosResponse = { tenant: TenantDocument & Id };
 
 const { config, DEFAULTS } = configLoader;
 const { NODE_APP_INSTANCE = 'X', JOB_RUNNER } = process.env;
@@ -38,7 +38,6 @@ const enableJobRunner = NODE_APP_INSTANCE === 'X' || (JOB_RUNNER === 'dedicated'
 
 const httpServer = createServer(app); // create express HTTP server;
 
-//! TODO: move to controller
 // initialize satellite
 const initializeSatellite = async () => {
   const tenantCount = await Tenant.countDocuments();
@@ -73,7 +72,7 @@ const initializeSatellite = async () => {
     // connect to MongoDB
     const mongoDbUrl = config.server.mongo.url;
     await mongoose.connect(mongoDbUrl, { minPoolSize: 1, maxPoolSize: 20 });
-    // if (isDevMode) mongoose.set('debug', true); // TODO: re-enable
+    if (isDevMode) mongoose.set('debug', true);
     log('info', 'mongoose connected successfully');
 
     mongoose.connection.on('disconnected', () => log('warn', 'mongoose is disconnected'));

@@ -6,7 +6,6 @@
 import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   apolloExpect,
@@ -23,7 +22,7 @@ import {
   randomId,
 } from '../jest';
 import Typography from '../models/typography';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import {
   ADD_CUSTOM_TYPOGRAPHY,
   ADD_TYPOGRAPHY,
@@ -40,7 +39,7 @@ const { MSG_ENUM } = LOCALE;
 // Top level of this test suite:
 describe('Typography GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let tenantAdminServer: ApolloServer | null;
@@ -166,7 +165,7 @@ describe('Typography GraphQL', () => {
       variables: { id: newId, remark: FAKE },
     });
     apolloExpect(addRemarkRes, 'data', {
-      addTypographyRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!, FAKE, true) },
+      addTypographyRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
     });
 
     // update newly created document

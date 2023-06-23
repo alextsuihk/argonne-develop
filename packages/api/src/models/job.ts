@@ -17,13 +17,15 @@ import { randomString } from '../utils/helper';
 import type { BaseDocument } from './common';
 import { baseDefinition } from './common';
 
-// type Task = 'bulkUpdate' | 'grade' | 'report' | 'sync';
-type Task = 'grade' | 'report' | 'sync';
+export type { Id } from './common';
 
-type Args = Record<string, string | string[]>;
+// type Task = 'bulkUpdate' | 'grade' | 'report' | 'sync';
+type Task = 'censor' | 'grade' | 'report' | 'sync';
+
+export type Args = Record<string, string | string[]>;
 
 export interface JobDocument extends BaseDocument {
-  status: typeof LOCALE.DB_TYPE.JOB.STATUS[number];
+  status: (typeof LOCALE.DB_TYPE.JOB.STATUS)[number];
   title?: string;
   owners?: string[] | Types.ObjectId[];
   task: Task;

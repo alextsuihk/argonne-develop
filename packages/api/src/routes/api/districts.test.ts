@@ -3,8 +3,6 @@
  *
  */
 
-import type { LeanDocument } from 'mongoose';
-
 import {
   expectedIdFormat,
   expectedLocaleFormat,
@@ -16,7 +14,7 @@ import {
   jestTeardown,
 } from '../../jest';
 import type { DistrictDocument } from '../../models/district';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { createUpdateDelete, getMany } = commonTest;
@@ -25,7 +23,7 @@ const route = 'districts';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
 
   // expected MINIMUM single district format
   const expectedMinFormat = {
@@ -55,7 +53,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       {
         action: 'addRemark',
         data: { remark: FAKE },
-        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!, FAKE) },
+        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
       },
       {
         action: 'update',

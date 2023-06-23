@@ -5,14 +5,14 @@
 
 import { gql } from 'apollo-server-core';
 
+import { AUTH_USER_FIELDS } from './auth';
 import { STATUS_RESPONSE } from './common';
-import { USER_FIELDS } from './user';
 
 export const BIND_TENANT = gql`
-  ${USER_FIELDS}
+  ${AUTH_USER_FIELDS}
   mutation BindTenant($token: String!) {
     bindTenant(token: $token) {
-      ...UserFields
+      ...AuthUserFields
     }
   }
 `;

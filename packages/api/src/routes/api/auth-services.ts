@@ -10,9 +10,15 @@ import authController from '../../controllers/auth-service';
 const router = Router();
 
 /**
- * @route   POST api/user-info
- * @desc    get basic user info based on email & password
+ * @route   GET api/user-info
+ * @desc    get basic user info based authorization token
  */
-router.post('/', authController.userBasicInfo);
+router.get('/:client', authController.userInfo);
+
+/**
+ * @route   POST api/user-info
+ * @desc    get basic user info based authorization token
+ */
+router.post('/', authController.userInfo);
 
 export default router;

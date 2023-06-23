@@ -29,8 +29,8 @@ const impersonateStop = Joi.object().keys({ refreshToken });
 const login = Joi.object().keys({ email, password, isPublic, force });
 const logout = Joi.object().keys({ refreshToken });
 const logoutOther = Joi.object().keys({ refreshToken });
-const oAuth2Connect = Joi.object().keys({ provider, token: Joi.string().required(), isPublic, force });
-const oAuth2Disconnect = Joi.object().keys({ provider });
+const oAuth2Link = Joi.object().keys({ provider, token: Joi.string().required(), isPublic, force });
+const oAuth2Unlink = Joi.object().keys({ provider });
 const register = Joi.object().keys({ email, name, password, isPublic });
 const renew = Joi.object().keys({ refreshToken, isPublic });
 
@@ -41,8 +41,8 @@ export default {
   login,
   logout,
   logoutOther,
-  oAuth2Connect,
-  oAuth2Disconnect,
+  oAuth2Link,
+  oAuth2Unlink,
   register,
   renew,
 };

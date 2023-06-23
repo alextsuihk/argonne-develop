@@ -4,7 +4,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
@@ -20,7 +19,7 @@ import {
   uniqueTestUser,
 } from '../../jest';
 import Tenant from '../../models/tenant';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -31,20 +30,24 @@ const route = 'users';
 
 // Top level of this test suite:
 describe('User API Routes', () => {
-  let adminUser: LeanDocument<UserDocument> | null;
-  let normalUser: LeanDocument<UserDocument> | null;
-  let rootUser: LeanDocument<UserDocument> | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
+  let normalUser: (UserDocument & Id) | null;
+  let rootUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantId: string | null;
 
   const expectedUserTenantMinFormat = {
     _id: expectedIdFormat,
     flags: expectedUserFormat.flags,
-    tenants: expect.any(Array), // could be empty array for publisher
+    tenants: expectedUserFormat.tenants,
+    status: expectedUserFormat.status,
     name: expectedUserFormat.name,
     emails: expectedUserFormat.emails,
-    histories: expectedUserFormat.histories,
     studentIds: expectedUserFormat.studentIds,
+    schoolHistories: expectedUserFormat.schoolHistories,
+    remarks: expect.any(Array),
+    createdAt: expectedUserFormat.createdAt,
+    updatedAt: expectedUserFormat.updatedAt,
   };
 
   beforeAll(async () => {
@@ -66,12 +69,24 @@ describe('User API Routes', () => {
       { testGetById: true, testInvalidId: true, testNonExistingId: true },
     ));
 
+  // ROOT could get publisherAdmins (who don't have tenants, schoolHistories, studentIds)
   test('should pass when getMany & getById (by ROOT)', async () =>
-    getMany(route, { 'Jest-User': rootUser!._id }, expectedUserTenantMinFormat, {
-      testGetById: true,
-      testInvalidId: true,
-      testNonExistingId: true,
-    }));
+    getMany(
+      route,
+      { 'Jest-User': rootUser!._id },
+      {
+        ...expectedUserTenantMinFormat,
+        tenants: expect.any(Array),
+        schoolHistories: expect.any(Array),
+        studentIds: expect.any(Array),
+        emails: expect.any(Array),
+      },
+      {
+        testGetById: true,
+        testInvalidId: true,
+        testNonExistingId: true,
+      },
+    ));
 
   test('should fail when normalUser try to create user', async () => {
     const { email, name } = uniqueTestUser();
@@ -106,7 +121,7 @@ describe('User API Routes', () => {
   test('should pass when root creates user (e.g. publisherAdmin)', async () => {
     const { email, name } = uniqueTestUser();
 
-    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': rootUser!._id }, [
+    const user = await createUpdateDelete<UserDocument & Id>(route, { 'Jest-User': rootUser!._id }, [
       {
         action: 'create',
         data: { email, name },
@@ -123,7 +138,7 @@ describe('User API Routes', () => {
     const { email, name, password } = uniqueTestUser();
     const user = await User.create({ tenants: [], name, emails: [email], password });
 
-    await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
+    await createUpdateDelete<UserDocument & Id>(route, { 'Jest-User': tenantAdmin!._id }, [
       {
         action: 'create',
         data: { tenantId: tenantId, email, name },
@@ -139,7 +154,7 @@ describe('User API Routes', () => {
   });
 
   test('should pass when school tenantAdmin creates an existing user (who already in tenant)', async () => {
-    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
+    const user = await createUpdateDelete<UserDocument & Id>(route, { 'Jest-User': tenantAdmin!._id }, [
       {
         action: 'create',
         data: { tenantId: tenantId, email: normalUser!.emails[0], name: 'whatever' },
@@ -158,7 +173,7 @@ describe('User API Routes', () => {
     const tutorTenant = await Tenant.findTutor();
 
     // create new user
-    const user = await createUpdateDelete<UserDocument>(
+    const user = await createUpdateDelete<UserDocument & Id>(
       route,
       { 'Jest-User': tenantAdmin!._id },
       [

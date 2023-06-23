@@ -6,14 +6,16 @@ import analyticTypes from './analytic';
 import announcementTypes from './announcement';
 import assignmentTypes from './assignment';
 import authTypes from './auth';
+import authServiceTypes from './auth-service';
 import bookTypes from './book';
-import chatTypes from './chat';
 import chatGroupTypes from './chat-group';
 import classroomTypes from './classroom';
 import contactTypes from './contact';
+import contentTypes from './content';
 import contributionTypes from './contribution';
 import districtTypes from './district';
 import emailTypes from './email';
+import homeworkTypes from './homework';
 import levelTypes from './level';
 import passwordTypes from './password';
 import presignedUrlTypes from './presigned-url';
@@ -39,13 +41,15 @@ export default [
   announcementTypes,
   assignmentTypes,
   authTypes,
+  authServiceTypes,
   bookTypes,
   chatGroupTypes,
-  chatTypes,
   contactTypes,
+  contentTypes,
   contributionTypes,
   districtTypes,
   emailTypes,
+  homeworkTypes,
   levelTypes,
   passwordTypes,
   presignedUrlTypes,

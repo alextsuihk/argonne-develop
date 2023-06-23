@@ -4,8 +4,11 @@
 
 import dns from 'node:dns';
 
-import type { LeanDocument, Types } from 'mongoose';
-import { Document } from 'mongoose';
+import type { Types } from 'mongoose';
+import mongoose from 'mongoose';
+
+import type { BaseDocument, Id } from '../models/common';
+import type { UserDocument } from '../models/user';
 
 /**
  * Check if text string contains UTF-8 (unicode)
@@ -21,8 +24,31 @@ export const dnsLookup = async (url: string) =>
 /**
  * Convert ObjectId[] | Document[] to string[]
  */
-export const idsToString = <T extends Document>(items: (string | Types.ObjectId | T | LeanDocument<T>)[]): string[] =>
+export const idsToString = (items: (string | Types.ObjectId | Id)[]): string[] =>
   items.map(item => (typeof item === 'string' ? item : item._id.toString()));
+
+/**
+ * Is it Mongoose Document
+ */
+export const isDocument = <T extends BaseDocument>(data: string | Types.ObjectId | T) =>
+  typeof data === 'string' || data instanceof mongoose.Types.ObjectId;
+
+/**
+ * Get the latest schoolHistory
+ */
+export const latestSchoolHistory = (schoolHistories: UserDocument['schoolHistories']) =>
+  schoolHistories[0] && {
+    year: schoolHistories[0].year,
+    school: schoolHistories[0].school.toString(),
+    level: schoolHistories[0].level.toString(),
+    ...(schoolHistories[0].schoolClass && { schoolClass: schoolHistories[0].schoolClass }),
+    updatedAt: schoolHistories[0].updatedAt,
+  };
+
+/**
+ * generate a new mongo ID
+ */
+export const mongoId = () => new mongoose.Types.ObjectId();
 
 /**
  * Probability (0 - 1.0)
@@ -32,8 +58,8 @@ export const prob = (x: number): boolean => Math.random() > 1 - x;
 /**
  * Randomly Pick one from string[] or Pick one ID from Document[]
  */
-export const randomId = <T extends Document>(items: (string | Types.ObjectId | T | LeanDocument<T>)[]) =>
-  idsToString(items)[Math.floor(Math.random() * items.length)]?.toString();
+export const randomId = (items: (string | Types.ObjectId | Id)[]) =>
+  idsToString(items)[Math.floor(Math.random() * items.length)];
 
 /**
  * Generate a random string with optional timestamp (prefix) & file extension
@@ -67,3 +93,8 @@ export const terminate = (message: string): never => {
   console.error(message);
   process.exit(1);
 };
+
+/**
+ * Return unique IDs from Array<string> | Array<Document>
+ */
+export const uniqueIds = (ids: (string | Types.ObjectId | Id)[]): string[] => Array.from(new Set(idsToString(ids)));

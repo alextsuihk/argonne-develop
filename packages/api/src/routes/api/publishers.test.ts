@@ -3,8 +3,6 @@
  *
  */
 
-import type { LeanDocument } from 'mongoose';
-
 import {
   expectedIdFormat,
   expectedLocaleFormat,
@@ -19,7 +17,7 @@ import {
   prob,
 } from '../../jest';
 import type { PublisherDocument } from '../../models/publisher';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { createUpdateDelete, getMany } = commonTest;
@@ -27,8 +25,8 @@ const route = 'publishers';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: LeanDocument<UserDocument> | null;
-  let normalUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
+  let normalUser: (UserDocument & Id) | null;
   let url: string;
   let url2: string;
 
@@ -50,7 +48,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     getMany(route, {}, expectedMinFormat, { testGetById: true, testInvalidId: true, testNonExistingId: true }));
 
   test('should pass when CREATE, UPDATE, REMOVE & verify-REMOVE', async () => {
-    [url, url2] = await Promise.all([jestPutObject(adminUser!), jestPutObject(adminUser!)]);
+    [url, url2] = await Promise.all([jestPutObject(adminUser!._id), jestPutObject(adminUser!._id)]);
     const create = {
       admins: [adminUser!._id.toString(), normalUser!._id.toString()],
       name: FAKE_LOCALE,
@@ -66,12 +64,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       website: 'http://jest2.com',
     };
 
-    await createUpdateDelete<PublisherDocument>(route, { 'Jest-User': adminUser!._id }, [
+    await createUpdateDelete<PublisherDocument & Id>(route, { 'Jest-User': adminUser!._id }, [
       { action: 'create', data: create, expectedMinFormat: { ...expectedMinFormat, ...create } },
       {
         action: 'addRemark',
         data: { remark: FAKE },
-        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!, FAKE) },
+        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
       },
       { action: 'update', data: { ...update, logoUrl: '' }, expectedMinFormat: { ...expectedMinFormat, ...update } }, // remove logoUrl
       {

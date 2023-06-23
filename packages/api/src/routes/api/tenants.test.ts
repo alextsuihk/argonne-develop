@@ -5,7 +5,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   domain,
@@ -16,6 +15,7 @@ import {
   FAKE_LOCALE,
   FAKE2,
   FAKE2_LOCALE,
+  genUser,
   idsToString,
   jestPutObject,
   jestRemoveObject,
@@ -27,7 +27,7 @@ import {
 } from '../../jest';
 import School from '../../models/school';
 import { TenantDocument } from '../../models/tenant';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -38,7 +38,7 @@ const route = 'tenants';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let rootUser: LeanDocument<UserDocument> | null;
+  let rootUser: (UserDocument & Id) | null;
   let htmlUrl: string;
   let logoUrl: string;
 
@@ -59,6 +59,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     // logoUrl: expect.any(String), // could be undefined
 
     flaggedWords: expect.any(Array),
+    authServices: expect.any(Array),
     updatedAt: expect.any(String),
   };
 
@@ -97,7 +98,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       ...(prob(0.5) && { satelliteUrl: `https://satellite2.${domain}` }),
     };
 
-    const tenant = await createUpdateDelete<TenantDocument>(
+    const tenant = await createUpdateDelete<TenantDocument & Id>(
       route,
       { 'Jest-User': rootUser!._id }, // as root
       [
@@ -109,7 +110,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         {
           action: 'addRemark',
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(rootUser!, FAKE) },
+          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(rootUser!._id, FAKE) },
         },
         {
           action: 'updateCore',
@@ -129,21 +130,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
     const tenantId = tenant!._id.toString();
 
-    // create two fake users
     const users = Array(2)
       .fill(0)
-      .map(
-        (_, idx) =>
-          new User<Partial<UserDocument>>({
-            name: `tenantAdmin (${idx})`,
-            emails: [`tenant-admin-${idx}@${tenant!._id}.net`],
-            password: User.genValidPassword(),
-            tenants: [tenant!._id],
-          }),
-      );
+      .map((_, idx) => genUser(tenant!._id, `tenantAdmin (${idx})`));
     await User.create(users);
 
-    await createUpdateDelete<TenantDocument>(
+    await createUpdateDelete<TenantDocument & Id>(
       route,
       { 'Jest-User': rootUser!._id }, // add admins as root
       [
@@ -171,9 +163,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       website: `https://www.${domain}`,
       flaggedWords: prob(0.5) ? [] : [FAKE, FAKE2],
     };
-    [htmlUrl, logoUrl] = await Promise.all([jestPutObject(users[0]), jestPutObject(users[0])]);
+    [htmlUrl, logoUrl] = await Promise.all([jestPutObject(users[0]._id), jestPutObject(users[0]._id)]);
 
-    await createUpdateDelete<TenantDocument>(
+    await createUpdateDelete<TenantDocument & Id>(
       route,
       { 'Jest-User': users[0]._id }, // as tenantAdmin
       [
@@ -192,7 +184,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
 
     // remove
-    await createUpdateDelete<TenantDocument>(
+    await createUpdateDelete<TenantDocument & Id>(
       route,
       { 'Jest-User': rootUser!._id }, //
       [{ action: 'delete', data: {} }],

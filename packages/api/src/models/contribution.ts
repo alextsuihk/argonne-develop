@@ -13,12 +13,14 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument } from './common';
 import { baseDefinition } from './common';
 
+export type { Id } from './common';
+
 export interface ContributionDocument extends BaseDocument {
   title: string;
   description?: string;
   contributors: {
     user: string | Types.ObjectId;
-    name: string; // John (S.3)
+    name: string; // John (P6, S3)
     school: string | Types.ObjectId;
   }[];
 

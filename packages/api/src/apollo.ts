@@ -4,11 +4,10 @@
  */
 
 import { ApolloServer } from 'apollo-server-express';
-import type { LeanDocument } from 'mongoose';
 
 import app from './app';
 import configLoader from './config/config-loader';
-import type { UserDocument } from './models/user';
+import type { Id, UserDocument } from './models/user';
 import resolvers from './resolvers';
 import typeDefs from './typeDefs';
 import { isDevMode } from './utils/environment';
@@ -51,7 +50,7 @@ const stop = async (): Promise<void> => apolloServer.stop();
 /**
  * Apollo Test Server for jest
  */
-export const testServer = (emulatedUser?: LeanDocument<UserDocument> | null): ApolloServer =>
+export const testServer = (emulatedUser?: (UserDocument & Id) | null): ApolloServer =>
   new ApolloServer({
     typeDefs,
     resolvers,
@@ -67,12 +66,14 @@ export const testServer = (emulatedUser?: LeanDocument<UserDocument> | null): Ap
         userRoles: emulatedUser?.roles,
         userScopes: emulatedUser?.scopes,
         userTenants: idsToString(emulatedUser?.tenants ?? []),
-        ...(emulatedUser?.histories[0] && {
+        ...(emulatedUser?.schoolHistories[0] && {
           userExtra: {
-            year: emulatedUser?.histories[0].year,
-            school: emulatedUser?.histories[0].school.toString(),
-            level: emulatedUser?.histories[0].level.toString(),
-            ...(emulatedUser?.histories[0].schoolClass && { schoolClass: emulatedUser?.histories[0].schoolClass }),
+            year: emulatedUser?.schoolHistories[0].year,
+            school: emulatedUser?.schoolHistories[0].school.toString(),
+            level: emulatedUser?.schoolHistories[0].level.toString(),
+            ...(emulatedUser?.schoolHistories[0].schoolClass && {
+              schoolClass: emulatedUser?.schoolHistories[0].schoolClass,
+            }),
           },
         }),
       },

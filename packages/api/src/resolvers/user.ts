@@ -9,8 +9,17 @@ import { tryCatch } from './root';
 
 type unk = unknown;
 
-const { create, find, findOne, updateNetworkStatus, updateProfile, updatePaymentMethod, updateSchool, verifyId } =
-  userController;
+const {
+  addSchoolHistory,
+  changePassword,
+  create,
+  find,
+  findOne,
+  suspend,
+  updateFeature,
+  updateFlag,
+  updateIdentifiedAt,
+} = userController;
 
 export default {
   Query: {
@@ -20,10 +29,14 @@ export default {
 
   Mutation: {
     addUser: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
-    updateUserNetworkStatus: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateNetworkStatus(req, args)),
-    // updateUserPaymentMethod: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updatePaymentMethod(req, args)),
-    updateUserProfile: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateProfile(req, args)),
-    updateUserSchool: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateSchool(req, args)),
-    verifyId: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => verifyId(req, args)),
+    addUserFeature: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateFeature(req, args, 'addFeature')),
+    addUserSchoolHistory: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addSchoolHistory(req, args)),
+    changeUserPassword: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => changePassword(req, args)),
+    clearUserFlag: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateFlag(req, args, 'clearFlag')),
+    removeUserFeature: async (_: unk, args: unk, { req }: Ctx) =>
+      tryCatch(() => updateFeature(req, args, 'removeFeature')),
+    setUserFlag: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateFlag(req, args, 'setFlag')),
+    suspendUser: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => suspend(req, args)),
+    updateIdentifiedAt: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateIdentifiedAt(req, args)),
   },
 };

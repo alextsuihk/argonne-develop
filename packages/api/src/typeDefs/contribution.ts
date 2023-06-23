@@ -49,6 +49,7 @@ export default gql`
     book: String
     chapter: String
 
+    remarks: [Remark!]
     createdAt: Float!
     updatedAt: Float!
     deletedAt: Float

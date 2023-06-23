@@ -38,29 +38,41 @@ const seeders = [
   'user-core',
   'tenant-tutor',
   'tenant-stem',
-  'tenant-cascade',
-  'tenant-bootcamp',
+  // 'tenant-cascade',
+  // 'tenant-bootcamp',
   'activity-chat',
 ];
 
-const preFakers = [['system-tutor'], ['publisher', 10], ['tag', 50]];
-
 const jestFaker = ['tenant', 'JEST', [], ['junior']];
 const demoFakers = [
-  ['tenant', 'OXFORD', ['CHAT_GROUP', 'CLASSROOM', 'QUESTION'], ['junior']], // demo school
+  ['tenant', 'OXFORD', ['CHAT_GROUP', 'CLASSROOM', 'QUESTION'], ['junior']], // demo secondary school
   ['tenant', 'A-PLUS', ['CHAT_GROUP', 'QUESTION', 'TUTOR']], // no levelGroups for tutoring school
 ];
 
-const postFakers = [
-  ['user-tutor', [30, 15, 30]],
-  ['book', 100, 3, 10, 5],
-  ['school-course', 2],
-  ['classroom', 3],
-  ['typography', 0.4],
-  ['announcement', 10],
-  ['chat-group', 5, 4, 4],
-  ['question', 5, 5, 5],
+// loop tenants,and fake data
+const tenantFakers = [
+  ['typography', [], 0.4],
+  ['user', [], 25, 20, 50, 10],
+  ['tutor', [], 0.2, 3],
+  ['school-course', [], 2],
+  ['chat-group', [], 5, 4, 4],
+  ['classroom', [], 3],
+  ['announcement', [], 10, 2],
+  ['question', [], 5, 5, 5],
 ];
+
+const factory = (argv: string[]) =>
+  argv.includes('--fake') || argv.includes('jest') || argv.includes('demo') || argv.includes('system-tutor')
+    ? [
+        ['tag', 50],
+        ['publisher', 10],
+        ...(argv.includes('--system-tutors') ? [['system-tutor']] : []),
+        ...(argv.includes('--jest') ? [jestFaker] : []),
+        ...(argv.includes('--demo') ? demoFakers : []),
+        ...tenantFakers,
+        ['book', 100, 3, 10, 5], // in postFaker because of contributions (users from any tenants),
+      ]
+    : [];
 
 /**
  * Drop Database, optionally Seed & Factory
@@ -105,7 +117,7 @@ const sync = async (argv: string[]): Promise<void> => {
       };
 
       console.log('------------------------------------------------------------ ');
-      console.log(chalk.red(`All minio buckets ${privateBucket}, ${publicBucket} are re-created !!! \n`));
+      console.log(chalk.red(`All minio buckets are re-created !!! (${privateBucket}, ${publicBucket}) \n`));
       await Promise.all(
         buckets.map(async bucket =>
           (await minioClient.bucketExists(bucket))
@@ -123,7 +135,6 @@ const sync = async (argv: string[]): Promise<void> => {
     // drop database
     if (argv.includes('--drop')) {
       console.log('------------------------------------------------------------ ');
-
       try {
         // await mongoose.connection.dropDatabase(); // required root privilege
         const collections = await mongoose.connection.db.listCollections().toArray();
@@ -139,34 +150,28 @@ const sync = async (argv: string[]): Promise<void> => {
     // Seed initial collection
     if (argv.includes('--seed')) {
       console.log('------------------------------------------------------------ ');
-
       // ! seeding order is important (Don't Use "no-await-in-loop")
       for (const seeder of seeders) {
         try {
+          const start = Date.now();
           const message = await require(`./seed/${seeder}-seed`).seed();
-          console.log(`seed > ${seeder} complete >> ${message}`);
+          console.log(`seed > ${seeder} complete >> [${Math.floor(Date.now() - start)} ms] ${message}`);
         } catch (error) {
           console.error(`ERROR in seeding ${seeder}: `, error);
           throw `Error in Seeding ${seeder}`;
         }
       }
-      console.log(chalk.green(`Seeding >>> Completed:  ${seeders.join(', ')} \n`));
+      console.log(chalk.green(`Seeding >>> Completed:  ${seeders.join('; ')} \n`));
     }
 
-    // factory data
-    const fakers = argv.includes('--fake')
-      ? [
-          ...preFakers,
-          ...(argv.includes('--jest') ? [jestFaker] : []),
-          ...(argv.includes('--demo') ? demoFakers : []),
-          ...postFakers,
-        ]
-      : [];
-
+    // (argv) data
+    const fakers = factory(argv);
+    console.log('------------------------------------------------------------ ');
     for (const [faker, ...args] of fakers) {
       try {
+        const start = Date.now();
         const message = await require(`./factory/${faker}-factory`).fake(...args);
-        console.log(`factory > ${faker} complete >> ${message}`);
+        console.log(`factory > ${faker} complete >>[${Math.floor(Date.now() - start)} ms] ${message}`);
       } catch (error) {
         console.error(`ERROR in factory ${faker}: `, error);
         throw `Error in Factory ${faker}`;

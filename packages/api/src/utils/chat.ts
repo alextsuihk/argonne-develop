@@ -3,7 +3,7 @@
  *
  */
 
-import type { DocumentSync, Locale } from '@argonne/common';
+import type { Locale } from '@argonne/common';
 import { LOCALE } from '@argonne/common';
 import type { Types } from 'mongoose';
 
@@ -13,11 +13,10 @@ import Chat from '../models/chat';
 import ChatGroup from '../models/chat-group';
 import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
+import User from '../models/user';
 import { idsToString } from './helper';
-import { notify } from './messaging';
-import syncSatellite from './sync-satellite';
-
-export type ChatResponse = Pick<DocumentSync, 'chatGroupIds' | 'classroomIds' | 'chatIds' | 'contentIds'>;
+import log from './log';
+import { notifySync } from './notify-sync';
 
 const { MSG_ENUM } = LOCALE;
 const { zhCN, zhHK } = LOCALE.DB_ENUM.SYSTEM.LOCALE;
@@ -31,46 +30,8 @@ export const extract = (msg: Locale | string, userLocale?: string) =>
     : userLocale === zhHK
     ? msg.zhHK
     : userLocale === zhCN
-    ? msg.zhCN ?? msg.zhHK
+    ? msg.zhCN || msg.zhHK
     : msg.enUS;
-
-/**
- * Join ChatGroup (with content)
- */
-export const joinChatGroup = async (
-  chatGroupId: string | Types.ObjectId,
-  msg: Locale | string,
-  userIds: (string | Types.ObjectId)[],
-  userLocale: string,
-): Promise<void> => {
-  const chatGroup = await ChatGroup.findById(chatGroupId).lean();
-  if (!chatGroup) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const newUsers = Array.from(new Set(idsToString(userIds))).filter(x => !idsToString(chatGroup.users).includes(x));
-
-  const content = new Content<Partial<ContentDocument>>({ creator: userIds[0], data: extract(msg, userLocale) });
-  const chat = new Chat<Partial<ChatDocument>>({
-    parents: [`/chatGroups/${chatGroupId}`],
-    members: newUsers.map(user => ({ user, flags: [] })),
-    contents: [content._id],
-  });
-  content.parents = [`/chats/${chat._id}`];
-
-  const ids: ChatResponse = {
-    chatGroupIds: [chatGroupId.toString()],
-    chatIds: [chat._id.toString()],
-    contentIds: [content._id.toString()],
-  };
-  await Promise.all([
-    ChatGroup.findByIdAndUpdate(chatGroupId, { $push: { users: { $each: newUsers }, chats: chat._id } }).lean(),
-    chat.save(),
-    content.save(),
-    notify([...chatGroup.users, ...userIds], 'CHAT', ids),
-    syncSatellite({ tenantId: chatGroup.tenant, userIds: [...chatGroup.users, ...userIds] }, ids),
-  ]);
-
-  // return ids;
-};
 
 /**
  * Send Message to Admin
@@ -81,57 +42,59 @@ export const messageToAdmin = async (
   userLocale: string,
   userRoles: string[],
   userIds: (string | Types.ObjectId)[],
-  adminKey: string,
+  key: string,
   userName?: string,
   skipNotify?: boolean,
 ) => {
-  const users = Array.from(new Set([...idsToString(userIds), userId.toString()]));
+  const { adminIds } = await User.findSystemAccountIds();
+  const uniqueUserIds = Array.from(new Set([...adminIds, ...idsToString([userId, ...userIds])]));
 
-  const chatGroup = await ChatGroup.findOneAndUpdate(
-    { adminKey },
+  const title = !userName
+    ? key
+    : userLocale === 'zhHK'
+    ? `管理員留言 (${userName})`
+    : userLocale === 'zhCN'
+    ? `管理员留言 (${userName})`
+    : `Admin Message (${userName})`;
+  const { _id, tenant, users } = await ChatGroup.findOneAndUpdate(
+    { key },
     {
-      adminKey,
-      title: userName ? `${adminKey} (${userName})` : adminKey,
+      key,
+      title,
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
-      $addToSet: { users: { $each: users } },
+      $addToSet: { flags: CHAT_GROUP.FLAG.ADMIN, admins: { $each: adminIds }, users: { $each: uniqueUserIds } },
     },
     { new: true, upsert: true },
   ).lean(); // create a new chatGroup if not exists
 
   const content = new Content<Partial<ContentDocument>>({ creator: userId, data: extract(msg, userLocale) });
-  const chat = new Chat<Partial<ChatDocument>>({
-    parents: [`/chatGroups/${chatGroup._id}`],
-    members: [
-      { user: userId, flags: [], lastViewedAt: new Date() },
-      ...users.filter(user => user !== userId.toString()).map(user => ({ user, flags: [] })),
-    ],
+  const chat = await Chat.create<Partial<ChatDocument>>({
+    parents: [`/chatGroups/${_id}`],
+    members: [{ user: userId, flags: [], lastViewedAt: new Date() }],
     contents: [content._id],
   });
   content.parents = [`/chats/${chat._id}`];
 
-  const flags =
-    userRoles.includes(USER.ROLE.ADMIN) && !chatGroup.flags.includes(CHAT_GROUP.FLAG.ADMIN_JOINED)
-      ? [...chatGroup.flags, CHAT_GROUP.FLAG.ADMIN_JOINED]
-      : chatGroup.flags;
-
-  const ids: ChatResponse = {
-    chatGroupIds: [chatGroup._id.toString()],
-    chatIds: [chat._id.toString()],
-    contentIds: [content._id.toString()],
-  };
   const [updatedChatGroup] = await Promise.all([
     ChatGroup.findByIdAndUpdate(
-      chatGroup,
-      { flags, $push: { chats: chat._id } },
-      { fields: select(), new: true },
+      _id,
+      {
+        $push: { chats: chat._id },
+        ...(userRoles.includes(USER.ROLE.ADMIN) && { $addToSet: { flags: CHAT_GROUP.FLAG.ADMIN_JOINED } }),
+      },
+      { fields: select(), new: true, populate: [{ path: 'chats', select: select() }] },
     ).lean(),
-    chat.save(),
     content.save(),
-    skipNotify || notify(chatGroup.users, 'CHAT', ids),
-    syncSatellite({ tenantId: chatGroup.tenant, userIds: chatGroup.users }, ids),
+    notifySync(
+      'CHAT-GROUP',
+      { tenantId: tenant, ...(!skipNotify && { userIds: users }) },
+      { chatGroupIds: [_id], chatIds: [chat], contentIds: [content] },
+    ),
   ]);
 
-  return updatedChatGroup!;
+  if (updatedChatGroup) return updatedChatGroup;
+  log('error', 'utils/chat:messageToAdmin()', { msg, userIds, key }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
@@ -140,42 +103,47 @@ export const messageToAdmin = async (
 export const startChatGroup = async (
   tenantId: string | Types.ObjectId | null,
   msg: Locale | string,
-  [user0Id, ...userIds]: (string | Types.ObjectId)[],
+  userIds: (string | Types.ObjectId)[],
   userLocale: string,
   key: string,
+  flag?: string,
 ) => {
+  const [user0Id] = userIds;
   if (!user0Id) throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 
   const chatGroup = await ChatGroup.findOneAndUpdate(
     { key },
-    { $addToSet: { users: { $each: [user0Id, ...userIds] } } },
+    {
+      ...(tenantId ? { tenant: tenantId } : { $unset: { tenant: 1 } }),
+      membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
+      $addToSet: { users: { $each: userIds }, ...(flag && { flags: flag }) }, //no admins
+    },
     { new: true, upsert: true },
   ).lean(); // create a new chat if not exists
 
-  const content = new Content<Partial<ContentDocument>>({
-    creator: user0Id.toString(),
-    data: extract(msg, userLocale),
-  });
-  const chat = new Chat<Partial<ChatDocument>>({
+  const content = new Content<Partial<ContentDocument>>({ creator: user0Id, data: extract(msg, userLocale) });
+  const chat = await Chat.create<Partial<ChatDocument>>({
     parents: [`/chatGroups/${chatGroup._id}`],
-    members: [{ user: user0Id, flags: [], lastViewedAt: new Date() }, ...userIds.map(user => ({ user, flags: [] }))],
+    members: [{ user: user0Id, flags: [], lastViewedAt: new Date() }],
     contents: [content._id],
   });
   content.parents = [`/chats/${chat._id}`];
 
-  const ids: ChatResponse = {
-    chatGroupIds: [chatGroup._id.toString()],
-    chatIds: [chat._id.toString()],
-    contentIds: [content._id.toString()],
-  };
-
   const [updatedChatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(chatGroup, { $push: { chats: chat._id } }, { fields: select(), new: true }).lean(),
-    chat.save(),
+    ChatGroup.findByIdAndUpdate(
+      chatGroup,
+      { $push: { chats: chat._id } },
+      { fields: select(), new: true, populate: [{ path: 'chats', select: select() }] },
+    ).lean(),
     content.save(),
-    notify(chatGroup.users, 'CHAT', ids),
-    syncSatellite({ ...(tenantId && { tenantId }), userIds: chatGroup.users }, ids),
+    notifySync(
+      'CHAT-GROUP',
+      { ...(tenantId && { tenantId }), userIds: chatGroup.users },
+      { chatGroupIds: [chatGroup], chatIds: [chat], contentIds: [content] },
+    ),
   ]);
 
-  return updatedChatGroup!;
+  if (updatedChatGroup) return updatedChatGroup;
+  log('error', 'utils/chat:startChatGroup()', { tenantId, msg, userIds, key }, user0Id);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };

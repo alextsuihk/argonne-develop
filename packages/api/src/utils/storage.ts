@@ -1,5 +1,5 @@
 /**
- * Upload: send log message to external server
+ * PresignedUrl: send log message to external server
  *
  */
 
@@ -10,11 +10,11 @@ import { Client } from 'minio';
 import type { Types } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import Upload from '../models/presigned-url';
+import PresignedUrl from '../models/presigned-url';
 import { randomString } from './helper';
 export type { BucketItem } from 'minio';
 
-export type PresignedUrl = { url: string; expiry: number };
+export type PresignedUrlWithExpiry = { url: string; expiry: number };
 
 const { MSG_ENUM } = LOCALE;
 const { config, DEFAULTS } = configLoader;
@@ -47,7 +47,7 @@ const fetchToLocal = async (url: string, bucketType: 'private' | 'public' = 'pub
 /**
  * Generate presignedUrl (for upload)
  */
-const presignedPutObject = async (bucketType: string, ext: string, userId: string): Promise<PresignedUrl> => {
+const presignedPutObject = async (bucketType: string, ext: string, userId: string): Promise<PresignedUrlWithExpiry> => {
   const bucketName = bucketType === 'private' ? privateBucket : publicBucket;
   if (!(await client.bucketExists(bucketName))) throw { statusCode: 500, code: MSG_ENUM.MINIO_ERROR };
 
@@ -55,7 +55,7 @@ const presignedPutObject = async (bucketType: string, ext: string, userId: strin
   const expiry = DEFAULTS.STORAGE.PRESIGNED_URL_PUT_EXPIRY;
   const [presignedUrl] = await Promise.all([
     client.presignedPutObject(bucketName, objectName, expiry),
-    Upload.create({
+    PresignedUrl.create({
       user: userId,
       url: `/${bucketName}/${objectName}`,
       expireAt: addSeconds(Date.now(), DEFAULTS.STORAGE.PRESIGNED_URL_PUT_EXPIRY + 5),
@@ -70,17 +70,17 @@ const presignedPutObject = async (bucketType: string, ext: string, userId: strin
  * (in case user requested a presigned-Put-Url, abort after uploading file)
  */
 const removeExpiredObjects = async (): Promise<void> => {
-  const storageObjects = await Upload.find({ expireAt: { $gt: new Date() } }).lean();
+  const storageObjects = await PresignedUrl.find({ expireAt: { $gt: new Date() } }).lean();
 
   await Promise.all([
-    Upload.deleteMany({ _id: { $in: storageObjects } }),
+    PresignedUrl.deleteMany({ _id: { $in: storageObjects } }),
     new Promise<void>(resolve =>
       client.removeObjects(
         privateBucket,
         storageObjects
           .filter(obj => obj.url.startsWith(`/${privateBucket}/`))
           .map(obj => obj.url.replace(`/${privateBucket}/`, '')),
-        _ => resolve(),
+        () => resolve(),
       ),
     ),
     new Promise<void>(resolve =>
@@ -89,7 +89,7 @@ const removeExpiredObjects = async (): Promise<void> => {
         storageObjects
           .filter(obj => obj.url.startsWith(`/${publicBucket}/`))
           .map(obj => obj.url.replace(`/${publicBucket}/`, '')),
-        _ => resolve(),
+        () => resolve(),
       ),
     ),
   ]);
@@ -132,7 +132,7 @@ export const signUrls = async (urls: string[]): Promise<string[]> =>
 
 /**
  * Validate Object Exists
- * if exists (is valid), remove Upload document
+ * if exists (is valid), remove PresignedUrl document
  *
  * @param url (e.g. /bucketName/objectName)
  */
@@ -144,8 +144,8 @@ const validateObject = async (url: string, userId: string | Types.ObjectId, skip
 
   try {
     if (!skipCheck) {
-      const storageObject = await Upload.findOneAndDelete({ user: userId, url }).lean();
-      if (!storageObject) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+      const { deletedCount } = await PresignedUrl.deleteOne({ user: userId, url });
+      if (!deletedCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
     }
     await client.statObject(bucketName, rest.join('/'));
   } catch (error) {

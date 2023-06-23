@@ -4,7 +4,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   expectedIdFormat,
@@ -18,7 +17,7 @@ import {
   jestTeardown,
 } from '../../jest';
 import type { TypographyDocument } from '../../models/typography';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -28,9 +27,9 @@ const route = 'typographies';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: LeanDocument<UserDocument> | null;
-  let normalUser: LeanDocument<UserDocument> | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
+  let normalUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantId: string | null;
 
   // expected MINIMUM single typography format
@@ -80,7 +79,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       {
         action: 'addRemark',
         data: { remark: FAKE },
-        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!, FAKE) },
+        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
       },
       {
         action: 'update',

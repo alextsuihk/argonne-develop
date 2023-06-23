@@ -6,7 +6,6 @@
 import { gql } from 'apollo-server-core';
 
 import { MEMBER } from './common';
-export { GET_CONTENT } from './common';
 
 const CHAT_FIELDS = gql`
   ${MEMBER}
@@ -61,23 +60,24 @@ export const CLEAR_CHAT_FLAG = gql`
   }
 `;
 
-export const GET_CHAT = gql`
-  ${CHAT_FIELDS}
-  query GetChat($id: ID!) {
-    chat(id: $id) {
-      ...ChatFields
-    }
-  }
-`;
+// TODO: remove EOL
+// export const GET_CHAT = gql`
+//   ${CHAT_FIELDS}
+//   query GetChat($id: ID!) {
+//     chat(id: $id) {
+//       ...ChatFields
+//     }
+//   }
+// `;
 
-export const GET_CHATS = gql`
-  ${CHAT_FIELDS}
-  query GetChats($query: QueryInput) {
-    chats(query: $query) {
-      ...ChatFields
-    }
-  }
-`;
+// export const GET_CHATS = gql`
+//   ${CHAT_FIELDS}
+//   query GetChats($query: QueryInput) {
+//     chats(query: $query) {
+//       ...ChatFields
+//     }
+//   }
+// `;
 
 export const RECALL_CHAT_CONTENT = gql`
   ${CHAT_FIELDS}

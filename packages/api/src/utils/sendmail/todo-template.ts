@@ -4,13 +4,12 @@
  * Sendmail: Reset Password
  */
 
-import type { LeanDocument } from 'mongoose';
 import Mail from 'nodemailer/lib/mailer';
 
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 
 export default (transporter: Mail, sender: string, isJest = false) =>
-  async (user: LeanDocument<UserDocument>, email: string, token: string, expiresBy: Date): Promise<void> => {
+  async (user: UserDocument & Id, email: string, token: string, expiresBy: Date): Promise<void> => {
     if (isJest) return; // for JEST test, no need to send email
 
     console.log('TODO: ', token);

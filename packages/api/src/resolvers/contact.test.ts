@@ -4,7 +4,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument, Types } from 'mongoose';
 
 import {
   apolloExpect,
@@ -15,10 +14,11 @@ import {
   jestSetup,
   jestTeardown,
   prob,
+  randomId,
   shuffle,
   testServer,
 } from '../jest';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_CONTACT,
@@ -35,12 +35,12 @@ const { MSG_ENUM } = LOCALE;
 describe('Contact GraphQL', () => {
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: LeanDocument<UserDocument> | null;
-  let normalUsers: LeanDocument<UserDocument>[] | null;
-  let tenantId: string | null;
+  let normalUser: (UserDocument & Id) | null;
+  let normalUsers: (UserDocument & Id)[] | null;
 
   const expectedFormat = {
     _id: expectedIdFormat,
+    flags: expect.any(Array),
     avatarUrl: expect.toBeOneOf([null, expect.any(String)]),
     name: expect.any(String),
     identifiedAt: expect.toBeOneOf([null, expect.any(Number)]),
@@ -49,27 +49,25 @@ describe('Contact GraphQL', () => {
   };
 
   beforeAll(async () => {
-    ({ normalUsers, guestServer, normalServer, normalUser, tenantId } = await jestSetup(['guest', 'normal'], {
+    ({ normalUsers, guestServer, normalServer, normalUser } = await jestSetup(['guest', 'normal'], {
       apollo: true,
     }));
   });
   afterAll(jestTeardown);
 
-  test('should response a contact list from req.user', async () => {
+  test('should response a contact list from user.contacts', async () => {
     expect.assertions(1);
     const res = await normalServer!.executeOperation({ query: GET_CONTACTS });
     apolloExpect(res, 'data', { contacts: expect.arrayContaining([expectedFormat]) });
   });
 
-  test('should response a single contact from req.user', async () => {
+  test('should response a single contact from user.contacts', async () => {
     expect.assertions(1);
 
     // pick a random contact (who is ACTIVE)
-    const [randomContactId] = normalUser!.contacts
-      .filter(c => idsToString(normalUsers!).includes(c.user.toString()))
-      .map(c => c.user.toString())
-      .sort(shuffle);
-    const res = await normalServer!.executeOperation({ query: GET_CONTACT, variables: { id: randomContactId! } });
+    const myContactIds = normalUser!.contacts.map(c => c.user.toString());
+    const friendId = myContactIds.sort(shuffle).find(uid => idsToString(normalUsers!).includes(uid));
+    const res = await normalServer!.executeOperation({ query: GET_CONTACT, variables: { id: friendId } });
     apolloExpect(res, 'data', { contact: expectedFormat });
   });
 
@@ -106,20 +104,14 @@ describe('Contact GraphQL', () => {
   test('should pass when ADD, myContacts, REMOVE, RE-ADD', async () => {
     expect.assertions(6);
 
-    // remove contact relationship if exists
-    const cleanUp = async (userId: string | Types.ObjectId, user2Id: string | Types.ObjectId) =>
-      Promise.all([
-        User.findByIdAndUpdate(userId, { $pull: { contacts: { user: user2Id } } }),
-        User.findByIdAndUpdate(user2Id, { $pull: { contacts: { user: userId } } }),
-      ]);
+    // find an user who not in contacts
+    const myContactIds = normalUser!.contacts.map(c => c.user.toString());
+    const friend = normalUsers!
+      .sort(shuffle)
+      .find(({ _id }) => _id.toString() !== normalUser!._id.toString() && !myContactIds.includes(_id.toString()));
 
-    const [friend] = normalUsers!.filter(
-      user => idsToString(user.tenants).includes(tenantId!) && user._id.toString() !== normalUser!._id.toString(),
-    );
+    const friendId = friend!._id.toString();
     const friendServer = testServer(friend);
-    const friendId = friend._id.toString();
-
-    await cleanUp(normalUser!._id, friendId);
 
     // generate contactToken
     const contactTokenRes = await friendServer.executeOperation({
@@ -136,7 +128,7 @@ describe('Contact GraphQL', () => {
       variables: { token: contactTokenRes.data!.contactToken.token },
     });
     apolloExpect(addContactRes, 'data', {
-      addContact: { ...expectedFormat, _id: friendId, name: friend.name },
+      addContact: { ...expectedFormat, _id: friendId },
     });
 
     const contactsRes = await normalServer!.executeOperation({ query: GET_CONTACTS });
@@ -161,7 +153,11 @@ describe('Contact GraphQL', () => {
     const removeRes = await normalServer!.executeOperation({ query: REMOVE_CONTACT, variables: { id: friendId } });
     apolloExpect(removeRes, 'data', { removeContact: { code: MSG_ENUM.COMPLETED } });
 
-    await cleanUp(normalUser!._id, friendId);
+    // undo the contact relationship
+    await Promise.all([
+      User.updateOne(normalUser!, { $pull: { contacts: { user: friendId } } }),
+      User.updateOne({ _id: friendId }, { $pull: { contacts: { user: normalUser!._id } } }),
+    ]);
   });
 
   test('should fail when mutate without required fields', async () => {

@@ -6,10 +6,8 @@
 import { LOCALE } from '@argonne/common';
 import { faker } from '@faker-js/faker';
 import chalk from 'chalk';
-import type { LeanDocument } from 'mongoose';
-import mongoose from 'mongoose';
 
-import type { BookAssignmentDocument, BookDocument } from '../../models/book';
+import type { BookAssignmentDocument, BookDocument, Id } from '../../models/book';
 import Book, { BookAssignment } from '../../models/book';
 import type { ChatGroupDocument } from '../../models/chat-group';
 import ChatGroup from '../../models/chat-group';
@@ -21,19 +19,19 @@ import Level from '../../models/level';
 import Publisher from '../../models/publisher';
 import Subject from '../../models/subject';
 import User, { UserDocument } from '../../models/user';
-import { idsToString, prob, randomString, shuffle } from '../../utils/helper';
-import { fakeContents } from './helper';
+import { idsToString, mongoId, prob, randomString, shuffle } from '../../utils/helper';
+import { fakeContents } from '../helper';
 
 const { CHAT_GROUP, USER } = LOCALE.DB_ENUM;
 
-const fakeContribution = (contributors: LeanDocument<UserDocument>[]) =>
+const fakeContribution = (contributors: (UserDocument & Id)[]) =>
   new Contribution<Partial<ContributionDocument>>({
     title: faker.lorem.slug(5),
     ...(prob(0.5) && { description: faker.lorem.sentences(3) }),
     contributors: contributors.map(user => ({
       user: user._id,
       name: faker.name.fullName(),
-      school: user.histories[0]!.school,
+      school: user.schoolHistories[0]!.school,
     })),
     urls: Array(3)
       .fill(0)
@@ -54,14 +52,14 @@ const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount 
   if (!levels.length) throw new Error('Level Collection is empty');
   if (!publishers.length) throw new Error('Publisher Collection is empty');
 
-  const books: BookDocument[] = [];
-  const bookAssignments: BookAssignmentDocument[] = [];
-  const chatGroups: ChatGroupDocument[] = [];
-  const contents: ContentDocument[] = [];
-  const contributions: ContributionDocument[] = [];
+  const books: (BookDocument & Id)[] = [];
+  const bookAssignments: (BookAssignmentDocument & Id)[] = [];
+  const chatGroups: (ChatGroupDocument & Id)[] = [];
+  const contents: (ContentDocument & Id)[] = [];
+  const contributions: (ContributionDocument & Id)[] = [];
 
   for (let i = 0; i < count; i++) {
-    const bookId = new mongoose.Types.ObjectId();
+    const bookId = mongoId();
 
     const [levelId] = idsToString(levels).sort(shuffle);
     if (!levelId) throw 'no valid levelId';
@@ -73,30 +71,30 @@ const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount 
     const chatGroup = new ChatGroup<Partial<ChatGroupDocument>>({
       flags: [CHAT_GROUP.FLAG.BOOK],
       title: 'Book (factory) Chat',
-      membership: CHAT_GROUP.MEMBERSHIP.NORMAL,
+      membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
       key: `BOOK#${bookId}`,
     });
     chatGroups.push(chatGroup);
 
     const contributors = users
-      .filter(user => user.histories.length)
+      .filter(user => user.schoolHistories.length)
       .sort(shuffle)
       .slice(0, 5);
 
     const assignments = Array(assignmentCount)
       .fill(0)
       .map(_ => {
-        const bookAssignmentId = new mongoose.Types.ObjectId();
+        const bookAssignmentId = mongoId();
 
         const contribution = fakeContribution(contributors);
         contributions.push(contribution);
 
-        const [content, ...examples] = fakeContents(bookAssignmentId, idsToString(contributors), 5);
+        const [content, ...examples] = fakeContents('bookAssignments', bookAssignmentId, idsToString(contributors), 5);
         contents.push(content!, ...examples);
 
         const hasDynParams = prob(0.5);
 
-        return new BookAssignment<Partial<BookAssignmentDocument>>({
+        return new BookAssignment<Partial<BookAssignmentDocument & Id>>({
           _id: bookAssignmentId,
           contribution: contribution._id,
           chapter: `${faker.datatype.number(10)}#${faker.datatype.number(20)}`,
@@ -123,14 +121,14 @@ const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount 
         contributions.push(contribution);
 
         return {
-          _id: new mongoose.Types.ObjectId(),
+          _id: mongoId(),
           contribution,
           chapter: `${faker.datatype.number(10)}#${faker.datatype.number(20)}`,
           ...(prob(0.1) && { deletedAt: faker.date.recent(120) }),
         };
       });
 
-    const book = new Book<Partial<BookDocument>>({
+    const book = new Book<Partial<BookDocument & Id>>({
       _id: bookId,
       publisher: idsToString(publishers).sort(shuffle)[0],
       level: levelId,
@@ -145,7 +143,7 @@ const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount 
       revisions: Array(rev)
         .fill(0)
         .map((_, idx) => ({
-          _id: new mongoose.Types.ObjectId(),
+          _id: mongoId(),
           rev: String(rev - idx + 1),
           ...(prob(0.8) && { isbn: randomString() }),
           year: year - idx,

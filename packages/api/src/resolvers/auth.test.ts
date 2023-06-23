@@ -5,7 +5,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import {
@@ -20,7 +19,7 @@ import {
   uniqueTestUser,
 } from '../jest';
 import Token from '../models/token';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   DEREGISTER,
@@ -40,7 +39,7 @@ const { USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
 
 const VALID_EMAIL = 'valid@email.com';
-const INVALID_EMAIL = 'invalid@mail';
+const INVALID_EMAIL = 'invalid_mail'; // yup thinks invalid@email is valid
 const INVALID_PASSWORD = 'invalid'; // not meeting PASSWORD_REGEX
 
 const INVALID_PASSWORD_MSG = 'at least 6 characters with one lowercase letter, one uppercase letter and one digit.';
@@ -56,7 +55,7 @@ const expectedAuthResponse = {
 describe('Authentication GraphQL (token)', () => {
   let guestServer: ApolloServer | null;
   let tenantAdminServer: ApolloServer | null;
-  let normalUser: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
   let tenantId: string | null;
 
   beforeAll(async () => {
@@ -271,7 +270,7 @@ describe('Authentication GraphQL (token)', () => {
     const registerRes = await guestServer!.executeOperation({ query: REGISTER, variables: { name, email, password } });
     const { refreshToken } = registerRes.data!.register;
 
-    await Token.findOneAndUpdate({ token: refreshToken }, { ua: 'Jest-different-IP', ip: 'different-ip' });
+    await Token.updateOne({ token: refreshToken }, { ua: 'Jest-different-IP', ip: 'different-ip' });
 
     const loginRes = await guestServer!.executeOperation({ query: LOGIN, variables: { email, password } });
     apolloExpect(loginRes, 'data', {

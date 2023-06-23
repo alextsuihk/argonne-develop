@@ -11,16 +11,20 @@ import type { Types } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import Job, { NEW_JOB_CHANNEL } from '../models/job';
+import { isTestMode } from '../utils/environment';
 import log from '../utils/log';
-import { notify } from '../utils/messaging';
-import grade from './scripts/grade';
-import sync from './scripts/sync';
+import { notifySync } from '../utils/notify-sync';
+import grade from './grade';
+import report from './report';
+import sync from './sync';
+import censor from './censor';
 
 const { JOB } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
 
 let status: 'off' | 'sleep' | 'running' = 'off';
-let timer: NodeJS.Timeout;
+let sleepTimer: NodeJS.Timeout;
+let jobTimeout: NodeJS.Timeout;
 
 const redis = new Redis(config.server.redis.url);
 redis.subscribe(NEW_JOB_CHANNEL);
@@ -28,7 +32,13 @@ redis.on('message', (channel, jobId: string) => {
   if (channel !== NEW_JOB_CHANNEL) return;
 
   console.log(`received a new Job request ${jobId}`);
-  start(jobId);
+
+  isTestMode
+    ? Job.updateOne(
+        { _id: jobId },
+        { status: JOB.STATUS.COMPLETED, progress: 100, completedAt: new Date(), result: 'not execute in test mode' },
+      )
+    : start(jobId);
 });
 
 // get next queued job
@@ -47,66 +57,80 @@ const getNextJob = async (jobId?: string | Types.ObjectId) =>
 const start = async (jobId?: string | Types.ObjectId): Promise<void> => {
   if (status === 'running') return; // do nothing if another instance is running
 
-  // application crash before job completion
-  if (status === 'off') await Job.updateMany({ status: JOB.STATUS.RUNNING }, { status: JOB.STATUS.INCOMPLETE });
+  // in case of previous crash, re-queue jobs
+  if (status === 'off') await Job.updateMany({ status: JOB.STATUS.RUNNING }, { status: JOB.STATUS.QUEUED });
 
   status = 'running';
-  clearTimeout(timer);
+  clearTimeout(sleepTimer);
   let reStartsInMs = DEFAULTS.JOB.SLEEP; // re-start in milliseconds
 
   let job = await getNextJob(jobId);
-  console.log(`DEBUG>>>>> Job-Runner status: ${status}, timer: ${timer}, jobID: ${job?._id}, (${new Date()})`);
+  console.log(
+    `DEBUG>>>>> Job-Runner status: "${status}", sleepTimer: "${sleepTimer}", jobID: "${job?._id}", (${new Date()})`,
+  );
 
   while (job) {
+    const { _id, args, task } = job;
+    const jobId = _id.toString();
     try {
-      switch (job.task) {
-        case 'grade':
-          await grade(job);
-          break;
-        case 'report':
-          console.log(`report result ${job._id}`);
-          break;
-        case 'sync':
-          await sync(job);
-          break;
-        default:
-          throw `unknown job.task ${job._id} - ${job.task}`;
-      }
+      const result = await Promise.race([
+        new Promise<never>((_, reject) => {
+          jobTimeout = setTimeout(reject, DEFAULTS.JOB.TIMEOUT, 'timeout');
+        }),
+        task === 'censor'
+          ? censor(args)
+          : task === 'grade'
+          ? grade(args)
+          : task === 'report'
+          ? report(args)
+          : task === 'sync'
+          ? sync(args)
+          : log('error', 'unknown task', { jobId, task: task }),
+      ]);
+
+      await Job.updateOne(
+        { _id },
+        { status: JOB.STATUS.COMPLETED, progress: 100, completedAt: new Date(), ...(result && { result }) },
+      );
     } catch (error) {
       console.log(`jobRunner try-catch error() =>> ${error}`);
       if (error === 'timeout') {
         reStartsInMs = 5000; // re-try in 5 seconds if timeout
 
         await Promise.all([
-          log('warn', `jobId: ${job._id} timeout, retries: ${job.retry} (${job.retry >= DEFAULTS.JOB.RETRY})`),
-          job.retry >= DEFAULTS.JOB.RETRY
-            ? await Job.findByIdAndUpdate(job, { status: JOB.STATUS.TIMEOUT, completedAt: new Date() }).lean()
-            : await Job.findByIdAndUpdate(job, {
-                status: JOB.STATUS.QUEUED,
-                $inc: { retry: 1 },
-                startAfter: addMilliseconds(new Date(), reStartsInMs),
-              }).lean(),
+          log('warn', `jobId: ${jobId} timeout, retries: ${job.retry} (${job.retry >= DEFAULTS.JOB.RETRY})`),
+          await Job.updateOne(
+            { _id },
+            job.retry >= DEFAULTS.JOB.RETRY
+              ? { status: JOB.STATUS.TIMEOUT, completedAt: new Date() }
+              : {
+                  status: JOB.STATUS.QUEUED,
+                  $inc: { retry: 1 },
+                  startAfter: addMilliseconds(new Date(), reStartsInMs),
+                },
+          ),
         ]);
       } else {
         await Promise.all([
           log('error', `jobId: ${jobId}, message: ${error}`),
-          await Job.findByIdAndUpdate(job, {
-            status: JOB.STATUS.ERROR,
-            completedAt: new Date(),
-            result: JSON.stringify(error),
-          }).lean(),
+          await Job.updateOne(
+            { _id },
+            { status: JOB.STATUS.ERROR, completedAt: new Date(), result: JSON.stringify(error) },
+          ),
         ]);
       }
     } finally {
+      clearTimeout(jobTimeout);
+
       const [nextJob] = await Promise.all([
         getNextJob(),
-        job.owners?.length && notify(job.owners, 'JOB', { jobIds: [job._id.toString()] }),
+        job.owners?.length && notifySync('JOB', { userIds: job.owners }, {}),
       ]);
       job = nextJob;
     }
   }
 
-  timer = setTimeout(start, (reStartsInMs || DEFAULTS.JOB.SLEEP) + 100); // restart once a while
+  sleepTimer = setTimeout(start, reStartsInMs + 100); // restart once a while
   status = 'sleep';
 };
 

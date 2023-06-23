@@ -11,10 +11,11 @@ import type { Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { AssignmentDocument } from './assignment';
 import type { ChatDocument } from './chat';
-import type { BaseDocument } from './common';
+import type { BaseDocument, Id } from './common';
 import { baseDefinition } from './common';
+
+export type { Id } from './common';
 
 export interface ClassroomDocument extends BaseDocument {
   tenant: string | Types.ObjectId;
@@ -31,8 +32,8 @@ export interface ClassroomDocument extends BaseDocument {
   teachers: (string | Types.ObjectId)[];
   students: (string | Types.ObjectId)[];
 
-  chats: (string | Types.ObjectId | ChatDocument)[];
-  assignments: (string | Types.ObjectId | AssignmentDocument)[];
+  chats: (string | Types.ObjectId | (ChatDocument & Id))[];
+  assignments: (string | Types.ObjectId)[];
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;

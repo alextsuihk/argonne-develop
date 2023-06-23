@@ -5,18 +5,18 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
 import District from '../models/district';
 import DatabaseEvent from '../models/event/database';
 import Level from '../models/level';
-import type { SchoolDocument } from '../models/school';
+import type { Id, SchoolDocument } from '../models/school';
 import School, { searchableFields } from '../models/school';
 import { messageToAdmin } from '../utils/chat';
 import { randomString } from '../utils/helper';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import storage from '../utils/storage';
-import syncSatellite from '../utils/sync-satellite';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -29,7 +29,7 @@ const { idSchema, querySchema, remarkSchema, removeSchema, schoolSchema } = yupS
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<SchoolDocument>> => {
+const addRemark = async (req: Request, args: unknown): Promise<SchoolDocument & Id> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -49,20 +49,20 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<Scho
 /**
  * Create New School
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<SchoolDocument>> => {
+const create = async (req: Request, args: unknown): Promise<SchoolDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const {
     school: { code, logoUrl, ...fields },
   } = await schoolSchema.validate(args);
 
-  const [existingSchoolCode, validDistrict, levels] = await Promise.all([
+  const [existingSchoolCode, validDistrict, levelCount] = await Promise.all([
     School.exists({ code: code.toUpperCase() }),
     District.exists({ _id: fields.district, deletedAt: { $exists: false } }),
-    Level.find({ _id: { $in: fields.levels }, deletedAt: { $exists: false } }).lean(),
+    Level.countDocuments({ _id: { $in: fields.levels }, deletedAt: { $exists: false } }),
     logoUrl && storage.validateObject(logoUrl, userId),
   ]);
-  if (existingSchoolCode || !validDistrict || levels.length !== fields.levels.length)
+  if (existingSchoolCode || !validDistrict || levelCount !== fields.levels.length)
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const school = new School<Partial<SchoolDocument>>({ ...fields, code, ...(logoUrl && { logoUrl }) });
@@ -79,7 +79,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<SchoolD
     school.save(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/schools/${_id}`, 'CREATE', { school: fields }),
-    syncSatellite({}, { schoolIds: [_id.toString()], ...(logoUrl && { minioAddItems: [logoUrl] }) }),
+    notifySync('CORE', {}, { schoolIds: [_id], ...(logoUrl && { minioAddItems: [logoUrl] }) }),
   ]);
 
   return school;
@@ -99,7 +99,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple Schools (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<SchoolDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<(SchoolDocument & Id)[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<SchoolDocument>(searchableFields, { query });
@@ -131,7 +131,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One School by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<SchoolDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<(SchoolDocument & Id) | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<SchoolDocument>(searchableFields, { query }, { _id: id });
@@ -185,7 +185,7 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
     original.logoUrl && storage.removeObject(original.logoUrl), // delete file in Minio if exists
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/schools/${original._id}`, 'DELETE', { remark, original }),
-    syncSatellite({}, { schoolIds: [id], ...(original.logoUrl && { minioRemoveItems: [original.logoUrl] }) }),
+    notifySync('CORE', {}, { schoolIds: [id], ...(original.logoUrl && { minioRemoveItems: [original.logoUrl] }) }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -207,7 +207,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update School
  */
-const update = async (req: Request, args: unknown): Promise<LeanDocument<SchoolDocument>> => {
+const update = async (req: Request, args: unknown): Promise<SchoolDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
 
@@ -216,14 +216,14 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<SchoolD
     school: { code, logoUrl, ...fields },
   } = await idSchema.concat(schoolSchema).validate(args);
 
-  const [original, validDistrict, levels] = await Promise.all([
+  const [original, validDistrict, levelCount] = await Promise.all([
     School.findOne({ _id: id, deletedAt: { $exists: false } }).lean(),
     District.exists({ _id: fields.district, deletedAt: { $exists: false } }),
-    Level.find({ _id: { $in: fields.levels }, deletedAt: { $exists: false } }).lean(),
+    Level.countDocuments({ _id: { $in: fields.levels }, deletedAt: { $exists: false } }),
   ]);
 
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  if (original.code !== code.toUpperCase() || !validDistrict || levels.length !== fields.levels.length)
+  if (original.code !== code.toUpperCase() || !validDistrict || levelCount !== fields.levels.length)
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   await Promise.all([
@@ -246,7 +246,8 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<SchoolD
     ).lean(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/schools/${id}`, 'UPDATE', { original, update: args }),
-    syncSatellite(
+    notifySync(
+      'CORE',
       {},
       {
         schoolIds: [id],
@@ -255,8 +256,9 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<SchoolD
       },
     ),
   ]);
-
-  return school!;
+  if (school) return school;
+  log('error', `classroomController:update()`, { id, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

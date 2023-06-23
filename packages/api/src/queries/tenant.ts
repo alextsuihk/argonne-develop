@@ -33,6 +33,7 @@ export const TENANT_FIELDS = gql`
     satelliteUrl
 
     flaggedWords
+    authServices
 
     remarks {
       ...RemarkFields

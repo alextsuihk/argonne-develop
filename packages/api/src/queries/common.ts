@@ -28,36 +28,6 @@ export const STATUS_RESPONSE = gql`
   }
 `;
 
-export const CONTRIBUTION = gql`
-  fragment ContributionFields on Contribution {
-    _id
-    flags
-    title
-    description
-    contributors {
-      _id
-      user
-      name
-      school
-    }
-    urls
-    book
-    chapter
-  }
-`;
-
-export const CONTENT = gql`
-  fragment ContentFields on Content {
-    _id
-    flags
-    parents
-    creator
-    data
-    createdAt
-    updatedAt
-  }
-`;
-
 export const MEMBER = gql`
   fragment MemberFields on Member {
     user
@@ -66,11 +36,18 @@ export const MEMBER = gql`
   }
 `;
 
-export const GET_CONTENT = gql`
-  ${CONTENT}
-  query GetContent($id: ID!, $token: String!, $updateAfter: DateInput) {
-    content(id: $id, token: $token, updateAfter: $updateAfter) {
-      ...ContentFields
+export const CHAT = gql`
+  ${MEMBER}
+  fragment ChatFields on Chat {
+    _id
+    flags
+    parents
+    title
+    members {
+      ...MemberFields
     }
+    contents
+    createdAt
+    updatedAt
   }
 `;

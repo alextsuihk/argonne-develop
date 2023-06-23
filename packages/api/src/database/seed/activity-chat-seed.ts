@@ -115,11 +115,11 @@ const seed = async (): Promise<string> => {
     },
   ];
 
-  const chatGroups: Partial<ChatGroupDocument>[] = [];
-  const chats: Partial<ChatDocument>[] = [];
-  const contents: Partial<ContentDocument>[] = [];
+  // const chatGroups: Partial<ChatGroupDocument>[] = [];
+  // const chats: Partial<ChatDocument>[] = [];
+  // const contents: Partial<ContentDocument>[] = [];
 
-  seedingChatGroups.forEach(seedingChatGroup => {
+  const groups = seedingChatGroups.map(seedingChatGroup => {
     const content = new Content<Partial<ContentDocument>>({ creator: alexId, data: `Welcome` });
     const chat = new Chat<Partial<ChatDocument>>({ members: [], contents: [content._id] });
     const chatGroup = new ChatGroup<Partial<ChatGroupDocument>>({
@@ -134,18 +134,16 @@ const seed = async (): Promise<string> => {
     content.parents = [`/chats/${chat._id}`];
     chat.parents = [`/chatGroups/${chatGroup._id}`];
 
-    chatGroups.push(chatGroup);
-    chats.push(chat);
-    contents.push(content);
+    return { chatGroup, chat, content };
   });
 
   await Promise.all([
     Activity.create(activities),
-    ChatGroup.create(chatGroups),
-    Chat.create(chats),
-    Content.create(contents),
+    ChatGroup.create(groups.map(group => group.chatGroup)),
+    Chat.create(groups.map(group => group.chat)),
+    Content.create(groups.map(group => group.content)),
   ]);
-  return `(${chalk.green(activities.length)} - ${chalk.green(chats.length)} created)`;
+  return `(${chalk.green(activities.length)} activities - ${chalk.green(groups.length)} chatGroups created)`;
 };
 
 export { seed };

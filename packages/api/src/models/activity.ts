@@ -15,6 +15,8 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument, Point } from './common';
 import { baseDefinition, pointSchema } from './common';
 
+export type { Id } from './common';
+
 const { ACTIVITY } = LOCALE.DB_ENUM;
 
 export interface ActivityDocument extends BaseDocument {

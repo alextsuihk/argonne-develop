@@ -4,13 +4,16 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument, Model, Types } from 'mongoose';
+import type { Model, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import { idsToString } from '../utils/helper';
-import type { BaseDocument, Locale } from './common';
+import type { BaseDocument, Id, Locale } from './common';
 import { baseDefinition, localeDefinition } from './common';
+
+export type { Id } from './common';
+
 export interface PublisherDocument extends BaseDocument {
   name: Locale;
   admins: (string | Types.ObjectId)[];
@@ -24,7 +27,7 @@ interface PublisherModel extends Model<PublisherDocument> {
     id: string | Types.ObjectId,
     adminId?: string | Types.ObjectId,
     isAdmin?: boolean,
-  ): Promise<LeanDocument<PublisherDocument>>;
+  ): Promise<PublisherDocument & Id>;
 }
 
 const { MSG_ENUM } = LOCALE;
@@ -58,13 +61,11 @@ const publisherSchema = new Schema<PublisherDocument>(
 publisherSchema.static(
   'findByPublisherId',
   async (id: string | Types.ObjectId, adminId?: string | Types.ObjectId, isAdmin?: boolean) => {
-    const publisher = await Publisher.findOne({ _id: id, deletedAt: { $exists: false } }).lean();
-    if (!publisher) throw { statusCode: 400, code: MSG_ENUM.TENANT_ERROR };
+    const publisher = await Publisher.findById(id).lean();
+    if (!publisher) throw { statusCode: 400, code: MSG_ENUM.USER_INPUT_ERROR };
 
-    if (!isAdmin && adminId && !idsToString(publisher.admins).includes(adminId.toString()))
-      throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
-
-    return publisher;
+    if (isAdmin || (adminId && idsToString(publisher.admins).includes(adminId.toString()))) return publisher;
+    throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
   },
 );
 

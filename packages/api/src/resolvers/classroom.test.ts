@@ -4,16 +4,21 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   apolloExpect,
   ApolloServer,
+  expectChatFormat,
   expectedIdFormat,
+  expectedMember,
   expectedRemark,
   FAKE,
   FAKE2,
+  genChatGroup,
+  genClassroom,
   genClassroomUsers,
+  genClassroomWithAssignment,
+  genQuestion,
   idsToString,
   jestSetup,
   jestTeardown,
@@ -21,39 +26,58 @@ import {
   shuffle,
   testServer,
 } from '../jest';
-import Book from '../models/book';
+import Book, { BookAssignment } from '../models/book';
 import Classroom from '../models/classroom';
+import Content from '../models/content';
 import Level from '../models/level';
 import Tenant from '../models/tenant';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_CLASSROOM,
+  ADD_CLASSROOM_CONTENT,
+  ADD_CLASSROOM_CONTENT_WITH_NEW_CHAT,
   ADD_CLASSROOM_REMARK,
-  ADD_CLASSROOM_STUDENTS,
-  ADD_CLASSROOM_TEACHERS,
+  ATTACH_CHAT_GROUP_TO_CLASSROOM,
+  ATTACH_CLASSROOM_TO_CLASSROOM,
+  BLOCK_CLASSROOM_CONTENT,
+  CLEAR_CLASSROOM_CHAT_FLAG,
   GET_CLASSROOM,
   GET_CLASSROOMS,
+  RECALL_CLASSROOM_CONTENT,
   RECOVER_CLASSROOM,
   REMOVE_CLASSROOM,
-  REMOVE_CLASSROOM_STUDENTS,
-  REMOVE_CLASSROOM_TEACHERS,
+  SET_CLASSROOM_CHAT_FLAG,
+  SHARE_HOMEWORK_TO_CLASSROOM,
+  SHARE_QUESTION_TO_CLASSROOM,
   UPDATE_CLASSROOM,
+  UPDATE_CLASSROOM_CHAT_LAST_VIEWED_AT,
+  UPDATE_CLASSROOM_CHAT_TITLE,
+  UPDATE_CLASSROOM_STUDENTS,
+  UPDATE_CLASSROOM_TEACHERS,
 } from '../queries/classroom';
 import { schoolYear } from '../utils/helper';
 
 const { MSG_ENUM } = LOCALE;
+const { CHAT } = LOCALE.DB_ENUM;
+
+const expectChatFormatEx = {
+  ...expectChatFormat,
+  title: expect.toBeOneOf([null, expect.any(String)]),
+  createdAt: expect.any(Number),
+  updatedAt: expect.any(Number),
+};
 
 // Top chat of this test suite:
 describe('Classroom GraphQL', () => {
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantAdminServer: ApolloServer | null;
-  let teacherLevelId: string;
   let tenantId: string | null;
 
-  const expectedNormalFormat = {
+  const expectedFormat = {
     _id: expectedIdFormat,
     flags: expect.any(Array),
 
@@ -72,27 +96,20 @@ describe('Classroom GraphQL', () => {
     chats: expect.any(Array),
     assignments: expect.any(Array),
 
-    remarks: null,
+    remarks: expect.any(Array), // could be empty array for non publisherAdmin or admin
+
     createdAt: expect.any(Number),
     updatedAt: expect.any(Number),
     deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
-  };
 
-  const expectedAdminFormat = {
-    ...expectedNormalFormat,
-    remarks: expect.any(Array), // could be empty array without any remarks
+    contentsToken: expect.any(String),
   };
 
   beforeAll(async () => {
-    ({ guestServer, normalServer, tenantAdmin, tenantAdminServer, tenantId } = await jestSetup(
+    ({ guestServer, normalServer, normalUser, tenantAdmin, tenantAdminServer, tenantId } = await jestSetup(
       ['guest', 'normal', 'tenantAdmin'],
-      {
-        apollo: true,
-      },
+      { apollo: true },
     ));
-
-    const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
-    teacherLevelId = teacherLevel!._id.toString();
   });
 
   afterAll(jestTeardown);
@@ -107,9 +124,9 @@ describe('Classroom GraphQL', () => {
       deletedAt: { $exists: false },
     }).lean();
 
-    const classroom = classrooms.sort(shuffle)[0]!;
-    const studentId = classroom.students.sort(shuffle)[0]!;
-    const teacherId = classroom.teachers.sort(shuffle)[0]!;
+    const [classroom] = classrooms.sort(shuffle);
+    const [studentId] = classroom.students.sort(shuffle);
+    const [teacherId] = classroom.teachers.sort(shuffle);
 
     const [student, teacher] = await Promise.all([
       User.findOneActive({ _id: studentId }),
@@ -121,23 +138,23 @@ describe('Classroom GraphQL', () => {
 
     // student
     const studentAllRes = await studentServer.executeOperation({ query: GET_CLASSROOMS });
-    apolloExpect(studentAllRes, 'data', { classrooms: expect.arrayContaining([expectedNormalFormat]) });
+    apolloExpect(studentAllRes, 'data', { classrooms: expect.arrayContaining([{ ...expectedFormat, remarks: [] }]) });
 
     const studentOneRes = await studentServer!.executeOperation({
       query: GET_CLASSROOM,
       variables: { id: classroom._id.toString() },
     });
-    apolloExpect(studentOneRes, 'data', { classroom: expectedNormalFormat });
+    apolloExpect(studentOneRes, 'data', { classroom: { ...expectedFormat, remarks: [] } });
 
     // teacher
     const teacherAllRes = await teacherServer.executeOperation({ query: GET_CLASSROOMS });
-    apolloExpect(teacherAllRes, 'data', { classrooms: expect.arrayContaining([expectedAdminFormat]) });
+    apolloExpect(teacherAllRes, 'data', { classrooms: expect.arrayContaining([expectedFormat]) });
 
     const teacherOneRes = await teacherServer!.executeOperation({
       query: GET_CLASSROOM,
       variables: { id: classroom._id.toString() },
     });
-    apolloExpect(teacherOneRes, 'data', { classroom: expectedAdminFormat });
+    apolloExpect(teacherOneRes, 'data', { classroom: expectedFormat });
   });
 
   test('should fail when GET all (as guest)', async () => {
@@ -170,20 +187,121 @@ describe('Classroom GraphQL', () => {
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.INVALID_ID}`);
   });
 
+  test('should pass when attaching chat from another chatGroup', async () => {
+    expect.assertions(1);
+
+    const { classroom } = await genClassroom(tenantId!, normalUser!._id);
+    const { chatGroup: source, chat, content } = genChatGroup(tenantId!, normalUser!._id);
+    await Promise.all([classroom.save(), source.save(), chat.save(), content.save()]);
+    //! Note: at the point, classroom.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
+
+    const res = await normalServer!.executeOperation({
+      query: ATTACH_CHAT_GROUP_TO_CLASSROOM,
+      variables: { id: classroom._id.toString(), chatId: chat._id.toString(), sourceId: source._id.toString() },
+    });
+
+    apolloExpect(res, 'data', {
+      attachChatGroupChatToClassroom: {
+        ...expectedFormat,
+        chats: [{ ...expectChatFormatEx, _id: chat._id.toString(), contents: [content._id.toString()] }],
+      },
+    });
+
+    // clean-up (as the documents are only partially formatted)
+    await Promise.all([classroom.deleteOne(), source.deleteOne()]);
+  });
+
+  test('should pass when attaching chat from another classroom', async () => {
+    expect.assertions(1);
+
+    const [{ classroom }, { classroom: source, chat, content }] = await Promise.all([
+      genClassroom(tenantId!, normalUser!._id),
+      genClassroom(tenantId!, normalUser!._id),
+    ]);
+    await Promise.all([classroom.save(), source.save(), chat.save(), content.save()]);
+    //! Note: at the point, classroom.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
+
+    const res = await normalServer!.executeOperation({
+      query: ATTACH_CLASSROOM_TO_CLASSROOM,
+      variables: { id: classroom._id.toString(), chatId: chat._id.toString(), sourceId: source._id.toString() },
+    });
+
+    apolloExpect(res, 'data', {
+      attachClassroomChatToClassroom: {
+        ...expectedFormat,
+        chats: [{ ...expectChatFormatEx, _id: chat._id.toString(), contents: [content._id.toString()] }],
+      },
+    });
+
+    await Promise.all([classroom.deleteOne(), source.deleteOne()]);
+  });
+
+  test('should pass when sharing homework to classroom', async () => {
+    expect.assertions(1);
+
+    // create a classroom with assignment + homework
+    const { assignment, book, classroom, homework, homeworkContents, assignmentIdx } = await genClassroomWithAssignment(
+      tenantId!,
+      normalUser!._id,
+    );
+
+    await Promise.all([classroom.save(), assignment.save(), homework.save(), Content.create(homeworkContents)]);
+    const bookAssignment = await BookAssignment.findById(book.assignments[assignmentIdx]).lean();
+
+    const res = await normalServer!.executeOperation({
+      query: SHARE_HOMEWORK_TO_CLASSROOM,
+      variables: { id: classroom._id.toString(), sourceId: homework._id.toString() },
+    });
+
+    apolloExpect(res, 'data', {
+      shareHomeworkToClassroom: {
+        ...expectedFormat,
+        chats: [
+          { ...expectChatFormatEx, contents: idsToString([bookAssignment!.content, ...idsToString(homeworkContents)]) },
+        ],
+      },
+    });
+
+    // clean-up (as the documents are only partially formatted)
+    await Promise.all([classroom.deleteOne(), assignment.deleteOne(), homework.deleteOne()]);
+  });
+
+  test('should pass when sharing question to classroom', async () => {
+    expect.assertions(1);
+
+    const { classroom } = await genClassroom(tenantId!, normalUser!._id); // create a classroom
+    const { question, content } = genQuestion(tenantId!, normalUser!._id, classroom._id, 'tutor'); // create source question as tutor
+
+    await Promise.all([classroom.save(), question.save(), content.save()]);
+
+    const res = await normalServer!.executeOperation({
+      query: SHARE_QUESTION_TO_CLASSROOM,
+      variables: { id: classroom._id.toString(), sourceId: question._id.toString() },
+    });
+    apolloExpect(res, 'data', {
+      shareQuestionToClassroom: {
+        ...expectedFormat,
+        chats: [{ ...expectChatFormatEx, contents: [content._id.toString()] }],
+      },
+    });
+
+    await Promise.all([classroom.deleteOne(), question.deleteOne()]);
+  });
+
   test('should pass the full suite', async () => {
-    expect.assertions(14);
-    const [books, tenant] = await Promise.all([
+    expect.assertions(22);
+    const [books, teacherLevel, tenant] = await Promise.all([
       Book.find({ deletedAt: { $exists: false } }).lean(),
+      Level.findOne({ code: 'TEACHER' }).lean(),
       Tenant.findById(tenantId!),
     ]);
 
     const [{ _id: book, subjects, level }] = books.sort(shuffle);
     const [subject] = subjects.sort(shuffle);
-    const schoolClass = `${level.toString().slice(-1)}-A`;
+    const schoolClass = `${level.toString().slice(-1)}-X`;
 
     const newStudents = genClassroomUsers(tenantId!, tenant!.school!, level, schoolClass, 30);
-    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevelId, schoolClass, 3);
-
+    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevel!._id.toString(), schoolClass, 3);
     await User.create([...newStudents, ...newTeachers]);
 
     const [student0, student1, ...students] = newStudents;
@@ -194,6 +312,7 @@ describe('Classroom GraphQL', () => {
     const teacher0Id = teacher0._id.toString();
 
     const teacher0Server = testServer(teacher0);
+    const student0Server = testServer(student0);
 
     const create = {
       level: level.toString(),
@@ -214,26 +333,26 @@ describe('Classroom GraphQL', () => {
       variables: { tenantId: tenantId!, ...create },
     });
     apolloExpect(createdRes, 'data', {
-      addClassroom: { ...expectedAdminFormat, ...create, tenant: tenantId!, students: [], teachers: [] },
+      addClassroom: { ...expectedFormat, ...create, tenant: tenantId!, students: [], teachers: [] },
     });
     const newId: string = createdRes.data!.addClassroom._id;
 
-    // tenantAdmin add teachers
-    const addTeachersRes = await tenantAdminServer!.executeOperation({
-      query: ADD_CLASSROOM_TEACHERS,
+    // tenantAdmin update teachers
+    const updateTeachersRes = await tenantAdminServer!.executeOperation({
+      query: UPDATE_CLASSROOM_TEACHERS,
       variables: { id: newId, userIds: [teacher0Id] },
     });
-    apolloExpect(addTeachersRes, 'data', {
-      addClassroomTeachers: { ...expectedAdminFormat, students: [], teachers: [teacher0Id] },
+    apolloExpect(updateTeachersRes, 'data', {
+      updateClassroomTeachers: { ...expectedFormat, students: [], teachers: [teacher0Id] },
     });
 
-    // tenantAdmin add students
-    const addStudentsRes = await tenantAdminServer!.executeOperation({
-      query: ADD_CLASSROOM_STUDENTS,
+    // tenantAdmin update students
+    const updateStudentsRes = await tenantAdminServer!.executeOperation({
+      query: UPDATE_CLASSROOM_STUDENTS,
       variables: { id: newId, userIds: idsToString(students) },
     });
-    apolloExpect(addStudentsRes, 'data', {
-      addClassroomStudents: { ...expectedAdminFormat, students: idsToString(students) },
+    apolloExpect(updateStudentsRes, 'data', {
+      updateClassroomStudents: { ...expectedFormat, students: idsToString(students) },
     });
 
     // tenantAdmin addRemark
@@ -241,8 +360,9 @@ describe('Classroom GraphQL', () => {
       query: ADD_CLASSROOM_REMARK,
       variables: { id: newId, remark: FAKE },
     });
+
     apolloExpect(addRemarkRes, 'data', {
-      addClassroomRemark: { ...expectedAdminFormat, ...expectedRemark(tenantAdmin!, FAKE, true) },
+      addClassroomRemark: { ...expectedFormat, ...expectedRemark(tenantAdmin!._id, FAKE, true) },
     });
 
     // teacher addRemark
@@ -252,8 +372,8 @@ describe('Classroom GraphQL', () => {
     });
     apolloExpect(addRemark2Res, 'data', {
       addClassroomRemark: {
-        ...expectedAdminFormat,
-        ...expectedRemark(teacher0!, FAKE, true),
+        ...expectedFormat,
+        ...expectedRemark(teacher0!._id, FAKE, true),
         remarks: [
           { _id: expectedIdFormat, t: expect.any(Number), u: expect.any(String), m: FAKE }, // first addRemark by tenantAdmin
           { _id: expectedIdFormat, t: expect.any(Number), u: teacher0!._id.toString(), m: FAKE }, //
@@ -261,82 +381,222 @@ describe('Classroom GraphQL', () => {
       },
     });
 
-    // teacher adds teachers
-    const addTeachers2Res = await teacher0Server.executeOperation({
-      query: ADD_CLASSROOM_TEACHERS,
+    // teacher update teachers
+    const updateTeachers2Res = await teacher0Server.executeOperation({
+      query: UPDATE_CLASSROOM_TEACHERS,
       variables: { id: newId, userIds: idsToString(teachers) },
     });
-    apolloExpect(addTeachers2Res, 'data', {
-      addClassroomTeachers: { ...expectedAdminFormat, teachers: [teacher0Id, ...idsToString(teachers)] },
+    apolloExpect(updateTeachers2Res, 'data', {
+      updateClassroomTeachers: { ...expectedFormat, teachers: [teacher0Id, ...idsToString(teachers)] },
     });
 
-    // teacher adds students
-    const addStudents2Res = await teacher0Server.executeOperation({
-      query: ADD_CLASSROOM_STUDENTS,
+    // teacher update students
+    const updateStudents2Res = await teacher0Server.executeOperation({
+      query: UPDATE_CLASSROOM_STUDENTS,
       variables: { id: newId, userIds: [student0Id, student1Id] },
     });
-    apolloExpect(addStudents2Res, 'data', {
-      addClassroomStudents: { ...expectedAdminFormat, students: [...idsToString(students), student0Id, student1Id] },
+    apolloExpect(updateStudents2Res, 'data', {
+      updateClassroomStudents: { ...expectedFormat, students: [student0Id, student1Id] },
     });
 
-    // teacher removes students
-    const removeStudentsRes = await teacher0Server.executeOperation({
-      query: REMOVE_CLASSROOM_STUDENTS,
-      variables: { id: newId, userIds: [student0Id, student1Id] },
-    });
-    apolloExpect(removeStudentsRes, 'data', {
-      removeClassroomStudents: { ...expectedAdminFormat, students: idsToString(students) },
-    });
-
-    // teacher readds ONE student
-    const addStudents3Res = await teacher0Server.executeOperation({
-      query: ADD_CLASSROOM_STUDENTS,
-      variables: { id: newId, userIds: [student0Id] },
-    });
-    apolloExpect(addStudents3Res, 'data', {
-      addClassroomStudents: { ...expectedAdminFormat, students: [...idsToString(students), student0Id] },
-    });
-
-    // tenantAdmin removes teachers
-    const removeTeachersRes = await tenantAdminServer!.executeOperation({
-      query: REMOVE_CLASSROOM_TEACHERS,
-      variables: { id: newId, userIds: [teacher0Id] },
-    });
-    apolloExpect(removeTeachersRes, 'data', {
-      removeClassroomTeachers: { ...expectedAdminFormat, teachers: idsToString(teachers) },
-    });
-
-    // tenantAdmin removes classroom
+    // tenantAdmin remove classroom
     const removedRes = await tenantAdminServer!.executeOperation({
       query: REMOVE_CLASSROOM,
       variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) },
     });
     apolloExpect(removedRes, 'data', { removeClassroom: { code: MSG_ENUM.COMPLETED } });
 
-    // tenantAdmin recovers (un-delete) classroom
+    // tenantAdmin recover (un-delete) classroom
     const recoverRes = await tenantAdminServer!.executeOperation({
       query: RECOVER_CLASSROOM,
       variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) },
     });
-    apolloExpect(recoverRes, 'data', { recoverClassroom: expectedAdminFormat });
+    apolloExpect(recoverRes, 'data', { recoverClassroom: expectedFormat });
 
-    // tenantAdmin updates classroom
-    const updatedRes = await tenantAdminServer!.executeOperation({
+    // tenantAdmin or teacher update classroom
+    const server = prob(0.5) ? tenantAdminServer! : teacher0Server;
+    const updatedRes = await server.executeOperation({
       query: UPDATE_CLASSROOM,
       variables: { id: newId, ...update },
     });
     apolloExpect(updatedRes, 'data', {
-      updateClassroom: { ...expectedAdminFormat, ...update },
+      updateClassroom: { ...expectedFormat, ...update },
     });
 
-    // tenantAdmin removes classroom
-    const finalRemovedRes = await tenantAdminServer!.executeOperation({
+    // teacher remove classroom
+    const removedRes2 = await teacher0Server.executeOperation({
       query: REMOVE_CLASSROOM,
       variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) },
     });
-    apolloExpect(finalRemovedRes, 'data', { removeClassroom: { code: MSG_ENUM.COMPLETED } });
+    apolloExpect(removedRes2, 'data', { removeClassroom: { code: MSG_ENUM.COMPLETED } });
+
+    // teacher recover (un-delete) classroom
+    const recoverRes2 = await teacher0Server.executeOperation({
+      query: RECOVER_CLASSROOM,
+      variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) },
+    });
+    apolloExpect(recoverRes2, 'data', { recoverClassroom: expectedFormat });
+
+    // (teacher) addContentWithNewChat
+    const addContentWithNewChatRes = await teacher0Server.executeOperation({
+      query: ADD_CLASSROOM_CONTENT_WITH_NEW_CHAT,
+      variables: { id: newId, content: FAKE },
+    });
+    apolloExpect(addContentWithNewChatRes, 'data', {
+      addClassroomContentWithNewChat: {
+        ...expectedFormat,
+        chats: [{ ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(teacher0Id, true) }],
+      },
+    });
+    const chatId = addContentWithNewChatRes.data!.addClassroomContentWithNewChat.chats[0]._id.toString();
+
+    // (student) addContent (append to first chat)
+    const addContentRes = await student0Server.executeOperation({
+      query: ADD_CLASSROOM_CONTENT,
+      variables: { id: newId, chatId, content: FAKE },
+    });
+    apolloExpect(addContentRes, 'data', {
+      addClassroomContent: {
+        ...expectedFormat,
+        chats: [{ ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] }],
+      },
+    });
+    const contentIds = addContentRes.data?.addClassroomContent.chats[0].contents;
+
+    // (student) addContentWithNewChat
+    const addContentWithNewChatRes2 = await student0Server.executeOperation({
+      query: ADD_CLASSROOM_CONTENT_WITH_NEW_CHAT,
+      variables: { id: newId, content: FAKE },
+    });
+    apolloExpect(addContentWithNewChatRes2, 'data', {
+      addClassroomContentWithNewChat: {
+        ...expectedFormat,
+        chats: [
+          { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
+          { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(student0Id, true) },
+        ],
+      },
+    });
+
+    // (teacher) recall first content of first chat (his owner content)
+    const recallContentRes = await teacher0Server.executeOperation({
+      query: RECALL_CLASSROOM_CONTENT,
+      variables: { id: newId, chatId, contentId: contentIds[0] },
+    });
+    apolloExpect(recallContentRes, 'data', {
+      recallClassroomContent: {
+        ...expectedFormat,
+        chats: [
+          { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
+          { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(student0Id, true) },
+        ],
+      },
+    });
+
+    // (teacher) block second content of first chat (student's content)
+    const blockContentRes = await teacher0Server.executeOperation({
+      query: BLOCK_CLASSROOM_CONTENT,
+      variables: { id: newId, chatId, contentId: contentIds[1] },
+    });
+    apolloExpect(blockContentRes, 'data', {
+      blockClassroomContent: {
+        ...expectedFormat,
+        chats: [
+          { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
+          { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(student0Id, true) },
+        ],
+      },
+    });
+
+    // (teacher) set chat flag
+    const flag = CHAT.MEMBER.FLAG.IMPORTANT;
+    const setChatFlagRes = await teacher0Server.executeOperation({
+      query: SET_CLASSROOM_CHAT_FLAG,
+      variables: { id: newId, chatId, flag },
+    });
+    apolloExpect(setChatFlagRes, 'data', {
+      setClassroomChatFlag: {
+        ...expectedFormat,
+        chats: [
+          {
+            ...expectChatFormatEx,
+            contents: [expect.any(String), expect.any(String)],
+            members: [{ user: teacher0Id, flags: [flag], lastViewedAt: expect.any(Number) }],
+          },
+          { ...expectChatFormatEx, contents: [expect.any(String)] },
+        ],
+      },
+    });
+
+    // (teacher) clear chat flag
+    const clearChatFlagRes = await teacher0Server.executeOperation({
+      query: CLEAR_CLASSROOM_CHAT_FLAG,
+      variables: { id: newId, chatId, flag },
+    });
+    apolloExpect(clearChatFlagRes, 'data', {
+      clearClassroomChatFlag: {
+        ...expectedFormat,
+        chats: [
+          {
+            ...expectChatFormatEx,
+            contents: [expect.any(String), expect.any(String)],
+            members: [{ user: teacher0Id, flags: [], lastViewedAt: expect.any(Number) }],
+          },
+          { ...expectChatFormatEx, contents: [expect.any(String)] },
+        ],
+      },
+    });
+
+    // (student) update chat lastViewedAt
+    const updateLatViewedAtRes = await student0Server.executeOperation({
+      query: UPDATE_CLASSROOM_CHAT_LAST_VIEWED_AT,
+      variables: { id: newId, chatId },
+    });
+    apolloExpect(updateLatViewedAtRes, 'data', {
+      updateClassroomChatLastViewedAt: {
+        ...expectedFormat,
+        chats: [
+          {
+            ...expectChatFormatEx,
+            contents: [expect.any(String), expect.any(String)],
+            members: [
+              { user: teacher0Id, flags: [], lastViewedAt: expect.any(Number) },
+              { user: student0Id, flags: [], lastViewedAt: expect.any(Number) },
+            ],
+          },
+          { ...expectChatFormatEx, contents: [expect.any(String)] },
+        ],
+      },
+    });
+
+    // (teacher) set chat title
+    const updateChatTitleRes = await teacher0Server.executeOperation({
+      query: UPDATE_CLASSROOM_CHAT_TITLE,
+      variables: { id: newId, chatId, title: FAKE },
+    });
+    apolloExpect(updateChatTitleRes, 'data', {
+      updateClassroomChatTitle: {
+        ...expectedFormat,
+        chats: [{ ...expectChatFormatEx, title: FAKE }, expectChatFormatEx],
+      },
+    });
+
+    // (teacher) unset chat title
+    const updateChatTitleRes2 = await teacher0Server.executeOperation({
+      query: UPDATE_CLASSROOM_CHAT_TITLE,
+      variables: { id: newId, chatId },
+    });
+    apolloExpect(updateChatTitleRes2, 'data', {
+      updateClassroomChatTitle: {
+        ...expectedFormat,
+        chats: [{ ...expectChatFormatEx, title: null }, expectChatFormatEx],
+      },
+    });
 
     // clean up
-    await User.deleteMany({ _id: { $in: [...newStudents, ...newTeachers] } });
+    await Promise.all([
+      Classroom.deleteOne({ _id: newId }),
+      User.deleteMany({ _id: { $in: [...newStudents, ...newTeachers] } }),
+    ]);
   });
 });

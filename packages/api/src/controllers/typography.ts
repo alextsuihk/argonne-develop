@@ -5,15 +5,15 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
-import type { TypographyDocument } from '../models/typography';
+import type { Id, TypographyDocument } from '../models/typography';
 import Typography, { searchableFields } from '../models/typography';
 import { messageToAdmin } from '../utils/chat';
-import syncSatellite from '../utils/sync-satellite';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -28,7 +28,7 @@ const { idSchema, querySchema, remarkSchema, removeSchema, tenantIdSchema, typog
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<TypographyDocument>> => {
+const addRemark = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -48,7 +48,7 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<Typo
 /**
  * Create New Typography
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<TypographyDocument>> => {
+const create = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { typography: fields } = await typographySchema.validate(args);
@@ -56,7 +56,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<Typogra
   const typography = new Typography<Partial<TypographyDocument>>(fields);
   const { _id, title } = typography;
 
-  const common = `(ENG): ${title.enUS}, (繁): ${title.zhHK}, (简): ${title.zhCN} [/typographies/${_id}]`;
+  const common = `(ENG): ${title.enUS}, (繁): ${title.zhHK}, (简): ${title.zhCN || title.zhHK} [/typographies/${_id}]`;
   const msg = {
     enUS: `A new typography is added: ${common}.`,
     zhCN: `刚新增文本：${common}。`,
@@ -67,7 +67,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<Typogra
     typography.save(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'TYPOGRAPHY'),
     DatabaseEvent.log(userId, `/typographies/${_id}`, 'CREATE', { typography: fields }),
-    syncSatellite({}, { typographyIds: [_id.toString()] }),
+    notifySync('CORE', {}, { typographyIds: [_id] }),
   ]);
 
   return typography;
@@ -87,7 +87,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple s (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<TypographyDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<(TypographyDocument & Id)[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<TypographyDocument>(searchableFields, { query });
@@ -117,7 +117,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One Typography by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<TypographyDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<(TypographyDocument & Id) | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<TypographyDocument>(searchableFields, { query }, { _id: id });
@@ -168,7 +168,7 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   await Promise.all([
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'TYPOGRAPHY'),
     DatabaseEvent.log(userId, `/typographies/${id}`, 'DELETE', { remark, original }),
-    syncSatellite({}, { typographyIds: [id] }),
+    notifySync('CORE', {}, { typographyIds: [id] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -190,7 +190,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Typography
  */
-const update = async (req: Request, args: unknown): Promise<LeanDocument<TypographyDocument>> => {
+const update = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { id, typography: fields } = await idSchema.concat(typographySchema).validate(args);
@@ -208,15 +208,17 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<Typogra
     Typography.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'TYPOGRAPHY'),
     DatabaseEvent.log(userId, `/typographies/${id}`, 'UPDATE', { original, update: fields }),
-    syncSatellite({}, { typographyIds: [id] }),
+    notifySync('CORE', {}, { typographyIds: [id] }),
   ]);
-  return typography!;
+  if (typography) return typography;
+  log('error', `typography:update()`, { id, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
  * Add Custom Typography
  */
-const addCustom = async (req: Request, args: unknown): Promise<LeanDocument<TypographyDocument>> => {
+const addCustom = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const { id, tenantId, custom } = await idSchema.concat(tenantIdSchema).concat(typographyCustomSchema).validate(args);
@@ -233,33 +235,34 @@ const addCustom = async (req: Request, args: unknown): Promise<LeanDocument<Typo
     zhHK: `剛新增或更新文本：${tenant.name.zhHK} ${common}。`,
   };
 
-  const [newTypography, existingTypography] = await Promise.all([
-    Typography.findOneAndUpdate(
+  const [typography] = await Promise.all([
+    (await Typography.findOneAndUpdate(
       { _id: id, deletedAt: { $exists: false }, 'customs.tenant': { $ne: tenantId } },
       { $push: { customs: { tenant: tenantId, ...custom } } },
       { fields: select(userRoles), new: true },
-    ).lean(),
-    Typography.findOneAndUpdate(
-      { _id: id, deletedAt: { $exists: false }, 'customs.tenant': tenantId },
-      { $set: { 'customs.$': { tenant: tenantId, ...custom } } },
-      { fields: select(userRoles), new: true },
-    ).lean(),
+    ).lean()) ||
+      Typography.findOneAndUpdate(
+        { _id: id, deletedAt: { $exists: false }, 'customs.tenant': tenantId },
+        { $set: { 'customs.$': { tenant: tenantId, ...custom } } },
+        { fields: select(userRoles), new: true },
+      ).lean(),
     messageToAdmin(msg, userId, userLocale, userRoles, tenant.admins, `TENANT#${tenantId}-TYPOGRAPHY#${id}`),
     DatabaseEvent.log(userId, `/typographies/${id}`, 'addCustom', {
       tenant: tenantId,
       original,
       update: custom,
     }),
-    syncSatellite({ tenantId }, { typographyIds: [id] }),
+    notifySync('CORE', { tenantId }, { typographyIds: [id] }),
   ]);
-
-  return (newTypography || existingTypography)!;
+  if (typography) return typography;
+  log('error', `typographyController:addCustom()`, { id, tenantId, custom }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
  * Remove Custom Typography
  */
-const removeCustom = async (req: Request, args: unknown): Promise<LeanDocument<TypographyDocument>> => {
+const removeCustom = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const { id, tenantId } = await idSchema.concat(tenantIdSchema).validate(args);
@@ -289,10 +292,11 @@ const removeCustom = async (req: Request, args: unknown): Promise<LeanDocument<T
       tenant: tenantId,
       originalCustom: original.customs.find(({ tenant }) => tenant.toString() === tenantId),
     }),
-    syncSatellite({ tenantId }, { typographyIds: [id] }),
+    notifySync('CORE', { tenantId }, { typographyIds: [id] }),
   ]);
-
-  return typography!;
+  if (typography) return typography;
+  log('error', `typography:removeCustom()`, { id, tenantId }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

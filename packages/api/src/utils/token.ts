@@ -6,22 +6,21 @@
 import { LOCALE } from '@argonne/common';
 import { addSeconds } from 'date-fns';
 import jwt from 'jsonwebtoken';
-import type { LeanDocument, Types } from 'mongoose';
+import type { Types } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import type { TokenDocument } from '../models/token';
 import Token from '../models/token';
-import type { UserDocument } from '../models/user';
-import { isStagingMode, isTestMode } from './environment';
-import { idsToString } from './helper';
-import { notify } from './messaging';
+import type { Id, UserDocument } from '../models/user';
+import { idsToString, latestSchoolHistory, randomString } from './helper';
+import { notifySync } from './notify-sync';
 
 type ApiPayload = {
   userId: string;
   scope: string;
 };
 export type Auth = {
-  userExtra?: { year: string; school: string; level: string; schoolClass?: string };
+  userExtra?: UserDocument['schoolHistories'][number];
   userFlags: string[];
   userId: string;
   userLocale: string;
@@ -41,11 +40,8 @@ type Extra = {
   force?: boolean;
 };
 
-type Event = 'contact' | 'email' | 'login' | 'password' | 'tenant';
-
-type AuthPayload = Auth & Extra & { jest?: number };
-type RefreshPayload = { userId: string; jest?: number };
-type EventPayload = { id: string; event: Event };
+type AuthPayload = Auth & Extra;
+type StringPayload = { data: string };
 
 export type TokensResponseConflict = { conflict: { ip?: string; maxLogin?: number; exceedLogin?: number } };
 export type TokensResponseSuccessful = {
@@ -59,11 +55,13 @@ const { MSG_ENUM } = LOCALE;
 const { config, DEFAULTS } = configLoader;
 const { jwtSecret } = config;
 
+export const REFRESH_TOKEN = 'REFRESH_TOKEN';
+
 /**
  * Create Access & Refresh Tokens
  */
-const createTokens = async (user: LeanDocument<UserDocument>, extra: Extra): Promise<TokensResponseSuccessful> => {
-  const { _id, flags, histories, locale, name, roles, scopes, tenants } = user;
+const createTokens = async (user: UserDocument & Id, extra: Extra): Promise<TokensResponseSuccessful> => {
+  const { _id, flags, schoolHistories, locale, name, roles, scopes, tenants } = user;
   const { ip, ua, isPublic, expiresIn, authUserId } = extra;
 
   // generate access & refresh token
@@ -74,8 +72,6 @@ const createTokens = async (user: LeanDocument<UserDocument>, extra: Extra): Pro
   const refreshExpiresIn = expiresIn ?? isPublic ? DEFAULTS.JWT.EXPIRES.ACCESS + 60 : DEFAULTS.JWT.EXPIRES.REFRESH;
   const refreshTokenExpireAt = addSeconds(Date.now(), refreshExpiresIn - 5); // reduce 5-seconds for safety
 
-  const jest = isStagingMode || isTestMode ? new Date().getMilliseconds() : undefined; // avoid duplicated JWT when 2 logins within 1 second (for Jest)
-
   const payload: AuthPayload = {
     userId: _id.toString(),
     userFlags: flags,
@@ -84,48 +80,31 @@ const createTokens = async (user: LeanDocument<UserDocument>, extra: Extra): Pro
     userRoles: roles,
     userScopes: scopes,
     userTenants: idsToString(tenants),
-    ...(histories[0] && {
-      userExtra: {
-        year: histories[0].year,
-        school: histories[0].school.toString(),
-        level: histories[0].level.toString(),
-        ...(histories[0].schoolClass && { schoolClass: histories[0].schoolClass }),
-      },
-    }),
+    userExtra: latestSchoolHistory(schoolHistories),
     authUserId,
     ip,
     ua,
-    jest,
   };
+
   const [accessToken, refreshToken] = await Promise.all([
     sign(payload, accessExpiresIn),
-    sign({ userId: _id.toString(), jest }, refreshExpiresIn),
+    signStrings([REFRESH_TOKEN, _id.toString(), randomString()], refreshExpiresIn), // additional randomString() primarily for JEST testing
   ]);
 
   return { accessToken, accessTokenExpireAt, refreshToken, refreshTokenExpireAt };
 };
 
 /**
- * Decode Auth Token
- */
-const decodeAuth = async (token: string): Promise<Auth> => verify<Auth>(token, true);
-
-/**
- * Decode Api Token
- */
-const decodeApi = async (token: string): Promise<ApiPayload> => verify<ApiPayload>(token);
-
-/**
  * Generate tokens (access + refresh)
  */
 type Generate = {
-  <T extends boolean>(user: LeanDocument<UserDocument>, extra: Omit<Extra, 'force'> & { force: T }): Promise<
+  <T extends boolean>(user: UserDocument & Id, extra: Omit<Extra, 'force'> & { force: T }): Promise<
     T extends true ? TokensResponseSuccessful : TokensResponseSuccessful | TokensResponseConflict
   >;
-  (user: LeanDocument<UserDocument>, extra: Extra): Promise<TokensResponseSuccessful | TokensResponseConflict>;
+  (user: UserDocument & Id, extra: Extra): Promise<TokensResponseSuccessful | TokensResponseConflict>;
 };
 
-const generate: Generate = async (user: LeanDocument<UserDocument>, extra: Extra) => {
+const generate: Generate = async (user: UserDocument & Id, extra: Extra) => {
   const { ip, ua, authUserId, force } = extra;
   try {
     // if exceed maxLogin, void (kick out) old tokens
@@ -152,12 +131,17 @@ const generate: Generate = async (user: LeanDocument<UserDocument>, extra: Extra
     await Promise.all([
       excessTokens.length && Token.deleteMany({ _id: { $in: excessTokens } }),
       Token.create({ user, token: refreshToken, expireAt: refreshTokenExpireAt, ip, ua, authUser: authUserId }),
-      differentIp ? await revokeOthers(user._id, refreshToken) : await notify([user._id], 'RE-AUTH'), // re-auth user in case multiple tab in same browser (or excessTokens)
+      differentIp && revokeOthers(user._id, refreshToken),
+      differentIp && notifySync('RENEW-TOKEN', { userIds: [user] }, {}), // force other clients to renew (logout)
     ]);
 
     return { accessToken, accessTokenExpireAt, refreshToken, refreshTokenExpireAt };
   } catch (error) {
-    throw { ...(error instanceof Error ? { message: error.message } : {}), code: MSG_ENUM.AUTH_CREATE_TOKEN_ERROR };
+    throw {
+      statusCode: 400,
+      code: MSG_ENUM.AUTH_CREATE_TOKEN_ERROR,
+      ...(error instanceof Error && { message: error.message }),
+    };
   }
 };
 
@@ -176,9 +160,9 @@ const list = async (userId: string | Types.ObjectId): Promise<TokenDocument[]> =
     return Token.find({ user: userId, expireAt: { $gte: new Date() } }, select, { sort: { createdAt: 1 } }).lean();
   } catch (error) {
     throw {
-      ...(error instanceof Error ? { message: error.message } : {}),
       statusCode: 400,
       code: MSG_ENUM.AUTH_LIST_TOKEN_ERROR,
+      ...(error instanceof Error && { message: error.message }),
     };
   }
 };
@@ -188,7 +172,7 @@ const list = async (userId: string | Types.ObjectId): Promise<TokenDocument[]> =
  * if refreshToken is still valid, generate new accessToken AND refreshToken, and update Token collection
  */
 const renew = async (
-  user: LeanDocument<UserDocument>,
+  user: UserDocument & Id,
   oldRefreshToken: string,
   extra: Extra,
 ): Promise<TokensResponseSuccessful> => {
@@ -204,7 +188,6 @@ const renew = async (
     ).lean();
     if (!token) throw { statusCode: 400, message: `token ${oldRefreshToken} no longer valid` };
 
-    if (!isStagingMode && !isTestMode) setTimeout(() => notify([user._id], 'LOAD-AUTH'), 100); // ask other client tabs to reload auth from localStorage
     return { accessToken, accessTokenExpireAt, refreshToken, refreshTokenExpireAt };
   } catch (error) {
     throw {
@@ -221,12 +204,12 @@ const renew = async (
  */
 const revokeAll = async (userId: string | Types.ObjectId): Promise<void> => {
   try {
-    await Promise.all([Token.deleteMany({ user: userId }), notify([userId], 'RE-AUTH')]);
+    await Token.deleteMany({ user: userId });
   } catch (error) {
     throw {
-      ...(error instanceof Error ? { message: error.message } : {}),
       statusCode: 400,
       code: MSG_ENUM.AUTH_REVOKE_TOKEN_ERROR,
+      ...(error instanceof Error && { message: error.message }),
     };
   }
 };
@@ -238,12 +221,11 @@ const revokeAll = async (userId: string | Types.ObjectId): Promise<void> => {
 const revokeCurrent = async (userId: string | Types.ObjectId, refreshToken: string): Promise<void> => {
   try {
     await Token.deleteOne({ user: userId, token: refreshToken });
-    if (!isStagingMode && !isTestMode) setTimeout(() => notify([userId], 'LOAD-AUTH'), 100); // effectively, logout other tabs in same browser
   } catch (error) {
     throw {
-      ...(error instanceof Error ? { message: error.message } : {}),
       statusCode: 400,
       code: MSG_ENUM.AUTH_REVOKE_TOKEN_ERROR,
+      ...(error instanceof Error && { message: error.message }),
     };
   }
 };
@@ -254,17 +236,13 @@ const revokeCurrent = async (userId: string | Types.ObjectId, refreshToken: stri
  */
 const revokeOthers = async (userId: string | Types.ObjectId, refreshToken: string): Promise<number> => {
   try {
-    const [{ deletedCount }] = await Promise.all([
-      Token.deleteMany({ user: userId, token: { $ne: refreshToken } }),
-      notify([userId], 'RE-AUTH'),
-    ]);
-
+    const { deletedCount } = await Token.deleteMany({ user: userId, token: { $ne: refreshToken } });
     return deletedCount;
   } catch (error) {
     throw {
-      ...(error instanceof Error ? { message: error.message } : {}),
       statusCode: 400,
       code: MSG_ENUM.AUTH_REVOKE_TOKEN_ERROR,
+      ...(error instanceof Error && { message: error.message }),
     };
   }
 };
@@ -273,31 +251,21 @@ const revokeOthers = async (userId: string | Types.ObjectId, refreshToken: strin
  * Sign Token (with optional expiresIn)
  */
 const sign = async (
-  payload: ApiPayload | AuthPayload | RefreshPayload | EventPayload | { id: string },
+  payload: ApiPayload | AuthPayload | StringPayload,
   expiresIn: number | string,
   secret = jwtSecret,
 ): Promise<string> =>
   new Promise<string>((resolve, reject) =>
-    jwt.sign(payload, secret, { noTimestamp: true, expiresIn }, (_, token) => (token ? resolve(token) : reject())),
+    jwt.sign(payload, secret, { noTimestamp: true, ...(expiresIn && { expiresIn }) }, (_, token) =>
+      token ? resolve(token) : reject(),
+    ),
   );
 
 /**
- * Sign Contents Token
+ * Sign String[]
  */
-export const signContentIds = async (
-  userId: string | Types.ObjectId,
-  contentIds: (string | Types.ObjectId)[],
-  secret = jwtSecret,
-): Promise<string> =>
-  new Promise<string>((resolve, reject) =>
-    jwt.sign({ userId, contentIds }, secret, { noTimestamp: true }, (_, token) => (token ? resolve(token) : reject())),
-  );
-
-/**
- * Sign Event Token
- */
-const signEvent = async (id: string | Types.ObjectId, event: Event, expiresIn: number | string): Promise<string> =>
-  sign({ id: id.toString(), event }, expiresIn);
+const signStrings = async (payload: string[], expiresIn?: number | string): Promise<string> =>
+  sign({ data: payload.join('#') }, expiresIn ?? 0);
 
 /**
  * Verify & Decode JWT
@@ -323,35 +291,36 @@ const verify = async <T>(token: string, isDecodeAuth = false): Promise<T> =>
   );
 
 /**
- * Verify & Decode ContentIds
+ * Decode Api Token
  */
-export const verifyContentIds = async (userId: string, id: string, token: string): Promise<void> => {
-  const decoded = await verify(token);
-  if (
-    !decoded ||
-    typeof decoded !== 'object' ||
-    !('userId' in decoded) ||
-    typeof decoded.userId !== 'string' ||
-    decoded.userId !== userId ||
-    !('contentIds' in decoded) ||
-    !Array.isArray(decoded.contentIds) ||
-    !decoded.contentIds.includes(id)
-  )
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+const verifyApi = async (token: string): Promise<ApiPayload> => {
+  const decoded = await verify<ApiPayload>(token);
+  if (typeof decoded === 'object' && decoded.userId) return decoded;
+  throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 };
 
 /**
- * Verify & Decode Event Token
+ * Decode Auth Token
  */
-const verifyEvent = async (token: string, signingEvent: Event): Promise<{ id: string }> => {
-  const { id, event } = await verify<{ id?: string; event?: Event }>(token);
-  if (!id || event !== signingEvent) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
-  return { id };
+const verifyAuth = async (token: string): Promise<Auth> => {
+  const decoded = await verify<Auth>(token, true);
+  if (typeof decoded === 'object' && decoded.userId) return decoded;
+  throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
+};
+
+/**
+ * Verify & Decode Token
+ */
+const verifyStrings = async (token: string): Promise<string[]> => {
+  const decoded = await verify<StringPayload>(token);
+  if (decoded && typeof decoded === 'object' && Object.hasOwn(decoded, 'data') && typeof decoded.data === 'string')
+    return decoded.data.split('#');
+  // if (typeof decoded === 'string') return decoded.split('#');
+  throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 };
 
 export default {
-  decodeAuth,
-  decodeApi,
+  createTokens,
   generate,
   generateApi,
   list,
@@ -360,9 +329,9 @@ export default {
   revokeCurrent,
   revokeOthers,
   sign,
-  signContentIds,
-  signEvent,
+  signStrings,
   verify,
-  verifyContentIds,
-  verifyEvent,
+  verifyStrings,
+  verifyApi,
+  verifyAuth,
 };

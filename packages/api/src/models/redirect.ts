@@ -6,13 +6,15 @@
 
 import type { RedirectAction } from '@argonne/common';
 import { addSeconds } from 'date-fns';
-import type { Document, LeanDocument, Model } from 'mongoose';
+import type { Document, Model } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import token from '../utils/token';
 import Tenant from './tenant';
-import type { UserDocument } from './user';
+import type { Id, UserDocument } from './user';
+
+export type { Id } from './common';
 
 export interface RedirectDocument extends Document {
   abbr: string;
@@ -21,7 +23,7 @@ export interface RedirectDocument extends Document {
 }
 
 interface RedirectModel extends Model<RedirectDocument> {
-  genAccessToken(user: LeanDocument<UserDocument>, url: string): Promise<string>;
+  genAccessToken(user: UserDocument & Id, url: string): Promise<string>;
   generate(url: string, expiresIn?: number): Promise<string>;
 }
 
@@ -57,7 +59,7 @@ const uniqueAbbr = async (action: RedirectAction, expiresIn?: number) => {
 /**
  * Generate temporary auth Access Token
  */
-redirectSchema.static('genAccessToken', async (user: LeanDocument<UserDocument>, url: string) => {
+redirectSchema.static('genAccessToken', async (user: UserDocument & Id, url: string) => {
   const generated = await token.generate(user, {
     ip: '0.0.0.0',
     ua: '',

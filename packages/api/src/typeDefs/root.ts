@@ -18,7 +18,6 @@ export default gql`
 
   type Query {
     _: String # empty entry
-    content(id: ID!, token: String!, updateAfter: DateInput): Content
   }
   type Mutation {
     _: String # empty entry
@@ -41,12 +40,13 @@ export default gql`
     skipDeleted: Boolean
   }
 
-  type Content {
+  type Chat {
     _id: ID!
     flags: [String!]!
+    title: String
     parents: [String!]!
-    creator: String!
-    data: String!
+    members: [Member!]!
+    contents: [String!]!
     createdAt: Float!
     updatedAt: Float!
   }

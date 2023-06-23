@@ -4,16 +4,15 @@
  */
 
 import chalk from 'chalk';
-import type { LeanDocument } from 'mongoose';
-import mongoose from 'mongoose';
 
-import type { LevelDocument } from '../../models/level';
+import type { Id, LevelDocument } from '../../models/level';
 import Level from '../../models/level';
+import { mongoId } from '../../utils/helper';
 
 /**
  * Find Levels (na, primary, junior, senior)
  */
-let levels: LeanDocument<LevelDocument>[] = [];
+let levels: (LevelDocument & Id)[] = [];
 export const findLevels = async () => {
   // simple caching
   levels = levels.length
@@ -58,7 +57,7 @@ const seed = async (): Promise<string> => {
   // generate _id first, then reverse levels, because we need to optionally add nextLevel
   let nextLevel: string | undefined;
   const levels = rawLevels
-    .map(lvl => ({ _id: new mongoose.Types.ObjectId(), ...lvl }))
+    .map(lvl => ({ _id: mongoId(), ...lvl }))
     .reverse()
     .map(({ hasNextLevel, ...fields }) => {
       const level = new Level<Partial<LevelDocument>>({ ...fields, ...(hasNextLevel && { nextLevel }) });

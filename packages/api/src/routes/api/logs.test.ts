@@ -4,12 +4,11 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
 import { FAKE, FAKE_LOCALE, jestSetup, jestTeardown, prob } from '../../jest';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 
 const { MSG_ENUM } = LOCALE;
 
@@ -17,7 +16,7 @@ const route = 'logs';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
 
   const expectedResponse = { code: MSG_ENUM.COMPLETED, id: expect.any(String) };
 

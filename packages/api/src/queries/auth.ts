@@ -8,24 +8,119 @@
 
 import { gql } from 'apollo-server-core';
 
-import { STATUS_RESPONSE } from './common';
-import { USER_FIELDS } from './user';
+import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
+
+export const AUTH_USER_FIELDS = gql`
+  ${LOCALE}
+  ${REMARK}
+  fragment AuthUserFields on AuthUser {
+    _id
+    flags
+
+    tenants
+    status
+    name
+    formalName {
+      ...LocaleFields
+    }
+    emails
+
+    oAuth2s
+    avatarUrl
+    mobile
+    whatsapp
+
+    networkStatus
+    timezone
+    locale
+
+    darkMode
+    theme
+
+    apiKeys {
+      scope
+      note
+      expireAt
+    }
+    roles
+    features
+    scopes
+
+    yob
+    dob
+
+    coin
+    virtualCoin
+    balanceAuditedAt
+
+    paymentMethods {
+      currency
+      type
+      bank
+      account
+      payable
+      receivable
+    }
+    preference
+    subscriptions {
+      token
+      subscription
+      enabled
+      permission
+      ip
+      ua
+    }
+
+    interests
+    supervisors
+    staffs
+
+    violations {
+      createdAt
+      reason
+      links
+    }
+    suspension
+    expoPushTokens
+
+    creditability
+    identifiedAt
+
+    studentIds
+    schoolHistories {
+      year
+      school
+      level
+      schoolClass
+      updatedAt
+    }
+
+    favoriteTutors
+
+    remarks {
+      ...RemarkFields
+    }
+    createdAt
+    updatedAt
+    deletedAt
+  }
+`;
 
 const AUTH_SUCCESSFUL_RESPONSE_FIELDS = gql`
-  ${USER_FIELDS}
+  ${AUTH_USER_FIELDS}
   fragment AuthSuccessfulResponseFields on AuthSuccessfulResponse {
     accessToken
     accessTokenExpireAt
     refreshToken
     refreshTokenExpireAt
     user {
-      ...UserFields
+      ...AuthUserFields
     }
   }
 `;
 
 const AUTH_RESPONSE_FIELDS = gql`
-  ${USER_FIELDS}
+  ${AUTH_USER_FIELDS}
   fragment AuthResponseFields on AuthResponse {
     accessToken
     accessTokenExpireAt
@@ -37,7 +132,7 @@ const AUTH_RESPONSE_FIELDS = gql`
       exceedLogin
     }
     user {
-      ...UserFields
+      ...AuthUserFields
     }
   }
 `;
@@ -53,8 +148,8 @@ export const DEREGISTER = gql`
 
 export const IMPERSONATE_START = gql`
   ${AUTH_SUCCESSFUL_RESPONSE_FIELDS}
-  mutation ImpersonateStart($impersonatedAsId: String!, $coordinates: CoordinatesInput, $clientHash: String) {
-    impersonateStart(impersonatedAsId: $impersonatedAsId, coordinates: $coordinates, clientHash: $clientHash) {
+  mutation ImpersonateStart($userId: String!, $coordinates: CoordinatesInput, $clientHash: String) {
+    impersonateStart(userId: $userId, coordinates: $coordinates, clientHash: $clientHash) {
       ...AuthSuccessfulResponseFields
     }
   }
@@ -195,7 +290,7 @@ export const LOGOUT_OTHER = gql`
 // export const OAUTH2_CONNECT = gql`
 //   ${STATUS_RESPONSE}
 //   mutation OAuth2Connect($provider: String!, $token: String!) {
-//     oAuth2Connect(provider: $provider, token: $token) {
+//     oAuth2Link(provider: $provider, token: $token) {
 //       ...StatusResponse
 //     }
 //   }
@@ -204,7 +299,7 @@ export const LOGOUT_OTHER = gql`
 // export const OAUTH2_DISCONNECT = gql`
 //   ${STATUS_RESPONSE}
 //   mutation OAuth2Disconnect($provider: String!, $token: String!) {
-//     oAuth2Disconnect(provider: $provider, token: $token) {
+//     oAuth2Unlink(provider: $provider, token: $token) {
 //       ...StatusResponse
 //     }
 //   }

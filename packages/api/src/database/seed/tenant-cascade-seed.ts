@@ -14,7 +14,7 @@ import Tenant from '../../models/tenant';
 import User from '../../models/user';
 import { randomString } from '../../utils/helper';
 import { client as minioClient, publicBucket } from '../../utils/storage';
-import { addUsersToTenant } from './user-core-seed';
+import { addTenantToUsers } from '../helper';
 
 const { TENANT } = LOCALE.DB_ENUM;
 const { AUTH_SERVICE } = TENANT.SERVICE;
@@ -42,7 +42,7 @@ const seed = async (): Promise<string> => {
   await Promise.all([
     minioClient.putObject(publicBucket, logoFilename, logoImage),
     tenant.save(),
-    addUsersToTenant([alexId], tenant._id),
+    addTenantToUsers([alexId], tenant._id),
   ]);
 
   return `(${chalk.green('Cascade tenant')} created)`;

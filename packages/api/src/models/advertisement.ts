@@ -14,6 +14,8 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument } from './common';
 import { baseDefinition } from './common';
 
+export type { Id } from './common';
+
 //! TODO: add calculatedPriority
 // const probability = balance / Math.ceil((endAt - beginAt)/1000/60*60*24) / (0.9 * cpv + 0.1 * cpc) / audiences / dailyLimit * 100
 // probability > 100: too much budget, not enough audiences
@@ -22,7 +24,7 @@ import { baseDefinition } from './common';
 // The optimal probability should be 100%
 
 export interface AdvertisementDocument extends BaseDocument {
-  status: typeof LOCALE.DB_TYPE.ADVERTISEMENT.STATUS[number];
+  status: (typeof LOCALE.DB_TYPE.ADVERTISEMENT.STATUS)[number];
 
   owner: string | Types.ObjectId;
   title: string;
@@ -36,7 +38,7 @@ export interface AdvertisementDocument extends BaseDocument {
   clickUrl: string; // either redirect to another URL, or return a minio url (PDF or PNG, MP4)
   frequency: number;
 
-  categories: typeof LOCALE.DB_TYPE.ADVERTISEMENT.CATEGORY[number][];
+  categories: (typeof LOCALE.DB_TYPE.ADVERTISEMENT.CATEGORY)[number][];
   targetAge: { min: number; max: number };
   targets: string[];
 
@@ -49,6 +51,7 @@ export interface AdvertisementDocument extends BaseDocument {
 
   audiences: (string | Types.ObjectId)[];
 
+  // TODO: break out views/clicks/coupon to AdvertisementEvent (generic)
   views: {
     user: string | Types.ObjectId;
     viewedAt: Date;

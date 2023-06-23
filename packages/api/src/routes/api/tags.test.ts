@@ -3,7 +3,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
@@ -20,7 +19,7 @@ import {
   shuffle,
 } from '../../jest';
 import type { TagDocument } from '../../models/tag';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -30,8 +29,8 @@ const route = 'tags';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUsers: LeanDocument<UserDocument>[] | null;
-  let adminUser: LeanDocument<UserDocument> | null;
+  let normalUsers: (UserDocument & Id)[] | null;
+  let adminUser: (UserDocument & Id) | null;
 
   // expected MINIMUM single tag format
   const expectedMinFormat = {
@@ -56,7 +55,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const fake2Locale = FAKE2_LOCALE;
     fake2Locale.enUS = fakeLocale.enUS.toLocaleLowerCase();
 
-    await createUpdateDelete<TagDocument>(
+    await createUpdateDelete<TagDocument & Id>(
       route,
       { 'Jest-User': adminUser!._id },
 
@@ -69,7 +68,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         {
           action: 'addRemark',
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!, FAKE) },
+          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
         },
         {
           action: 'update',

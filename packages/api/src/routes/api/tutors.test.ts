@@ -4,7 +4,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   expectedIdFormat,
@@ -21,7 +20,7 @@ import Level from '../../models/level';
 import Subject from '../../models/subject';
 import type { TutorDocument } from '../../models/tutor';
 import Tutor from '../../models/tutor';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -33,9 +32,9 @@ const route = 'tutors';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: LeanDocument<UserDocument> | null;
-  let normalUsers: LeanDocument<UserDocument>[] | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
+  let normalUsers: (UserDocument & Id)[] | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantId: string | null;
 
   // expected MINIMUM single credential format
@@ -77,12 +76,14 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     // find an intersection of levels of tutors & normalUsers
     const tutors = await Tutor.find({
       'specialties.level': {
-        $in: normalUsers!.map(user => user.histories[0]?.level.toString()).filter(lvl => !!lvl),
+        $in: normalUsers!.map(user => user.schoolHistories[0]?.level.toString()).filter(lvl => !!lvl),
       },
       deletedAt: { $exists: false },
     }).lean();
     const [{ level }] = tutors.sort(shuffle)[0].specialties.sort(shuffle);
-    const student = normalUsers!.find(({ histories }) => histories[0]?.level.toString() === level.toString());
+    const student = normalUsers!.find(
+      ({ schoolHistories }) => schoolHistories[0]?.level.toString() === level.toString(),
+    );
 
     await getMany<TutorDocument>(route, { 'Jest-User': student!._id }, expectedMinFormat, {
       testGetById: true,
@@ -96,7 +97,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
 
     const teacher = normalUsers!.find(
-      ({ histories }) => histories[0] && histories[0].level.toString() === teacherLevel!._id.toString(),
+      ({ schoolHistories }) =>
+        schoolHistories[0] && schoolHistories[0].level.toString() === teacherLevel!._id.toString(),
     );
     await getMany<TutorDocument>(route, { 'Jest-User': teacher!._id }, expectedMinFormat, {
       testGetById: true,
@@ -156,7 +158,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const credential = { title: FAKE, proofs: [`${FAKE} PNG`] };
     const specialty = { lang, subject: subjectId, level: levelId, ...(prob(0.5) && { note: `specialty ${FAKE}` }) };
 
-    const tutor = await createUpdateDelete<TutorDocument>(
+    const tutor = await createUpdateDelete<TutorDocument & Id>(
       route,
       { 'Jest-User': userId },
       [
@@ -175,7 +177,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           action: 'addRemark', // tenantAdmin addRemark
           headers: { 'Jest-User': tenantAdmin!._id },
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(tenantAdmin!, FAKE) },
+          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(tenantAdmin!._id, FAKE) },
         },
         {
           action: 'addCredential', // tutor addCredential
@@ -201,7 +203,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const credentialId = tutor!.credentials[0]._id.toString();
     const specialtyId = tutor!.specialties[0]._id.toString();
 
-    await createUpdateDelete<TutorDocument>(
+    await createUpdateDelete<TutorDocument & Id>(
       route,
       { 'Jest-User': tenantAdmin!._id },
       [

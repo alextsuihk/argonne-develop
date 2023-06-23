@@ -6,27 +6,34 @@ import { io } from 'socket.io-client';
 
 import app from './app';
 import { apolloExpect, ApolloServer, FAKE, jestSetup, jestTeardown } from './jest';
+import type { Id, UserDocument } from './models/user';
 import { LIST_SOCKETS } from './queries/auth';
 import socketServer from './socket-server';
+import { mongoId } from './utils/helper';
 import token from './utils/token';
 
 const { MSG_ENUM } = LOCALE;
 
+const generateAccessToken = async (user: UserDocument & Id) => {
+  const { accessToken } = await token.createTokens(user, { ip: '127.0.0.1', ua: 'Jest-User-Agent', expiresIn: 5 });
+  return accessToken;
+};
+
 describe('Basic Test on Socket client connectivity', () => {
+  let normalUser: (UserDocument & Id) | null;
   let userId: string;
-  let userServer: ApolloServer | null;
+  let normalServer: ApolloServer | null;
   let serverUrl: string;
 
   // setup WS & HTTP servers, and socket-client connection
   beforeAll(async () => {
     const httpServer = createServer(app).listen();
-    const [{ normalUser, normalServer }] = await Promise.all([
+    [{ normalUser, normalServer }] = await Promise.all([
       jestSetup(['normal'], { apollo: true }),
       socketServer.start(httpServer),
     ]);
     const serverAddr = httpServer.address() as AddressInfo;
     serverUrl = `http://[${serverAddr.address}]:${serverAddr.port}`;
-    userServer = normalServer;
     userId = normalUser!._id.toString();
   });
 
@@ -58,8 +65,7 @@ describe('Basic Test on Socket client connectivity', () => {
     expect.assertions(1);
     const socket = io(serverUrl);
 
-    const accessToken = await token.sign({ userId }, '5s');
-
+    const accessToken = await generateAccessToken(normalUser!);
     let timer: NodeJS.Timeout;
     await Promise.race([
       new Promise(resolve => {
@@ -90,7 +96,10 @@ describe('Basic Test on Socket client connectivity', () => {
       }), // timeout
       new Promise<void>(resolve => {
         socket.once('JOIN', (receivedMsg: { token?: string; error?: string; msg?: string }) => {
-          expect(receivedMsg).toEqual({ token: accessToken, error: { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR } });
+          expect(receivedMsg).toEqual({
+            token: accessToken,
+            error: { statusCode: 401, code: MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR },
+          });
           clearTimeout(timer);
           resolve();
         });
@@ -100,11 +109,11 @@ describe('Basic Test on Socket client connectivity', () => {
     socket.close();
   });
 
-  test('should report error when try to join Socket server WITHOUT userId', async () => {
+  test('should report error when try to join Socket server wrong userId', async () => {
     expect.assertions(1);
     const socket = io(serverUrl);
 
-    const accessToken = await token.sign({ id: 'invalid info' }, '5s');
+    const accessToken = await generateAccessToken({ ...normalUser!, _id: mongoId() });
 
     let timer: NodeJS.Timeout;
     await Promise.race([
@@ -127,11 +136,11 @@ describe('Basic Test on Socket client connectivity', () => {
     expect.assertions(3);
 
     const socket1 = io(serverUrl);
-    const token1 = await token.sign({ userId }, '5s');
+    const token1 = await generateAccessToken(normalUser!);
     socket1.emit('JOIN', { token: token1 });
 
     const socket2 = io(serverUrl);
-    const token2 = await token.sign({ userId }, '5s');
+    const token2 = await generateAccessToken(normalUser!);
     socket2.emit('JOIN', { token: token2 });
 
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -145,7 +154,7 @@ describe('Basic Test on Socket client connectivity', () => {
     expect(res.status).toBe(200);
 
     // Apollo
-    const res2 = await userServer!.executeOperation({ query: LIST_SOCKETS });
+    const res2 = await normalServer!.executeOperation({ query: LIST_SOCKETS });
     apolloExpect(res2, 'data', { listSockets: [expect.any(String), expect.any(String)] });
 
     socket1.close();

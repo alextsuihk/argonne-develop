@@ -10,6 +10,7 @@ import { STATUS_RESPONSE } from './common';
 const CONTACT_FIELDS = gql`
   fragment ContactFields on Contact {
     _id
+    flags
     avatarUrl
     name
     identifiedAt

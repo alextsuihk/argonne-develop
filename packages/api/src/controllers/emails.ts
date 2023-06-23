@@ -5,15 +5,13 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import User, { userNormalSelect } from '../models/user';
-import { notify } from '../utils/messaging';
-import mail from '../utils/sendmail';
-import syncSatellite from '../utils/sync-satellite';
+import { notifySync } from '../utils/notify-sync';
+import mail, { EMAIL_TOKEN_PREFIX } from '../utils/sendmail';
 import token from '../utils/token';
 import type { StatusResponse } from './common';
 import common from './common';
@@ -72,7 +70,7 @@ const update = async (
   req: Request,
   args: unknown,
   action: Extract<PostAction, 'add' | 'remove'>,
-): Promise<LeanDocument<UserDocument>> => {
+): Promise<UserDocument & Id> => {
   const { userId, userName, userLocale } = auth(req);
   const { email } = await emailSchema.validate(args);
 
@@ -91,9 +89,8 @@ const update = async (
   if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   await Promise.all([
-    notify([userId], 'RE-AUTH'), // force all sessions (access tokens) to reload user
     DatabaseEvent.log(userId, `/email/${userId}`, action, { email }),
-    syncSatellite({ userIds: [userId.toString()] }, { userIds: [userId] }),
+    notifySync('RENEW-TOKEN', { userIds: [userId] }, { userIds: [userId] }),
     action === 'add' && mail.confirmEmail(userName, userLocale, email),
   ]);
 
@@ -105,8 +102,9 @@ const update = async (
  * note: user might NOT have logged in yet, so only return StatusResponse
  */
 const verify = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { token: confirmToken } = await tokenSchema.validate(args);
-  const { id: email } = await token.verifyEvent(confirmToken, 'email');
+  const { token: tok } = await tokenSchema.validate(args);
+  const [prefix, email] = await token.verifyStrings(tok);
+  if (prefix !== EMAIL_TOKEN_PREFIX || !email) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 
   const user = await User.findOneAndUpdate(
     { emails: { $in: [email, email.toUpperCase()] } },
@@ -117,9 +115,8 @@ const verify = async (req: Request, args: unknown): Promise<StatusResponse> => {
 
   const userId = user._id.toString();
   await Promise.all([
-    notify([userId], 'RE-AUTH'), // force all sessions (access tokens) to reload user
     DatabaseEvent.log(userId, `/email/${userId}`, 'verify', { email }),
-    syncSatellite({ userIds: [userId] }, { userIds: [userId] }),
+    notifySync('RENEW-TOKEN', { userIds: [userId] }, { userIds: [userId] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };

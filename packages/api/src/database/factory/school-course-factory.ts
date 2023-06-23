@@ -18,75 +18,95 @@ import type { SchoolCourseDocument } from '../../models/school-course';
 import SchoolCourse from '../../models/school-course';
 import Subject from '../../models/subject';
 import Tenant from '../../models/tenant';
-import User from '../../models/user';
-import { idsToString, prob, schoolYear, shuffle } from '../../utils/helper';
+import { idsToString, prob, randomId, schoolYear, shuffle } from '../../utils/helper';
 
 const { SCHOOL_COURSE, TENANT } = LOCALE.DB_ENUM;
 
 /**
  * Generate (factory)
  *
+ * @param codes: tenantCodes
  * @param revCount: number of rev to generate (per school)
  */
-const fake = async (revCount = 2): Promise<string> => {
-  const [{ alexId }, books, subjects, tenants] = await Promise.all([
-    User.findSystemAccountIds(),
+const fake = async (codes: string[], revCount = 2): Promise<string> => {
+  const [books, schools, subjects, tenants] = await Promise.all([
     Book.find({ deletedAt: { $exists: false } }).lean(),
+    School.find({ deletedAt: { $exists: false } }).lean(),
     Subject.find({ deletedAt: { $exists: false } }).lean(),
     Tenant.find({
       school: { $exists: true },
       services: TENANT.SERVICE.CLASSROOM,
+      ...(codes.length && { code: { $in: codes } }),
       deletedAt: { $exists: false },
     }).lean(),
   ]);
 
-  const schools = await School.find({ _id: { $in: tenants.map(t => t.school) }, deletedAt: { $exists: false } });
-  if (!subjects.length) throw new Error('Subject Collection is empty');
+  const fakeSchoolCourse = (
+    status: (typeof LOCALE.DB_TYPE.SCHOOL_COURSE.STATUS)[number],
+    year: string,
+    rev: number,
+    tenantAdmins: string[],
+    school: string,
+  ) =>
+    new SchoolCourse<Partial<SchoolCourseDocument>>({
+      status,
+      school,
+      year,
+      rev,
+
+      createdAt: faker.date.recent(90),
+      createdBy: randomId(tenantAdmins),
+      courses: schools
+        .find(s => s._id.toString() === school)!
+        .levels.map(level => ({
+          level,
+          subjects: subjects
+            .filter(s => idsToString(s.levels).includes(level.toString()))
+            .sort(shuffle)
+            .slice(-5)
+            .map(subject => ({
+              subject: subject._id,
+              ...(prob(0.3) && { alias: faker.lorem.slug(5) }),
+              books: idsToString(
+                books
+                  .filter(
+                    b =>
+                      idsToString(b.subjects).includes(subject._id.toString()) &&
+                      b.level.toString() === level.toString(),
+                  )
+                  .slice(0, 2),
+              ),
+            })),
+        })),
+    });
 
   const schoolCourses = tenants
-    .map(tenant =>
-      Array(revCount)
+    .map(tenant => [
+      // fake last year publisher data
+      fakeSchoolCourse(
+        SCHOOL_COURSE.STATUS.PUBLISHED,
+        schoolYear(-1),
+        1,
+        idsToString(tenant.admins),
+        tenant.school!.toString(),
+      ),
+      // fake this year (multiple)
+      ...Array(revCount)
         .fill(0)
-        .map(
-          (_, idx) =>
-            new SchoolCourse<Partial<SchoolCourseDocument>>({
-              status: revCount === idx + 1 ? SCHOOL_COURSE.STATUS.DRAFT : SCHOOL_COURSE.STATUS.PUBLISHED,
-
-              school: tenant.school!,
-              year: schoolYear(0),
-
-              rev: idx + 1,
-              createdAt: faker.date.recent(90),
-              createdBy: tenant.admins[0]!.toString() || alexId,
-              courses: schools
-                .find(s => s._id.toString() === tenant.school!.toString())!
-                .levels.map(level => ({
-                  level,
-                  subjects: subjects
-                    .filter(s => idsToString(s.levels).includes(level.toString()))
-                    .sort(shuffle)
-                    .slice(-5)
-                    .map(subject => ({
-                      subject: subject._id,
-                      ...(prob(0.3) && { alias: faker.lorem.slug(5) }),
-                      books: idsToString(
-                        books
-                          .filter(
-                            b =>
-                              idsToString(b.subjects).includes(subject._id.toString()) &&
-                              b.level.toString() === level.toString(),
-                          )
-                          .slice(0, 2),
-                      ),
-                    })),
-                })),
-            }),
+        .map((_, idx) =>
+          fakeSchoolCourse(
+            idx + 1 === revCount ? SCHOOL_COURSE.STATUS.PUBLISHED : SCHOOL_COURSE.STATUS.DRAFT,
+            schoolYear(),
+            idx + 1,
+            idsToString(tenant.admins),
+            tenant.school!.toString(),
+          ),
         ),
-    )
+    ])
     .flat();
 
   await SchoolCourse.create(schoolCourses);
-  return `(${chalk.green(schoolCourses.length)} schoolCourses created for ${chalk.green(schools.length)} schools)`;
+  return `(${chalk.green(schoolCourses.length)} schoolCourses created for ${chalk.green(tenants.length)} tenants)`;
 };
 
 export { fake };

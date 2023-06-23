@@ -6,7 +6,6 @@
 import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import {
@@ -18,7 +17,7 @@ import {
   jestTeardown,
   uniqueTestUser,
 } from '../jest';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_EMAIL,
@@ -28,19 +27,22 @@ import {
   SEND_VERIFICATION_EMAIL,
   VERIFY_EMAIL,
 } from '../queries/email';
+import { EMAIL_TOKEN_PREFIX } from '../utils/sendmail';
 import token from '../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 const { DEFAULTS } = configLoader;
 
+const INVALID_EMAIL = 'invalid_mail'; // yup thinks invalid@email is valid
+
 // Top level of this test suite:
 describe('Email GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: LeanDocument<UserDocument> | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantAdminServer: ApolloServer | null;
 
   beforeAll(async () => {
@@ -68,8 +70,7 @@ describe('Email GraphQL', () => {
   test('should fail when checking with an invalid email format', async () => {
     expect.assertions(1);
 
-    const email = 'invalid@email';
-    const res = await guestServer!.executeOperation({ query: IS_EMAIL_AVAILABLE, variables: { email } });
+    const res = await guestServer!.executeOperation({ query: IS_EMAIL_AVAILABLE, variables: { email: INVALID_EMAIL } });
     apolloExpect(res, 'errorContaining', 'email must be a valid email');
   });
 
@@ -121,7 +122,10 @@ describe('Email GraphQL', () => {
     apolloExpect(res1, 'data', { sendVerificationEmail: { code: MSG_ENUM.COMPLETED } });
 
     // verify email
-    const confirmToken = await token.signEvent(email.toLowerCase(), 'email', DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN);
+    const confirmToken = await token.signStrings(
+      [EMAIL_TOKEN_PREFIX, email.toLowerCase()],
+      DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN,
+    );
     const res2 = await guestServer!.executeOperation({ query: VERIFY_EMAIL, variables: { token: confirmToken } });
     apolloExpect(res2, 'data', { verifyEmail: { code: MSG_ENUM.COMPLETED } });
 
@@ -130,7 +134,7 @@ describe('Email GraphQL', () => {
     expect(user!.emails.includes(email.toLowerCase())).toBeTrue();
 
     // clean-up (undo verification, restore original values [uppercase or lowercase case])
-    await User.findByIdAndUpdate(_id, { emails }).lean();
+    await User.updateOne({ _id }, { emails });
   });
 
   test('should pass when add & remove email', async () => {
@@ -185,7 +189,7 @@ describe('Email GraphQL', () => {
   //     variables: { id: newId, remark: FAKE },
   //   });
   //   apolloExpect(addRemarkRes, 'data', {
-  //     addDistrictRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!, FAKE, true) },
+  //     addDistrictRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
   //   });
 
   //   // update newly created document

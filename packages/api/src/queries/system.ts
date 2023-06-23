@@ -21,6 +21,12 @@ export const GET_SERVER_INFO = gql`
   }
 `;
 
+export const GET_SERVER_TIME = gql`
+  query ServerTime {
+    serverTime
+  }
+`;
+
 export const PING = gql`
   query Ping {
     ping

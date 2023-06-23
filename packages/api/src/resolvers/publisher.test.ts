@@ -6,7 +6,6 @@
 import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   apolloExpect,
@@ -26,7 +25,7 @@ import {
   randomId,
 } from '../jest';
 import Publisher from '../models/publisher';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import {
   ADD_PUBLISHER,
   ADD_PUBLISHER_REMARK,
@@ -41,10 +40,10 @@ const { MSG_ENUM } = LOCALE;
 // Top publisher of this test suite:
 describe('Publisher GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
   let url: string;
   let url2: string;
 
@@ -134,8 +133,10 @@ describe('Publisher GraphQL', () => {
   test('should pass when ADD & UPDATE & addAdmin, removeAdmin & DELETE', async () => {
     expect.assertions(5);
 
+    [url, url2] = await Promise.all([jestPutObject(adminUser!._id), jestPutObject(adminUser!._id)]);
+
     // add a document
-    url = await jestPutObject(adminUser!);
+
     const create = {
       admins: [adminUser!._id.toString()],
       name: FAKE_LOCALE,
@@ -162,7 +163,6 @@ describe('Publisher GraphQL', () => {
     apolloExpect(updatedRes, 'data', { updatePublisher: { ...expectedAdminFormat, ...update, logoUrl: null } }); // logoUrl is removed
 
     // add logoUrl back
-    url2 = await jestPutObject(adminUser!);
     const updated2Res = await adminServer!.executeOperation({
       query: UPDATE_PUBLISHER,
       variables: { id: newId, publisher: { ...update, logoUrl: url2 } },
@@ -175,7 +175,7 @@ describe('Publisher GraphQL', () => {
       variables: { id: newId, remark: FAKE },
     });
     apolloExpect(addRemarkRes, 'data', {
-      addPublisherRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!, FAKE, true) },
+      addPublisherRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
     });
 
     // delete newly created document

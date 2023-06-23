@@ -4,17 +4,16 @@
  * all other models should be extended from this baseModel
  */
 
-import type { Document, Types } from 'mongoose';
+import type { Types } from 'mongoose';
 import { Schema } from 'mongoose';
 
 import type { Remark } from './remark';
 import { remarkDefinition } from './remark';
 export type { Locale } from '@argonne/common';
 
-export interface BaseDocument extends Document<string | Types.ObjectId> {
-  // id: string; // enforcing type 'string', instead of any
-  _id: string | Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
+export type Id = { _id: Types.ObjectId };
 
+export interface BaseDocument {
   idx: number;
   flags: string[];
   tags: (string | Types.ObjectId)[];

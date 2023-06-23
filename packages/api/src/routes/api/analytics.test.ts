@@ -4,18 +4,17 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
 import { FAKE, jestSetup, jestTeardown, prob, randomId } from '../../jest';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 
 const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe(`Analytics API Routes`, () => {
-  let normalUsers: LeanDocument<UserDocument>[] | null;
+  let normalUsers: (UserDocument & Id)[] | null;
 
   beforeAll(async () => {
     ({ normalUsers } = await jestSetup(['normal']));

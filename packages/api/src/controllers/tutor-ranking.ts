@@ -12,11 +12,11 @@ import { yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
 import mongoose from 'mongoose';
 
-import type { TutorRankingDocument } from '../models/tutor-ranking';
+import type { Id, TutorRankingDocument } from '../models/tutor-ranking';
 import TutorRanking from '../models/tutor-ranking';
 import common from './common';
 
-type AverageRanking = Pick<TutorRankingDocument, '_id' | 'correctness' | 'explicitness' | 'punctuality'>;
+type AverageRanking = Pick<TutorRankingDocument & Id, '_id' | 'correctness' | 'explicitness' | 'punctuality'>;
 
 const { auth, hubModeOnly, paginateSort } = common;
 const { idSchema } = yupSchema;

@@ -10,6 +10,8 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument, Locale } from './common';
 import { baseDefinition, localeDefinition } from './common';
 
+export type { Id } from './common';
+
 export interface DistrictDocument extends BaseDocument {
   region: Locale;
   name: Locale;

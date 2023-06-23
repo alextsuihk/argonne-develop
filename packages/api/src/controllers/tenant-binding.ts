@@ -6,15 +6,15 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import { addSeconds } from 'date-fns';
 import type { Request } from 'express';
-import type { LeanDocument } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
-import User, { UserDocument, userNormalSelect } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
+import User, { userNormalSelect } from '../models/user';
 import { startChatGroup } from '../utils/chat';
-import { notify } from '../utils/messaging';
-import syncSatellite from '../utils/sync-satellite';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import token from '../utils/token';
 import type { StatusResponse } from './common';
 import common from './common';
@@ -22,8 +22,10 @@ import common from './common';
 const { MSG_ENUM } = LOCALE;
 const { DEFAULTS } = configLoader;
 
-const { auth } = common;
+const { auth, isRoot } = common;
 const { optionalExpiresInSchema, tenantIdSchema, tokenSchema, userIdSchema } = yupSchema;
+
+export const TENANT_BINDING_TOKEN_PREFIX = 'TENANT_BINDING';
 
 export const select = (userRoles?: string[]) => `${common.select(userRoles)} -apiKey -meta`;
 
@@ -31,14 +33,20 @@ export const select = (userRoles?: string[]) => `${common.select(userRoles)} -ap
  * An User binds himself to a tenant
  *  note: user (while at old tenant domain), binds to another tenant
  */
-const bind = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
+const bind = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
   const { userId, userLocale, userName, userTenants } = auth(req);
   const { token: tok } = await tokenSchema.validate(args);
-  const { id } = await token.verifyEvent(tok, 'tenant');
+  const [prefix, tenantId, studentId] = await token.verifyStrings(tok);
+  if (prefix !== TENANT_BINDING_TOKEN_PREFIX || !tenantId) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 
-  const [tenantId, studentId] = id.split('#');
-  if (!tenantId || userTenants.includes(tenantId)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  const tenant = await Tenant.findByTenantId(tenantId);
+  const [tenant, userFirstTenant] = await Promise.all([
+    Tenant.findByTenantId(tenantId),
+    userTenants[0] ? Tenant.findByTenantId(userTenants[0]) : null,
+  ]);
+
+  // NOT allow when current primary userTenants (first tenant) is school, and binding tenanting, previous (current) school needs to unbind first
+  if (userTenants.includes(tenantId) || (tenant.school && userFirstTenant?.school))
+    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const msg = {
     enUS: `${userName} (userId: ${userId}), welcome to join us ${tenant.name.enUS}.`,
@@ -49,19 +57,19 @@ const bind = async (req: Request, args: unknown): Promise<LeanDocument<UserDocum
     User.findByIdAndUpdate(
       userId,
       {
-        $push: {
-          tenants: tenant.school ? { $each: [tenantId], $position: 0 } : tenantId, // if tenant is a school, it becomes the primary tenant (tenants[0])
-          ...(tenant.school && studentId && { studentIds: { $each: [`${tenantId}#${studentId}`], $position: 0 } }),
-        },
+        $push: { tenants: tenant.school ? { $each: [tenantId], $position: 0 } : tenantId }, // if tenant is a school, it becomes the primary tenant (tenants[0])
+        ...(tenant.school &&
+          studentId && { $addToSet: { studentIds: { $each: [`${tenantId}#${studentId}`], $position: 0 } } }), // prepend studentIds for login purposes
       },
       { fields: userNormalSelect, new: true },
     ).lean(),
-    startChatGroup(tenant._id, msg, [userId, ...tenant.admins], userLocale, `TENANT#${studentId}-USER#${userId}`),
-    DatabaseEvent.log(userId, `/users/${userId}`, 'BIND', { tenant: tenantId }),
-    notify([userId], 'RE-AUTH'),
-    syncSatellite({ tenantId: tenant._id, userIds: [userId] }, { userIds: [userId] }),
+    startChatGroup(tenantId, msg, [userId, ...tenant.admins], userLocale, `TENANT#${tenantId}-USER#${userId}`),
+    DatabaseEvent.log(userId, `/tenant-binding/${userId}`, 'BIND', { tenantId }),
+    notifySync('RENEW-TOKEN', { tenantId, userIds: [userId] }, { userIds: [userId] }),
   ]);
-  return user!;
+  if (user) return user;
+  log('error', `tenantBindingController:update()`, { tenantId }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
@@ -73,19 +81,22 @@ const createToken = async (req: Request, args: unknown): Promise<{ token: string
     .concat(tenantIdSchema)
     .validate(args);
 
-  await Tenant.findByTenantId(tenantId, userId); // only tenant.admins could generate token
+  const [bindingToken] = await Promise.all([
+    token.signStrings([TENANT_BINDING_TOKEN_PREFIX, tenantId], expiresIn),
+    Tenant.findByTenantId(tenantId, userId), // only tenant.admins could generate token
+  ]);
 
-  return { token: await token.signEvent(tenantId, 'tenant', expiresIn), expireAt: addSeconds(new Date(), expiresIn) };
+  return { token: bindingToken, expireAt: addSeconds(new Date(), expiresIn) };
 };
 
 /**
  * Tenant admin unbinding an user
- * ! ONLY tenantAdmins could unbind an user (remove user from tenant)
+ * ! ONLY tenantAdmins (or ROOT) could unbind an user (remove user from tenant)
  */
 const unbind = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId: adminId, userLocale: adminLocale } = auth(req);
+  const { userId: adminId, userLocale: adminLocale, userRoles: adminUserRoles } = auth(req);
   const { tenantId, userId } = await tenantIdSchema.concat(userIdSchema).validate(args);
-  const tenant = await Tenant.findByTenantId(tenantId, adminId);
+  const tenant = await Tenant.findByTenantId(tenantId, adminId, isRoot(adminUserRoles));
 
   const user = await User.findOneAndUpdate(
     { _id: userId, tenants: tenantId },
@@ -100,11 +111,9 @@ const unbind = async (req: Request, args: unknown): Promise<StatusResponse> => {
     zhHK: `${user.name}，你已被解除綁定 ${tenant.name.zhHK}。`,
   };
   await Promise.all([
-    startChatGroup(tenantId, msg, [adminId, userId, ...tenant.admins], adminLocale, `TENANT#${tenantId}`),
-    startChatGroup(null, msg, [userId], user.locale, `USER#${user._id}`),
-    DatabaseEvent.log(adminId, `/users/${userId}`, 'UNBIND', { tenant: tenantId, admin: adminId, user: userId }),
-    notify([userId], 'RE-AUTH'),
-    syncSatellite({ tenantId, userIds: [userId] }, { userIds: [userId] }),
+    startChatGroup(null, msg, [adminId, ...tenant.admins], adminLocale, `TENANT#${tenantId}-USER#${userId}`),
+    DatabaseEvent.log(adminId, `/tenant-binding/${userId}`, 'UNBIND', { tenantId, adminId }),
+    notifySync('RENEW-TOKEN', { tenantId, userIds: [userId] }, { userIds: [userId] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };

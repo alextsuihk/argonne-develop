@@ -11,6 +11,8 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument, Locale } from './common';
 import { baseDefinition, localeDefinition } from './common';
 
+export type { Id } from './common';
+
 export interface SubjectDocument extends BaseDocument {
   name: Locale;
   levels: (string | Types.ObjectId)[];

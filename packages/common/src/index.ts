@@ -1,3 +1,5 @@
+import type { Types } from 'mongoose';
+
 export { default as LOCALE } from './generated-locale';
 export type { Query } from './validators';
 export * as yupSchema from './validators';
@@ -12,15 +14,16 @@ export const CONTENT_PREFIX = {
 };
 
 export const NOTIFY_EVENTS = [
-  'AD',
-  'RE-AUTH', // renew token
+  'ADVERTISEMENT',
+  'ANNOUNCEMENT',
+  'RENEW-TOKEN', // renew token
   'LOAD-AUTH', // reload auth from localStorage
-  'CHAT',
   'CHAT-GROUP',
   'CLASSROOM',
   'CONTACT', // notify friend that name profile is updated (avatarUrl)
-  'CONTACT_STATUS', // contact status is updated
+  'CONTACT-STATUS', // contact status is updated
   'CORE', // all base collections: such as district, level, (selected) school, etc
+  'HOMEWORK',
   'IMPERSONATION', // notify staff where he is being impersonated (@ start)
   'LOGIN', // new login session from other devices
   'ACTIVITY', //
@@ -28,42 +31,40 @@ export const NOTIFY_EVENTS = [
   'CLASSROOM',
   'HOMEWORK',
   'JOB',
-  'JOIN',
   'QUESTION',
   'TUTOR',
+  '_SYNC-ONLY', // sync satellite ONLY without notify user(s)
 ] as const;
 
 // type definitions for notify (socket.io) & satellite sync
 export type DocumentSync = {
-  announcementIds?: string[];
-  assignmentIds?: string[];
-  bookIds?: string[];
-  bookAssignmentIds?: string[];
-  chatGroupIds?: string[];
-  chatIds?: string[];
-  classroomIds?: string[];
-  contentIds?: string[];
-  contributionIds?: string[];
-  districtIds?: string[];
-  homeworkIds?: string[];
-  jobIds?: string[];
-  levelIds?: string[];
-  publisherIds?: string[];
-  questionIds?: string[];
-  rankingIds?: string[];
-  schoolIds?: string[];
-  subjectIds?: string[];
-  tagIds?: string[];
-  tenantIds?: string[];
-  tutorIds?: string[];
-  typographyIds?: string[];
-  userIds?: string[];
+  announcementIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  assignmentIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  bookIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  bookAssignmentIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  bidIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  chatGroupIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  chatIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  classroomIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  contentIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  contributionIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  districtIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  homeworkIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  jobIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  levelIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  publisherIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  questionIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  rankingIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  schoolIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  subjectIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  tagIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  tenantIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  tutorIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  typographyIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
+  userIds?: (string | Types.ObjectId | { _id: Types.ObjectId })[];
 
   minioAddItems?: string[]; // download from urls[] and save to local minio
   minioRemoveItems?: string[]; // remove object from minio
-
-  userNetworkStatus?: string; // use with users (in case of socket.io joining/leaving)
-  msg?: string;
 };
 
 export type Locale = {

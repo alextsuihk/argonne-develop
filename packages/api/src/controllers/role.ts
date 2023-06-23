@@ -11,8 +11,7 @@ import AccessEvent from '../models/event/access';
 import DatabaseEvent from '../models/event/database';
 import User from '../models/user';
 import { messageToAdmin } from '../utils/chat';
-import { notify } from '../utils/messaging';
-import syncSatellite from '../utils/sync-satellite';
+import { notifySync } from '../utils/notify-sync';
 import common from './common';
 
 type Action = 'addRole' | 'removeRole';
@@ -90,8 +89,7 @@ const updateRole = async (req: Request, args: unknown, action: Action): Promise<
     messageToAdmin(msg, adminId, userLocale, userRoles, [userId], `USER#${userId}`),
     AccessEvent.log(adminId, `/roles/${userId}`, { role }),
     DatabaseEvent.log(adminId, `/roles/${userId}`, action, role),
-    notify([userId], 'RE-AUTH'),
-    syncSatellite({ userIds: [userId] }, { userIds: [userId] }),
+    notifySync('RENEW-TOKEN', { userIds: [userId] }, { userIds: [userId] }),
   ]);
 
   return user.roles;

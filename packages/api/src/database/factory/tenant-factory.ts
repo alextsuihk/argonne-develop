@@ -72,22 +72,27 @@ const fake = async (code: string, assignedServices: string[], levelGroups?: stri
   });
 
   // Part2: create tenantAdmins & other users
-  const tenantAdmins = Array(2) // 2 tenantAdmins are needed to JEST test (1 for apollo, 1 for REST, testing in parallel)
-    .fill(0)
-    .map(
-      (_, idx) =>
-        new User<Partial<UserDocument>>({
-          status: USER.STATUS.ACTIVE,
-          tenants: [tenant._id],
-          flags: DEFAULTS.USER.FLAGS,
-          name: `${code} tenantAdmin (${idx + 1})`,
-          formalName: { enUS: `${code}-${idx}`, zhCN: `${code}-${idx}`, zhHK: `${code}-${idx}` },
-          scopes: ['systems:r'],
-          emails: [`${code.toLowerCase()}-tenant-admin${idx}@${DEFAULTS.DOMAIN}`],
-          password: User.genValidPassword(`${code}_`),
-          identifiedAt: new Date(),
-        }),
-    );
+  const genUsers = (type: 'admin' | 'support' | 'counselor' | 'marshal') =>
+    Array(2)
+      .fill(0)
+      .map(
+        (_, idx) =>
+          new User<Partial<UserDocument>>({
+            status: USER.STATUS.ACTIVE,
+            tenants: [tenant._id],
+            flags: DEFAULTS.USER.FLAGS,
+            name: `${code} ${type} (${idx + 1})`,
+            formalName: { enUS: `${code}-${idx}`, zhCN: `${code}-${idx}`, zhHK: `${code}-${idx}` },
+            emails: [`${code.toLowerCase()}-${type}-${idx}@${DEFAULTS.DOMAIN}`],
+            password: User.genValidPassword(`${code}_`),
+            identifiedAt: new Date(),
+          }),
+      );
+
+  const tenantAdmins = genUsers('admin'); // 2 tenantAdmins are needed to JEST test (1 for apollo, 1 for REST, testing in parallel)
+  const tenantSupports = genUsers('support');
+  const tenantCounselors = genUsers('counselor');
+  const tenantMarshals = genUsers('marshal');
 
   const otherUsers =
     code === 'JEST'
@@ -113,9 +118,12 @@ const fake = async (code: string, assignedServices: string[], levelGroups?: stri
       : [];
 
   tenant.admins = idsToString(tenantAdmins); // add tenantAdmins
+  tenant.supports = idsToString(tenantSupports);
+  tenant.counselors = idsToString(tenantCounselors);
+  tenant.marshals = idsToString(tenantMarshals);
 
   const [users] = await Promise.all([
-    User.create([...tenantAdmins, ...otherUsers]), // must use create() to execute pre-save hook for password-hashing
+    User.create([...tenantAdmins, ...tenantSupports, ...tenantCounselors, ...tenantMarshals, ...otherUsers]), // must use create() to execute pre-save hook for password-hashing
     minioClient.putObject(publicBucket, logoFilename, logoImage),
     school && school.save(),
     tenant.save(),

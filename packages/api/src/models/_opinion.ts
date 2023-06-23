@@ -15,6 +15,8 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument } from './common';
 import { baseDefinition } from './common';
 
+export type { Id } from './common';
+
 export interface OpinionDocument extends BaseDocument {
   user: string | Types.ObjectId;
   event: string;

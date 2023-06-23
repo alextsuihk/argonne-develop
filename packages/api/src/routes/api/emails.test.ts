@@ -4,24 +4,26 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
 import configLoader from '../../config/config-loader';
 import { domain, expectedUserFormat, jestSetup, jestTeardown, uniqueTestUser } from '../../jest';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
+import { EMAIL_TOKEN_PREFIX } from '../../utils/sendmail';
 import token from '../../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 const { DEFAULTS } = configLoader;
 
+const INVALID_EMAIL = 'invalid_mail'; // yup thinks invalid@email is valid
+
 // Top level of this test suite:
 describe('Email API Routes', () => {
-  let adminUser: LeanDocument<UserDocument> | null;
-  let normalUser: LeanDocument<UserDocument> | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
+  let normalUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
 
   beforeAll(async () => {
     ({ adminUser, normalUser, tenantAdmin } = await jestSetup(['admin', 'normal', 'tenantAdmin']));
@@ -52,7 +54,7 @@ describe('Email API Routes', () => {
   test('should fail when checking with an invalid email format', async () => {
     expect.assertions(3);
 
-    const res = await request(app).post('/api/emails/isAvailable').send({ email: 'invalid@@email' });
+    const res = await request(app).post('/api/emails/isAvailable').send({ email: INVALID_EMAIL });
     expect(res.body).toEqual({
       errors: [{ code: MSG_ENUM.USER_INPUT_ERROR, param: 'email' }],
       statusCode: 422,
@@ -125,7 +127,10 @@ describe('Email API Routes', () => {
     expect(res1.status).toBe(200);
 
     // verify email
-    const confirmToken = await token.signEvent(email.toLowerCase(), 'email', DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN);
+    const confirmToken = await token.signStrings(
+      [EMAIL_TOKEN_PREFIX, email.toLowerCase()],
+      DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN,
+    );
     const res2 = await request(app).post(`/api/emails/verify`).set({ 'Jest-User': _id }).send({ token: confirmToken });
     expect(res2.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(res2.header['content-type']).toBe('application/json; charset=utf-8');
@@ -136,7 +141,7 @@ describe('Email API Routes', () => {
     expect(user!.emails.includes(email.toLowerCase())).toBeTrue();
 
     // clean-up (undo verification, restore original values [uppercase or lowercase case])
-    await User.findByIdAndUpdate(_id, { emails }).lean();
+    await User.updateOne({ _id }, { emails });
   });
 
   test('should pass when add & remove email', async () => {

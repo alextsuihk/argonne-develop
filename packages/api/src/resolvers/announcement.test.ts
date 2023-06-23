@@ -7,11 +7,10 @@ import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
 import { addDays } from 'date-fns';
-import type { LeanDocument } from 'mongoose';
 
 import { apolloExpect, ApolloServer, expectedIdFormat, FAKE, jestSetup, jestTeardown, prob, randomId } from '../jest';
 import Announcement from '../models/announcement';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import { ADD_ANNOUNCEMENT, GET_ANNOUNCEMENT, GET_ANNOUNCEMENTS, REMOVE_ANNOUNCEMENT } from '../queries/announcement';
 
 const { MSG_ENUM } = LOCALE;
@@ -21,8 +20,8 @@ describe('Announcement GraphQL', () => {
   let adminServer: ApolloServer | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: LeanDocument<UserDocument> | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantAdminServer: ApolloServer | null;
   let tenantId: string | null;
 

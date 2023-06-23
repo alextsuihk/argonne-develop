@@ -5,15 +5,15 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import DatabaseEvent from '../models/event/database';
-import type { TagDocument } from '../models/tag';
+import type { Id, TagDocument } from '../models/tag';
 import Tag, { searchableFields } from '../models/tag';
 import { messageToAdmin } from '../utils/chat';
-import syncSatellite from '../utils/sync-satellite';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -27,7 +27,7 @@ const { idSchema, querySchema, remarkSchema, removeSchema, tagSchema } = yupSche
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<TagDocument>> => {
+const addRemark = async (req: Request, args: unknown): Promise<TagDocument & Id> => {
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
 
@@ -45,7 +45,7 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<TagD
 /**
  * Create New Tag
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<TagDocument>> => {
+const create = async (req: Request, args: unknown): Promise<TagDocument & Id> => {
   const { userId, userLocale, userRoles } = auth(req);
   const user = await authGetUser(req);
   const { tag: fields } = await tagSchema.validate(args);
@@ -67,7 +67,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<TagDocu
     tag.save(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/tags/${tag._id}`, 'CREATE', { tag: fields }),
-    syncSatellite({}, { tagIds: [tag._id.toString()] }),
+    notifySync('CORE', {}, { tagIds: [tag] }),
   ]);
 
   return tag;
@@ -87,7 +87,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple Tags (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<TagDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<(TagDocument & Id)[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<TagDocument>(searchableFields, { query });
@@ -118,7 +118,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One Tag by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<TagDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<(TagDocument & Id) | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<TagDocument>(searchableFields, { query }, { _id: id });
@@ -172,7 +172,7 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   await Promise.all([
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/tags/${id}`, 'DELETE', { remark, original }),
-    syncSatellite({}, { tagIds: [id] }),
+    notifySync('CORE', {}, { tagIds: [id] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -194,7 +194,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Tag
  */
-const update = async (req: Request, args: unknown): Promise<LeanDocument<TagDocument>> => {
+const update = async (req: Request, args: unknown): Promise<TagDocument & Id> => {
   const { userId, userLocale, userRoles } = auth(req);
   const user = await authGetUser(req);
   const { id, tag: fields } = await idSchema.concat(tagSchema).validate(args);
@@ -217,10 +217,11 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<TagDocu
     Tag.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/tags/${id}`, 'UPDATE', { original, update: fields }),
-    syncSatellite({}, { tagIds: [id] }),
+    notifySync('CORE', {}, { tagIds: [id] }),
   ]);
-
-  return tag!;
+  if (tag) return tag;
+  log('error', `tagController:update()`, { id, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

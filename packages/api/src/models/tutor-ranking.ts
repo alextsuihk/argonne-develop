@@ -10,6 +10,8 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument } from './common';
 import { baseDefinition } from './common';
 
+export type { Id } from './common';
+
 export interface TutorRankingDocument extends BaseDocument {
   tenant: string | Types.ObjectId;
   tutor: string | Types.ObjectId;
@@ -49,7 +51,7 @@ const tutorRankingSchema = new Schema<TutorRankingDocument>(
       type: Date,
       default: Date.now,
       index: true,
-      expires: DEFAULTS.MONGOOSE.EXPIRES.RANKING,
+      expires: DEFAULTS.MONGOOSE.EXPIRES.TUTOR_RANKING,
     },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,

@@ -10,8 +10,8 @@ export default gql`
   }
 
   extend type Mutation {
-    addEmail(email: String!): User!
-    removeEmail(email: String!): User!
+    addEmail(email: String!): AuthUser!
+    removeEmail(email: String!): AuthUser!
     sendTestEmail(email: String!): StatusResponse!
     sendVerificationEmail(email: String!): StatusResponse!
     verifyEmail(token: String!): StatusResponse!

@@ -1,101 +1,152 @@
-// TODO: create/delete/changePassword of jupyter.inspire.hk
+// TODO: (idea) create/delete/changePassword of jupyter.inspire.hk
 
 /**
  * Controller: Users
  *
+ * ! primary for (school) tenantAdmin & admin
+ *
  */
 
 import { LOCALE, yupSchema } from '@argonne/common';
-import { userIdSchema } from '@argonne/common/src/validators';
+import { addDays } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument, UpdateQuery } from 'mongoose';
+import type { Types } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
-import type { UserDocument } from '../models/user';
-import User, { searchableFields, userNormalSelect, userTenantSelect } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
+import User, { searchableFields, userTenantSelect } from '../models/user';
 import { startChatGroup } from '../utils/chat';
 import { idsToString, schoolYear } from '../utils/helper';
-import { notify } from '../utils/messaging';
-import storage from '../utils/storage';
-import syncSatellite from '../utils/sync-satellite';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import token from '../utils/token';
+import type { StatusResponse } from './common';
 import common from './common';
+import { TENANT_BINDING_TOKEN_PREFIX } from './tenant-binding';
 
-type UpdateAction =
-  | 'addPaymentMethod'
-  | 'clearFeature'
-  | 'removePaymentMethod'
-  | 'setFeature'
+type Action =
+  | 'addFeature'
+  | 'addSchoolHistory'
+  | 'changePassword'
+  | 'clearFlag'
+  | 'removeFeature'
+  | 'setFlag'
   | 'suspend'
-  | 'updateLocale'
-  | 'updateNetworkStatus'
-  | 'updateSchool'
-  | 'unlockSchool'
-  | 'verifyId';
+  | 'updateIdentifiedAt';
 
 const { MSG_ENUM } = LOCALE;
-const { SYSTEM, TENANT, USER } = LOCALE.DB_ENUM;
+const { TENANT, USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
-const { assertUnreachable, auth, authGetUser, isRoot, paginateSort, searchFilter } = common;
-const {
-  idSchema,
-  querySchema,
-  tenantIdSchema,
-  userFeatureSchema,
-  userLocaleSchema,
-  userNetworkStatusSchema,
-  userPaymentMethodsSchema,
-  userProfileSchema,
-  userSchema,
-  userSchoolSchema,
-} = yupSchema;
+const { assertUnreachable, auth, isAdmin, isRoot, paginateSort, searchFilter } = common;
+const { featureSchema, flagSchema, idSchema, passwordSchema, querySchema, remarkSchema, userSchema, userSchoolSchema } =
+  yupSchema;
 
 /**
- * Hide Histories not belong to school(s)
+ * (helper) checkPermission
  */
-const hideHistories = (user: LeanDocument<UserDocument>, tenantIds: string[], schoolIds: string[]) => ({
-  ...user,
-  histories: user.histories.filter(h => schoolIds.includes(h.school.toString())),
-  studentIds: user.studentIds.filter(studentId => tenantIds.some(tenantId => studentId.startsWith(tenantId))),
-});
+const checkPermission = async (id: string, userId: string, isAdmin = false) => {
+  const user = await User.findOneActive({ _id: id });
+  const primaryTenant = user?.tenants[0];
+  const tenant = !primaryTenant
+    ? null
+    : isAdmin
+    ? await Tenant.findByTenantId(primaryTenant)
+    : await Tenant.findByTenantId(primaryTenant, userId);
 
-/**
- * Helper: save update, send notification (by user)
- */
-const saveUpdate = async (
-  userId: string,
-  action: UpdateAction | 'updateProfile',
-  updateQuery: UpdateQuery<UserDocument>,
-  event: Record<string, unknown>,
-) => {
-  const [updatedUser] = await Promise.all([
-    User.findByIdAndUpdate(userId, updateQuery, { fields: userNormalSelect, new: true }).lean(),
-    notify([userId], 'RE-AUTH'), // force all sessions (access tokens) to reload user
-    DatabaseEvent.log(userId, `/users/${userId}`, action, event),
-    syncSatellite({ userIds: [userId] }, { userIds: [userId] }),
-  ]);
-
-  return updatedUser!;
+  if (user && primaryTenant && tenant?.school) return { tenant, user, schoolId: tenant.school.toString() };
+  throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 };
 
 /**
- * Helper: notify user & sync-satellite (for admin update)
+ * Hide Histories, StudentIds, Remarks if not belong to school(s)
  */
-const notifyAndSyncSatellite = async (
-  adminId: string,
-  userId: string,
-  action: UpdateAction | 'addUser' | 'inviteToBind',
-  event: Record<string, unknown>,
-  skipNotify = false,
-) =>
-  Promise.all([
-    !skipNotify && notify([userId], 'RE-AUTH'), // force all sessions (access tokens) to reload user
-    DatabaseEvent.log(adminId, `/users/${userId}`, action, event),
-    syncSatellite({ userIds: [userId] }, { userIds: [userId] }),
+const hideSchoolHistories = (user: UserDocument & Id, tenantIds: (string | Types.ObjectId)[], schoolIds: string[]) => ({
+  ...user,
+  tenants: idsToString(user.tenants).filter(t => idsToString(tenantIds).includes(t)), // only show intersected tenants
+  schoolHistories: user.schoolHistories.filter(h => schoolIds.includes(h.school.toString())),
+  studentIds: user.studentIds.filter(studentId =>
+    idsToString(tenantIds).some(tenantId => studentId.startsWith(tenantId)),
+  ),
+  remarks: idsToString(tenantIds).includes(user.tenants[0]?.toString() || 'NA') ? user.remarks : [], // only primary tenant could see remarks
+});
+
+/**
+ * addRemark
+ *
+ * ROOT & primary school tenantAdmin could addRemark
+ */
+
+const addRemark = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
+  const { userId, userRoles } = auth(req, 'ADMIN');
+
+  const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
+
+  // TODO: check permission
+
+  const user = await User.findByIdAndUpdate(
+    id,
+    { $push: { remarks: { t: new Date(), u: userId, m: remark } } },
+    { fields: userTenantSelect, new: true },
+  ).lean();
+  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  await DatabaseEvent.log(userId, `/users/${id}`, 'REMARK', { remark });
+  // TODO: sync....
+  return user;
+};
+
+/**
+ * Update School & Level
+ * by (school) tenantAdmin within same school
+ */
+const addSchoolHistory = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
+  const { userId: adminId } = auth(req);
+  const { id, ...fields } = await idSchema.concat(userSchoolSchema).validate(args);
+  const { tenant, schoolId } = await checkPermission(id, adminId); // only primary (school) tenantAdmin
+
+  // ONLY allow to update current-year or next-year
+  if (![schoolYear(0), schoolYear(1)].includes(fields.year)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  const [user] = await Promise.all([
+    User.findByIdAndUpdate(
+      id,
+      {
+        identifiedAt: new Date(),
+        $push: { schoolHistories: { $each: [{ school: schoolId, ...fields, updatedAt: new Date() }], $position: 0 } },
+      },
+      { fields: userTenantSelect, new: true },
+    ).lean(),
+    DatabaseEvent.log(adminId, `/users/${id}`, 'addSchoolHistory', { tenantId: tenant._id.toString(), ...fields }),
+    notifySync('RENEW-TOKEN', { userIds: [id] }, { userIds: [id] }), // renew-token to reload updated user
   ]);
+
+  if (user) return hideSchoolHistories(user, [tenant._id], [schoolId]);
+  log('error', 'userController:addSchoolHistory()', { id, ...fields }, adminId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
+ * ChangePassword by school tenantAdmin or Admin
+ */
+const changePassword = async (req: Request, args: unknown): Promise<StatusResponse> => {
+  const { userId: adminId, userRoles: adminRoles } = auth(req);
+  const { id, password } = await idSchema.concat(passwordSchema).validate(args);
+  if (!isAdmin(adminRoles)) await checkPermission(id, adminId); // only primary (school) tenantAdmin (if not ADMIN)
+
+  await Promise.all([
+    User.findByIdAndUpdate(
+      id,
+      { password, $addToSet: { flags: USER.FLAG.REQUIRE_PASSWORD_CHANGE } },
+      { fields: userTenantSelect, new: true },
+    ).lean(),
+    DatabaseEvent.log(adminId, `/users/${id}`, 'changePassword', {}),
+    notifySync('_SYNC-ONLY', { userIds: [id] }, { userIds: [id] }),
+  ]);
+  return { code: MSG_ENUM.COMPLETED };
+};
 
 /**
  * Create
@@ -104,7 +155,7 @@ const notifyAndSyncSatellite = async (
  * tenantAdmin could new user; if school, updates identifiedAt
  *
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
+const create = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
   const { userId: adminId, userRoles } = auth(req);
   const { tenantId, email, name, studentId } = await userSchema.validate(args);
 
@@ -121,10 +172,8 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<UserDoc
       if (idsToString(existingUser.tenants).includes(tenantId)) return existingUser;
 
       // send a message to user with tenant-binding-token
-
-      const bindingToken = await token.signEvent(
-        studentId ? `${tenantId}#${studentId}` : tenantId,
-        'tenant',
+      const bindingToken = await token.signStrings(
+        studentId ? [TENANT_BINDING_TOKEN_PREFIX, tenantId, studentId] : [TENANT_BINDING_TOKEN_PREFIX, tenantId],
         DEFAULTS.TENANT.TOKEN_EXPIRES_IN,
       );
       console.log('ADD_USER(), create tenant-binding-token, and http link', bindingToken);
@@ -135,19 +184,17 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<UserDoc
         zhHK: `TODO inviteToBind (${tenant.name.zhHK}) ?>>>>>>>。`,
       };
 
-      const existingUid = existingUser._id.toString();
-
       const chatGroup = await startChatGroup(
         tenantId,
         msg,
-        [existingUid],
+        [existingUser._id],
         existingUser.locale,
-        `TENANT#${tenantId}-USER#${existingUid}`,
+        `TENANT#${tenantId}#USER#${existingUser._id}`,
       );
 
       await Promise.all([
-        notify([existingUid], 'CHAT', { chatGroupIds: [chatGroup._id.toString()] }),
-        notifyAndSyncSatellite(adminId, existingUid, 'inviteToBind', { tenant: tenantId }, true),
+        DatabaseEvent.log(adminId, `/users/${existingUser._id}`, 'inviteToBind', { tenant: tenantId }),
+        notifySync('CHAT-GROUP', { userIds: [existingUser] }, { chatGroupIds: [chatGroup] }),
       ]);
     }
 
@@ -155,9 +202,9 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<UserDoc
   }
 
   // school.tenant should be on the top if exists
-  const tenants: string[] = [];
+  const tenants: (string | Types.ObjectId)[] = [];
   if (tenantId) tenants.push(tenantId);
-  if (tenant?.school || tenant?.flags.includes(TENANT.FLAG.REPUTABLE)) tenants.push(tutorTenant._id.toString());
+  if (tenant?.school || tenant?.flags.includes(TENANT.FLAG.REPUTABLE)) tenants.push(tutorTenant._id);
 
   const createdUser = new User<Partial<UserDocument>>({
     name,
@@ -171,14 +218,18 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<UserDoc
 
   await Promise.all([
     createdUser.save(),
-    notifyAndSyncSatellite(adminId, createdUser._id.toString(), 'addUser', {
+    DatabaseEvent.log(adminId, `/users/${createdUser._id}`, 'addUser', {
       tenant: tenantId,
       user: createdUser._id.toString(),
       email,
     }),
+    notifySync('RENEW-TOKEN', { userIds: [createdUser] }, { userIds: [createdUser] }), // renew-token to reload updated user
   ]);
 
-  return (await User.findOneActive({ _id: createdUser }, userTenantSelect))!; // read back with proper selected fields
+  const user = await User.findOneActive({ _id: createdUser }, userTenantSelect);
+  if (user) return user;
+  log('error', 'userController:create()', { id: createdUser._id.toString() }, adminId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
@@ -192,63 +243,58 @@ const createNew: RequestHandler = async (req, res, next) => {
   }
 };
 
-/**
- * Find Multiple Users (Apollo)
- *
- * tenantAdmin could pull user info, ROOT could "also" pull users without tenants (such as publisherAdmin, etc)
- */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>[]> => {
-  const { userId, userRoles, userTenants } = auth(req);
-  const [{ query }, adminTenants] = await Promise.all([
-    querySchema.validate(args),
-    Tenant.find({ id: { $in: userTenants }, admins: userId }).lean(),
+// (helper) common code for find(), findMany(), findOne()
+const findCommon = async (
+  userId: string,
+  userRoles: string[],
+  userTenants: string[],
+  args: unknown,
+  getOne = false,
+) => {
+  const [{ id, query }, adminTenants] = await Promise.all([
+    getOne ? idSchema.concat(querySchema).validate(args) : { ...(await querySchema.validate(args)), id: null },
+    isRoot(userRoles) ? [] : Tenant.find({ _id: { $in: userTenants }, admins: userId }).lean(), // ROOT could see
   ]);
   if (!isRoot(userRoles) && !adminTenants.length) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
   const filter = searchFilter<UserDocument>(
-    searchableFields,
+    id ? [] : searchableFields,
     { query },
     {
-      status: USER.STATUS.ACTIVE,
-      ...(isRoot(userRoles) && adminTenants.length
-        ? { $or: [{ tenants: [] }, { tenants: { $in: idsToString(adminTenants) } }] }
-        : isRoot(userRoles)
-        ? { tenants: [] }
-        : { tenants: { $in: idsToString(adminTenants) } }),
+      status: { $in: [USER.STATUS.ACTIVE, USER.STATUS.DELETED] },
+      ...(id && { _id: id }),
+      ...(!isRoot(userRoles) && { tenants: { $in: idsToString(adminTenants) } }),
     },
   );
 
-  const users = await User.find(filter, userTenantSelect).lean();
   const schoolIds = adminTenants.map(t => t.school?.toString()).filter((s): s is string => !!s);
-  return users.map(user => hideHistories(user, idsToString(adminTenants), schoolIds));
+
+  return { filter, adminTenants, schoolIds };
+};
+
+/**
+ * Find Multiple Users (Apollo)
+ *
+ * tenantAdmin could pull his users info, ROOT could get all users
+ */
+const find = async (req: Request, args: unknown): Promise<(UserDocument & Id)[]> => {
+  const { userId, userRoles, userTenants } = auth(req);
+  const { filter, adminTenants, schoolIds } = await findCommon(userId, userRoles, userTenants, args);
+
+  const users = await User.find(filter, userTenantSelect).lean();
+  return isRoot(userRoles) ? users : users.map(user => hideSchoolHistories(user, idsToString(adminTenants), schoolIds));
 };
 
 /**
  * Find Multiple Users with queryString (RESTful)
  *
- * tenantAdmin could pull user info, ROOT could "also" pull users without tenants (such as publisherAdmin, etc)
+ * tenantAdmin could pull his users info, ROOT could get all users
  */
 const findMany: RequestHandler = async (req, res, next) => {
   try {
     const { userId, userRoles, userTenants } = auth(req);
-    const [{ query }, adminTenants] = await Promise.all([
-      querySchema.validate({ query: req.query }),
-      Tenant.find({ id: { $in: userTenants }, admins: userId }).lean(),
-    ]);
-    if (!isRoot(userRoles) && !adminTenants.length) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
+    const { filter, adminTenants, schoolIds } = await findCommon(userId, userRoles, userTenants, { query: req.query });
 
-    const filter = searchFilter<UserDocument>(
-      searchableFields,
-      { query },
-      {
-        status: USER.STATUS.ACTIVE,
-        ...(isRoot(userRoles) && adminTenants.length
-          ? { $or: [{ tenants: [] }, { tenants: { $in: idsToString(adminTenants) } }] }
-          : isRoot(userRoles)
-          ? { tenants: [] }
-          : { tenants: { $in: idsToString(adminTenants) } }),
-      },
-    );
     const options = paginateSort(req.query, { _id: 1 });
 
     const [total, users] = await Promise.all([
@@ -256,10 +302,11 @@ const findMany: RequestHandler = async (req, res, next) => {
       User.find(filter, userTenantSelect, options).lean(),
     ]);
 
-    const schoolIds = adminTenants.map(t => t.school?.toString()).filter((s): s is string => !!s);
     res.status(200).json({
       meta: { total, ...options },
-      data: users.map(user => hideHistories(user, idsToString(adminTenants), schoolIds)),
+      data: isRoot(userRoles)
+        ? users
+        : users.map(user => hideSchoolHistories(user, idsToString(adminTenants), schoolIds)),
     });
   } catch (error) {
     next(error);
@@ -268,35 +315,16 @@ const findMany: RequestHandler = async (req, res, next) => {
 
 /**
  * Find One User by ID
+ * tenantAdmin could pull his users info, ROOT could get all users
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument> | null> => {
+
+//! admin could fetch anyone, school tenantAdmin could fetch any tenant
+const findOne = async (req: Request, args: unknown): Promise<(UserDocument & Id) | null> => {
   const { userId, userRoles, userTenants } = auth(req);
-  const { id } = await idSchema.validate(args);
+  const { filter, adminTenants, schoolIds } = await findCommon(userId, userRoles, userTenants, args, true);
 
-  const [{ query }, adminTenants] = await Promise.all([
-    querySchema.validate(args),
-    Tenant.find({ id: { $in: userTenants }, admins: userId }).lean(),
-  ]);
-
-  if (!isRoot(userRoles) && !adminTenants.length) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
-
-  const filter = searchFilter<UserDocument>(
-    searchableFields,
-    { query },
-    {
-      _id: id,
-      status: USER.STATUS.ACTIVE,
-      ...(isRoot(userRoles) && adminTenants.length
-        ? { $or: [{ tenants: [] }, { tenants: { $in: idsToString(adminTenants) } }] }
-        : isRoot(userRoles)
-        ? { tenants: [] }
-        : { tenants: { $in: idsToString(adminTenants) } }),
-    },
-  );
-
-  const schoolIds = adminTenants.map(t => t.school?.toString()).filter((s): s is string => !!s);
   const user = await User.findOneActive(filter, userTenantSelect);
-  return user && hideHistories(user, idsToString(adminTenants), schoolIds);
+  return user && (isRoot(userRoles) ? user : hideSchoolHistories(user, idsToString(adminTenants), schoolIds));
 };
 
 /**
@@ -315,185 +343,126 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
 };
 
 /**
- * updateFeature
+ * suspend (only by school tenantAdmin or root)
+ */
+const suspend = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
+  const { userId: adminId, userRoles: adminRoles } = auth(req);
+  const { id } = await idSchema.validate(args);
+  const { tenant, schoolId } = await checkPermission(id, adminId, isRoot(adminRoles));
+
+  const [user] = await Promise.all([
+    User.findByIdAndUpdate(
+      id,
+      { suspension: addDays(new Date(), DEFAULTS.USER.SUSPENSION_DAY) },
+      { fields: userTenantSelect, new: true },
+    ).lean(),
+    DatabaseEvent.log(adminId, `/users/${id}`, 'suspend', {}),
+    notifySync('RENEW-TOKEN', { userIds: [id] }, { userIds: [id] }),
+  ]);
+  if (user) return isRoot(adminRoles) ? user : hideSchoolHistories(user, [tenant._id], [schoolId]);
+  log('error', 'userController:suspend()', { id }, adminId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
+ * updateFeature (only by admin)
  */
 const updateFeature = async (
   req: Request,
   args: unknown,
-  action: Extract<UpdateAction, 'clearFeature' | 'setFeature'>,
-): Promise<LeanDocument<UserDocument>> => {
-  const [user, { feature: featureTmp }] = await Promise.all([authGetUser(req), userFeatureSchema.validate(args)]);
+  action: Extract<Action, 'addFeature' | 'removeFeature'>,
+): Promise<UserDocument & Id> => {
+  const { userId: adminId } = auth(req, 'ADMIN');
+  const { id, feature: featureTmp } = await featureSchema.concat(idSchema).validate(args);
   const feature = featureTmp.toUpperCase(); // YUP has converted to upperCase(), just to be safe
+  const { tenant, schoolId } = await checkPermission(id, adminId, true);
 
   if (!Object.keys(USER.FEATURE).includes(feature)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  if (action === 'setFeature' ? user.features.includes(feature) : !user.features.includes(feature))
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  return saveUpdate(
-    user._id.toString(),
-    action,
-    action === 'setFeature' ? { $push: { features: feature } } : { $pull: { features: feature } },
-    { feature },
-  );
+  const [user] = await Promise.all([
+    User.findByIdAndUpdate(
+      id,
+      action === 'addFeature' ? { $push: { features: feature } } : { $pull: { features: feature } },
+      { fields: userTenantSelect, new: true },
+    ).lean(),
+    DatabaseEvent.log(adminId, `/users/${id}`, action, {}),
+    notifySync('RENEW-TOKEN', { userIds: [id] }, { userIds: [id] }),
+  ]);
+  if (user) return hideSchoolHistories(user, [tenant._id], [schoolId]);
+  log('error', `userController:${action}()`, { id, feature }, adminId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
- * updateLocale
+ * updateFlag (only by admin)
  */
-const updateLocale = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
-  const [user, { locale }] = await Promise.all([authGetUser(req), userLocaleSchema.validate(args)]);
-
-  if (!Object.keys(SYSTEM.LOCALE).includes(locale)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // re-verify locale value (YUP has verified already)
-
-  return saveUpdate(user._id.toString(), 'updateLocale', { locale }, { original: user.locale, new: locale });
-};
-
-/**
- * updateNetworkStatus
- */
-const updateNetworkStatus = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
-  const { userId } = auth(req);
-  const { networkStatus } = await userNetworkStatusSchema.validate(args);
-  if (!Object.keys(USER.NETWORK_STATUS).includes(networkStatus) || networkStatus === USER.NETWORK_STATUS.OFFLINE)
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // make no sense to set OFFLINE (auto-detected by socket-server)
-
-  return saveUpdate(
-    userId,
-    'updateNetworkStatus',
-    networkStatus === USER.NETWORK_STATUS.ONLINE ? { $unset: { networkStatus: 1 } } : { networkStatus },
-    { networkStatus },
-  );
-};
-
-/**
- * updatePaymentMethod
- */
-const updatePaymentMethod = async (
+const updateFlag = async (
   req: Request,
   args: unknown,
-  action: Extract<UpdateAction, 'addPaymentMethod' | 'removePaymentMethod'>,
-): Promise<LeanDocument<UserDocument>> => {
-  const { userId } = auth(req);
+  action: Extract<Action, 'setFlag' | 'clearFlag'>,
+): Promise<UserDocument & Id> => {
+  const { userId: adminId } = auth(req, 'ADMIN');
+  const { id, flag: flagTmp } = await flagSchema.concat(idSchema).validate(args);
+  const flag = flagTmp.toUpperCase(); // YUP has converted to upperCase(), just to be safe
+  const { tenant, schoolId } = await checkPermission(id, adminId, true);
 
-  // addPaymentMethod
-  if (action === 'addPaymentMethod') {
-    const fields = await userPaymentMethodsSchema.validate(args);
-    return saveUpdate(userId, action, { $push: { paymentMethods: fields } }, fields);
-  }
+  if (!Object.keys(USER.FEATURE).includes(flag)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  // removePaymentMethod
-  const [original, { id }] = await Promise.all([authGetUser(req), idSchema.validate(args)]);
-
-  const originalPaymentMethod = original.paymentMethods.find(p => p._id?.toString() === id);
-  if (!originalPaymentMethod) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  return saveUpdate(userId, action, { $pull: { paymentMethods: { _id: id } } }, { originalPaymentMethod });
-};
-
-/**
- * Update UserProfile (by user)
- */
-const updateProfile = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
-  const { userId } = auth(req);
-  const [user, { avatarUrl, ...fields }] = await Promise.all([authGetUser(req), userProfileSchema.validate(args)]);
-
-  await Promise.all([
-    avatarUrl &&
-      user.avatarUrl !== avatarUrl &&
-      storage.validateObject(avatarUrl, userId, avatarUrl.startsWith('avatarUrl-')), // only need to validate NEW avatarUrl, skip ownership check for built-in avatar
-    user.avatarUrl &&
-      user.avatarUrl !== avatarUrl &&
-      !user.avatarUrl.startsWith('avatarUrl-') &&
-      storage.removeObject(user.avatarUrl), // remove old avatarUrl from minio if exists and is different from new avatarUrl (& non built-in avatar)
+  const [user] = await Promise.all([
+    User.findByIdAndUpdate(id, action === 'setFlag' ? { $push: { flags: flag } } : { $pull: { flags: flag } }, {
+      fields: userTenantSelect,
+      new: true,
+    }).lean(),
+    DatabaseEvent.log(adminId, `/users/${id}`, action, {}),
+    notifySync('RENEW-TOKEN', { userIds: [id] }, { userIds: [id] }),
   ]);
-
-  return saveUpdate(
-    userId,
-    'updateProfile',
-    { ...fields, ...(avatarUrl ? { avatarUrl } : { $unset: { avatarUrl: 1 } }) },
-    { original: user, update: { avatarUrl, ...fields } },
-  );
+  if (user) return hideSchoolHistories(user, [tenant._id], [schoolId]);
+  log('error', `userController:${action}()`, { id, flag }, adminId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
- * Update School & Level
- * by (school) tenantAdmin within same school
- */
-const updateSchool = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
-  const { userId: adminId } = auth(req);
-  const { id, tenantId, ...fields } = await idSchema.concat(tenantIdSchema).concat(userSchoolSchema).validate(args);
-
-  // ONLY allow to update current-year or next-year
-  if (![schoolYear(0), schoolYear(1)].includes(fields.year)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const tenant = await Tenant.findByTenantId(tenantId, adminId); // only tenantAdmin could proceed
-  if (!tenant.school) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
-
-  const user = await User.findOneAndUpdate(
-    { _id: id, 'tenants.0': tenantId }, // only tenants[0] (primary tenant) could update histories
-    {
-      identifiedAt: new Date(),
-      $push: { histories: { $each: [{ school: tenant.school, ...fields }], $position: 0 } },
-    },
-    { fields: userTenantSelect, new: true },
-  ).lean();
-  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  await notifyAndSyncSatellite(adminId, id, 'updateSchool', { tenantId, ...fields });
-  return user;
-};
-
-/**
- * Verify UserId
+ * update IdentifiedAt
  * (by ADMIN)
  */
-const verifyId = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
+const updateIdentifiedAt = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
   const { userId: adminId } = auth(req, 'ADMIN'); // only ADMIN could verify user
-  const { userId } = await userIdSchema.validate(args);
+  const { id } = await idSchema.validate(args);
+  const { tenant, schoolId } = await checkPermission(id, adminId, true);
 
-  const user = await User.findOneAndUpdate(
-    { _id: userId, status: USER.STATUS.ACTIVE, deletedAt: { $exists: false } },
-    { identifiedAt: new Date() },
-    { fields: userTenantSelect, new: true },
-  ).lean();
-  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  await notifyAndSyncSatellite(adminId, userId, 'verifyId', {});
-
-  return user;
+  const [user] = await Promise.all([
+    User.findByIdAndUpdate(id, { identifiedAt: new Date() }, { fields: userTenantSelect, new: true }).lean(),
+    DatabaseEvent.log(adminId, `/users/${id}`, 'updateIdentifiedAt', {}),
+    notifySync('RENEW-TOKEN', { userIds: [id] }, { userIds: [id] }), // renew-token to reload updated user
+  ]);
+  if (user) return hideSchoolHistories(user, [tenant._id], [schoolId]);
+  log('error', 'userController:updateIdentifiedAt()', { id }, adminId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
- * Update UserDocument (RESTful)
+ * Update by ID (RESTful)
  */
-const updateAction: RequestHandler<{ action?: UpdateAction }> = async (req, res, next) => {
-  const { action } = req.params;
+const updateById: RequestHandler<{ id: string; action: Action }> = async (req, res, next) => {
+  const { id, action } = req.params;
 
   try {
     switch (action) {
-      case undefined:
-        return res.status(200).json({ data: await updateProfile(req, req.body) });
-      case 'addPaymentMethod':
-      case 'removePaymentMethod':
-        return res.status(200).json({ data: await updatePaymentMethod(req, req.body, action) });
-      case 'clearFeature':
-      case 'setFeature':
-        return res.status(200).json({ data: await updateFeature(req, req.body, action) });
+      case 'addFeature':
+      case 'removeFeature':
+        return res.status(200).json({ data: await updateFeature(req, { id, ...req.body }, action) });
+      case 'setFlag':
+      case 'clearFlag':
+        return res.status(200).json({ data: await updateFlag(req, { id, ...req.body }, action) });
+      case 'addSchoolHistory':
+        return res.status(200).json({ data: await addSchoolHistory(req, { id, ...req.body }) });
+      case 'changePassword':
+        return res.status(200).json({ data: await changePassword(req, { id, ...req.body }) });
       case 'suspend':
-        console.log('ROOT could suspend user');
+        return res.status(200).json({ data: await suspend(req, { id, ...req.body }) });
         return;
-      case 'updateLocale':
-        return res.status(200).json({ data: await updateLocale(req, req.body) });
-      case 'updateNetworkStatus':
-        return res.status(200).json({ data: await updateNetworkStatus(req, req.body) });
-      case 'updateSchool':
-        return res.status(200).json({ data: await updateSchool(req, req.body) });
-      case 'unlockSchool':
-        console.log('school TenantAdmin could unlock school');
-        return;
-      case 'verifyId':
-        return res.status(200).json({ data: await verifyId(req, req.body) });
+      case 'updateIdentifiedAt':
+        return res.status(200).json({ data: await updateIdentifiedAt(req, { id, ...req.body }) });
       default:
         assertUnreachable(action);
     }
@@ -503,16 +472,17 @@ const updateAction: RequestHandler<{ action?: UpdateAction }> = async (req, res,
 };
 
 export default {
+  addSchoolHistory,
+  changePassword,
   create,
   createNew,
   find,
   findMany,
   findOne,
   findOneById,
-  updateNetworkStatus,
-  updatePaymentMethod,
-  updateProfile,
-  updateAction,
-  updateSchool,
-  verifyId,
+  suspend,
+  updateById,
+  updateFeature,
+  updateFlag,
+  updateIdentifiedAt,
 };

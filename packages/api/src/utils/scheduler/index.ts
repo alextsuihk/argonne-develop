@@ -5,6 +5,7 @@
 
 import schedule from 'node-schedule';
 
+import questionController from '../../controllers/question';
 import { updateHubVersion } from '../../controllers/system';
 import invoiceTutorTenant from '../sendmail/invoice-tutor-tenant';
 import storage from '../storage';
@@ -21,6 +22,7 @@ const start = async (): Promise<void> => {
   // schedule.scheduleJob('15 1 * * *', Transaction.commitWithheld); // commit transaction  // TODO: move money from withheld to payees
   schedule.scheduleJob('15 7 3 * *', invoiceTutorTenant);
   schedule.scheduleJob('0 6 3 * *', removeStale);
+  schedule.scheduleJob('0 5 * * *', questionController.closeByScheduler);
   schedule.scheduleJob('5/* * * * *', storage.removeExpiredObjects);
   schedule.scheduleJob('15 * * * *', updateHubVersion);
   schedule.scheduleJob('20 1 * * *', updateTutorRanking);

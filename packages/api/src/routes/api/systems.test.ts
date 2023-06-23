@@ -6,19 +6,18 @@
 import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
 import { jestSetup, jestTeardown } from '../../jest';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import token from '../../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('System API Routes', () => {
-  let normalUser: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
 
   const expectedMemoryUsage = {
     rss: expect.any(Number),

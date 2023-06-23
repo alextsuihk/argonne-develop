@@ -6,7 +6,6 @@
 import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   apolloExpect,
@@ -23,7 +22,7 @@ import {
   randomId,
 } from '../jest';
 import District from '../models/district';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import {
   ADD_DISTRICT,
   ADD_DISTRICT_REMARK,
@@ -38,7 +37,7 @@ const { MSG_ENUM } = LOCALE;
 // Top level of this test suite:
 describe('District GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
 
@@ -127,7 +126,7 @@ describe('District GraphQL', () => {
       variables: { id: newId, remark: FAKE },
     });
     apolloExpect(addRemarkRes, 'data', {
-      addDistrictRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!, FAKE, true) },
+      addDistrictRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
     });
 
     // update newly created document

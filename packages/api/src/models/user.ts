@@ -6,16 +6,18 @@
 import { LOCALE } from '@argonne/common';
 import bcrypt from 'bcryptjs';
 import { subDays } from 'date-fns';
-import type { Document, FilterQuery, LeanDocument, Model, Types } from 'mongoose';
+import type { Document, FilterQuery, Model, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import redisCache from '../redis';
-import { idsToString, randomString } from '../utils/helper';
-import type { BaseDocument, Locale } from './common';
+import { idsToString } from '../utils/helper';
+import type { BaseDocument, Id, Locale } from './common';
 import { baseDefinition, localeDefinition } from './common';
 import type { UserExtra } from './user-extra';
 import { userExtraDefinition } from './user-extra';
+
+export type { Id } from './common';
 
 // extends BaseDocument & app-specific user profile
 export interface UserDocument extends BaseDocument, UserExtra {
@@ -31,9 +33,9 @@ export interface UserDocument extends BaseDocument, UserExtra {
   oAuth2s: string[]; // format `GOOGLE#${subId}`
 
   avatarUrl?: string;
-  mobile?: string; // unverified mobile, startsWith "#", #+852 12345678#token#expireAt
-  whatsapp?: string;
-  tokens: { kind: string; value: string; expireAt: Date }[]; // for various verification purpose, such as WhatsApp verification token
+  mobile?: string; // unverified mobile, startsWith "#", #+852 12345678
+  whatsapp?: string; // unverified statsWith "#"
+  verificationTokens: string[]; // format `${code}#${type}#${expireAt.getTime()}`; type = 'mobile' | 'whatsapp'
 
   contacts: {
     user: string | Types.ObjectId;
@@ -50,7 +52,7 @@ export interface UserDocument extends BaseDocument, UserExtra {
   theme?: string; // JSON.stringify (created & consumed by React)
 
   //TODO: each apiKey ONLY support a single scope
-  apiKeys: { value: string; scope: string; note: string; expireAt: Date }[]; // TODO: update docs.md
+  apiKeys: { value: string; scope: string; note?: string; expireAt: Date }[]; // TODO: update docs.md
   roles: string[];
   features: string[];
   scopes: string[];
@@ -103,6 +105,7 @@ export interface UserDocument extends BaseDocument, UserExtra {
 }
 
 type SystemAccountIds = {
+  adminIds: string[];
   accountId: string;
   accountWithheldId: string;
   robotIds: string[];
@@ -110,7 +113,7 @@ type SystemAccountIds = {
 };
 
 interface UserModel extends Model<UserDocument> {
-  findOneActive(filter: FilterQuery<UserDocument>, select?: string): Promise<LeanDocument<UserDocument> | null>;
+  findOneActive(filter: FilterQuery<UserDocument & Id>, select?: string): Promise<(UserDocument & Id) | null>;
   findSystemAccountIds(): Promise<SystemAccountIds>;
   genValidPassword(prefix?: string): string;
   nullifyClass(): Promise<void>;
@@ -127,10 +130,12 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-export const userAdminSelect = '-__v -password -tags -idx -tokens -apiKeys.value -estimate -contacts';
+export const userAdminSelect = '-__v -password -tags -idx -verificationTokens -apiKeys.value -estimate -contacts';
 export const userNormalSelect = `${userAdminSelect} -remarks -deletedAt`;
 export const userLoginSelect = `${userNormalSelect.replace('-password ', '')}`; // get password
-export const userTenantSelect = '_id flags tenants name emails avatarUrl studentIds histories';
+export const userTenantSelect =
+  '_id flags tenants status name formalName emails avatarUrl studentIds schoolHistories remarks createdAt updatedAt deletedAt';
+export const userBaseSelect = '_id name emails avatarUrl schoolHistories';
 
 const userSchema = new Schema<UserDocument>(
   {
@@ -143,7 +148,7 @@ const userSchema = new Schema<UserDocument>(
     name: String,
     formalName: localeDefinition,
 
-    emails: [{ type: String, trim: true, index: true, sparse: true }],
+    emails: [{ type: String, trim: true, index: true }],
 
     password: String,
     oAuth2s: [{ type: String, index: true }],
@@ -151,7 +156,7 @@ const userSchema = new Schema<UserDocument>(
     avatarUrl: String,
     mobile: String,
     whatsapp: String,
-    tokens: [{ kind: String, value: String, expireAt: Date }],
+    verificationTokens: [String],
 
     contacts: [
       {
@@ -219,7 +224,7 @@ const userSchema = new Schema<UserDocument>(
     identifiedAt: Date,
 
     ...userExtraDefinition,
-    updatedAt: Date,
+    updatedAt: Date, // no need to index
     deletedAt: { type: Date, expires: DEFAULTS.MONGOOSE.EXPIRES.USER },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
@@ -236,7 +241,7 @@ const userSchema = new Schema<UserDocument>(
  * Middleware: encrypt password whenever password is updated
  */
 userSchema.pre('save', async function (this: UserDocument & Document<UserDocument>) {
-  if (this.isModified('password') && this.password) this.password = await bcrypt.hash(this.password, 10);
+  if (this.isModified('password') && this.password) this.password = await bcrypt.hash(this.password, 7);
 });
 
 /**
@@ -247,7 +252,8 @@ userSchema.static('findOneActive', async (filter: FilterQuery<UserDocument>, sel
 );
 
 userSchema.static('findSystemAccountIds', async (): Promise<SystemAccountIds> => {
-  const [cachedAccountId, cachedAccountWithheldId, cachedRobotIds, cachedAlexId] = await Promise.all([
+  const [cachedAdminIds, cachedAccountId, cachedAccountWithheldId, cachedRobotIds, cachedAlexId] = await Promise.all([
+    redisCache.get('adminIds'),
     redisCache.get('accountId'),
     redisCache.get('accountWithheldId'),
     redisCache.get('robotIds'),
@@ -255,6 +261,8 @@ userSchema.static('findSystemAccountIds', async (): Promise<SystemAccountIds> =>
   ]);
 
   if (
+    cachedAdminIds &&
+    typeof cachedAdminIds === 'string' &&
     cachedAccountId &&
     typeof cachedAccountId === 'string' &&
     cachedAccountWithheldId &&
@@ -265,6 +273,7 @@ userSchema.static('findSystemAccountIds', async (): Promise<SystemAccountIds> =>
     typeof cachedAlexId === 'string'
   )
     return {
+      adminIds: cachedAdminIds.split(','),
       accountId: cachedAccountId,
       accountWithheldId: cachedAccountWithheldId,
       robotIds: cachedRobotIds.split(','),
@@ -272,28 +281,32 @@ userSchema.static('findSystemAccountIds', async (): Promise<SystemAccountIds> =>
     };
 
   // no cached values
-  const [account, accountWithheld, robots, alex] = await Promise.all([
+  const [admins, account, accountWithheld, robots, alex] = await Promise.all([
+    User.find({ roles: USER.ROLE.ADMIN }).lean(),
     User.findOne({ status: USER.STATUS.ACCOUNT, name: 'Account' }).lean(),
     User.findOne({ status: USER.STATUS.ACCOUNT, name: 'Withheld Account' }).lean(),
-    User.find({ status: USER.STATUS.BOT }).limit(2).lean(),
+    User.find({ status: USER.STATUS.BOT }).lean(),
     User.findOneActive({ emails: 'alex@alextsui.net' }),
   ]);
 
-  if (!account || !accountWithheld || !robots.length || !alex) throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+  if (!admins.length || !account || !accountWithheld || !robots.length || !alex)
+    throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 
+  const adminIds = idsToString(admins);
   const accountId = account._id.toString();
   const accountWithheldId = accountWithheld._id.toString();
   const robotIds = idsToString(robots);
   const alexId = alex._id.toString();
 
   await Promise.all([
+    redisCache.set('adminIds', adminIds.join(',')),
     redisCache.set('accountId', accountId),
     redisCache.set('accountWithheldId', accountWithheldId),
-    redisCache.set('robotIds', robotIds),
+    redisCache.set('robotIds', robotIds.join(',')),
     redisCache.set('alexId', alexId),
   ]);
 
-  return { accountId, accountWithheldId, robotIds, alexId };
+  return { adminIds, accountId, accountWithheldId, robotIds, alexId };
 });
 
 /**
@@ -301,7 +314,7 @@ userSchema.static('findSystemAccountIds', async (): Promise<SystemAccountIds> =>
  *
  * note: primarily for seed, factory & jest
  */
-userSchema.static('genValidPassword', (prefix = 'PassWd#1'): string => `${prefix}${randomString()}`);
+userSchema.static('genValidPassword', (prefix = 'A#a1'): string => `${prefix}${Math.random().toString(36).slice(-6)}`);
 
 /**
  * Nullify user.class at the end of a school year

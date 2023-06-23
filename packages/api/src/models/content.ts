@@ -9,10 +9,13 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument } from './common';
 import { baseDefinition } from './common';
 
+export type { Id } from './common';
+
 export interface ContentDocument extends BaseDocument {
   parents: string[];
   creator: string | Types.ObjectId;
   data: string;
+  visibleAfter?: Date; // defer visibility to later time
 }
 
 const { DEFAULTS } = configLoader;
@@ -24,6 +27,7 @@ const contentSchema = new Schema<ContentDocument>(
     parents: [String],
     creator: { type: Schema.Types.ObjectId, ref: 'User' },
     data: String,
+    visibleAfter: Date,
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );

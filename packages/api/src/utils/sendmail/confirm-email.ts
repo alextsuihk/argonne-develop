@@ -12,9 +12,11 @@ import { sendmail } from './common';
 const { zhCN, zhHK } = LOCALE.DB_ENUM.SYSTEM.LOCALE;
 const { config, DEFAULTS } = configLoader;
 
+export const EMAIL_TOKEN_PREFIX = 'EMAIL';
+
 export default async (name: string, locale: string, email: string): Promise<boolean> => {
   const expiresBy = addSeconds(new Date(), DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN);
-  const confirmToken = await token.signEvent(email, 'email', DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN);
+  const confirmToken = await token.signStrings([EMAIL_TOKEN_PREFIX, email], DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN);
 
   const [subject, body] =
     locale === zhHK

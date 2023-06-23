@@ -8,7 +8,6 @@
 import { LOCALE } from '@argonne/common';
 import { faker } from '@faker-js/faker';
 import chalk from 'chalk';
-import mongoose from 'mongoose';
 
 import configLoader from '../../config/config-loader';
 import Level from '../../models/level';
@@ -18,7 +17,7 @@ import type { TutorDocument } from '../../models/tutor';
 import Tutor from '../../models/tutor';
 import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
-import { idsToString, prob, randomId, randomString, schoolYear, shuffle } from '../../utils/helper';
+import { idsToString, mongoId, prob, randomId, randomString, schoolYear, shuffle } from '../../utils/helper';
 
 const { QUESTION, USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -36,13 +35,11 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
   ]);
   if (!tenant) throw `Tenant ${code} is not found.`;
 
-  const id = () => new mongoose.Types.ObjectId().toString();
-
   const specialties = (count = 5): TutorDocument['specialties'] =>
     Array(count)
       .fill(0)
       .map(_ => ({
-        _id: id(),
+        _id: mongoId(),
         ...(prob(0.5) && { note: faker.lorem.words(5) }),
         lang: Object.keys(QUESTION.LANG).sort(shuffle)[0]!,
         level: randomId(levels)!,
@@ -56,8 +53,8 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
       name: '英皇 John Chan 導師',
       officeHour: '24 x 7',
       credentials: [
-        { _id: id(), title: '英皇首席', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
-        { _id: id(), title: '天才導師', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
+        { _id: mongoId(), title: '英皇首席', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
+        { _id: mongoId(), title: '天才導師', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
       ],
       specialties: specialties(3),
     },
@@ -65,7 +62,13 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
       name: '遵理 Miss Lee',
       officeHour: 'M: 5-10pm, W: 9-11pm',
       credentials: [
-        { _id: id(), title: '11A DSE 天才狀元', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
+        {
+          _id: mongoId(),
+          title: '11A DSE 天才狀元',
+          proofs: [],
+          verifiedAt: faker.date.recent(90),
+          updatedAt: new Date(),
+        },
       ],
       specialties: specialties(2),
     },
@@ -73,7 +76,7 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
       name: '張Sir St. Joe',
       officeHour: 'M-F: after 6pm, Sat & Sun 全日',
       credentials: [
-        { _id: id(), title: '哈佛畢業', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
+        { _id: mongoId(), title: '哈佛畢業', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
       ],
       specialties: specialties(6),
     },
@@ -90,7 +93,7 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
       tenants: [tenant._id],
       supervisors: idsToString(rootUsers),
       identifiedAt: new Date(),
-      histories:
+      schoolHistories:
         tenant.school && prob(0.4)
           ? [
               {

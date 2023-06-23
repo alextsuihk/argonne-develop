@@ -5,11 +5,11 @@
 
 import { gql } from 'apollo-server-core';
 
-import { CONTENT, CONTRIBUTION, REMARK, STATUS_RESPONSE } from './common';
+import { REMARK, STATUS_RESPONSE } from './common';
+import { CONTRIBUTION_FIELDS } from './contribution';
 
 const BOOK_FIELDS = gql`
-  ${CONTENT}
-  ${CONTRIBUTION}
+  ${CONTRIBUTION_FIELDS}
   ${REMARK}
   fragment BookFields on Book {
     _id
@@ -23,17 +23,17 @@ const BOOK_FIELDS = gql`
 
     assignments {
       _id
+      flags
       contribution {
         ...ContributionFields
       }
       chapter
-      content {
-        ...ContentFields
-      }
+      content
       dynParams
       solutions
-      examples {
-        ...ContentFields
+      examples
+      remarks {
+        ...RemarkFields
       }
       createdAt
       updatedAt
@@ -65,6 +65,8 @@ const BOOK_FIELDS = gql`
     createdAt
     updatedAt
     deletedAt
+
+    contentsToken
   }
 `;
 
@@ -125,15 +127,6 @@ export const ADD_BOOK_SUPPLEMENT = gql`
 export const IS_ISBN_AVAILABLE = gql`
   query IsIsbnAvailable($isbn: String!) {
     isIsbnAvailable(isbn: $isbn)
-  }
-`;
-
-export const JOIN_BOOK_CHAT = gql`
-  ${STATUS_RESPONSE}
-  mutation JoinBookChat($id: ID!) {
-    joinBookChat(id: $id) {
-      ...StatusResponse
-    }
   }
 `;
 

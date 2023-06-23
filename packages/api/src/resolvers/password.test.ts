@@ -5,6 +5,7 @@
 import { LOCALE } from '@argonne/common';
 
 import configLoader from '../config/config-loader';
+import { PASSWORD_TOKEN_PREFIX } from '../controllers/password';
 import { apolloExpect, ApolloServer, jestSetup, jestTeardown, testServer, uniqueTestUser } from '../jest';
 import User from '../models/user';
 import { DEREGISTER, REGISTER } from '../queries/auth';
@@ -79,7 +80,10 @@ describe('Authentication GraphQL (token)', () => {
   test('should pass when confirm password reset with an valid token', async () => {
     expect.assertions(1);
 
-    const resetToken = await token.signEvent(userId, 'password', DEFAULTS.AUTH.PASSWORD_RESET_EXPIRES_IN);
+    const resetToken = await token.signStrings(
+      [PASSWORD_TOKEN_PREFIX, userId],
+      DEFAULTS.AUTH.PASSWORD_RESET_EXPIRES_IN,
+    );
 
     const res = await guestServer!.executeOperation({
       query: RESET_PASSWORD_CONFIRM,

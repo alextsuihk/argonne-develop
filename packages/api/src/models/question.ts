@@ -1,45 +1,37 @@
-// TODO: add member.rank
-// TODO: keep mongoose reference, for statistics & searching purposes
-
 /**
  * Model: Question
  *
- * ! Note: Everything in a Single Question model
  */
 
 import { LOCALE } from '@argonne/common';
-import { addDays } from 'date-fns';
 import type { Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import type { BaseDocument, Member } from './common';
 import { baseDefinition, memberDefinition } from './common';
-import type { ContentDocument } from './content';
-export type { Member } from './common';
-
-export interface BidDocument extends BaseDocument {
-  messages: {
-    creator: string | Types.ObjectId;
-    data: string;
-    createdAt: Date;
-  }[];
-}
+export type { Id, Member } from './common';
 
 interface QuestionExtra {
   price?: number;
 
   bidders: (string | Types.ObjectId)[];
-  bids: (string | Types.ObjectId | BidDocument)[]; // hide once bided
+  bidContents: (string | Types.ObjectId)[][];
 
   paidAt?: Date;
+
+  correctness: number;
+  explicitness: number;
+  punctuality: number;
 }
 
 export interface QuestionDocument extends BaseDocument, QuestionExtra {
   tenant: string | Types.ObjectId;
 
-  students: (string | Types.ObjectId)[];
-  tutors: (string | Types.ObjectId)[];
+  parent?: string | Types.ObjectId;
+  student: string | Types.ObjectId;
+  tutor?: string | Types.ObjectId;
+  marshals: (string | Types.ObjectId)[];
 
   members: Member[];
 
@@ -53,16 +45,17 @@ export interface QuestionDocument extends BaseDocument, QuestionExtra {
   chapter?: string;
   assignment?: string | Types.ObjectId;
   assignmentIdx?: number;
+  dynParamIdx?: number;
   homework?: string | Types.ObjectId;
 
   lang: string;
 
-  content: string | Types.ObjectId | ContentDocument;
-  contents: (string | Types.ObjectId | ContentDocument)[];
+  contents: (string | Types.ObjectId)[];
+  contentIdx: number; // # of contents visible to all bidders
   timeSpent?: number; // time spent by tutor
 }
 
-const { QUESTION, SYSTEM } = LOCALE.DB_ENUM;
+const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
 
 const searchFields: string[] = []; // non internationalized fields
@@ -77,9 +70,13 @@ export const questionExtraDefinition = {
 
   bidders: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
 
-  bids: [{ type: Schema.Types.ObjectId, ref: 'Bid' }],
+  bidContents: [[{ type: Schema.Types.ObjectId, ref: 'Content' }]],
 
   paidAt: Date,
+
+  correctness: { type: Number, default: 0 },
+  explicitness: { type: Number, default: 0 },
+  punctuality: { type: Number, default: 0 },
 };
 
 const questionSchema = new Schema<QuestionDocument>(
@@ -89,12 +86,14 @@ const questionSchema = new Schema<QuestionDocument>(
 
     tenant: { type: Schema.Types.ObjectId, ref: 'Tenant' },
 
-    students: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
-    tutors: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
+    parent: { type: Schema.Types.ObjectId, ref: 'Question' },
+    student: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    tutor: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    marshals: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
 
     members: [memberDefinition],
 
-    deadline: { type: Date, default: addDays(new Date(), 2) }, // default two days
+    deadline: Date,
 
     classroom: { type: Schema.Types.ObjectId, ref: 'Classroom' },
     level: { type: Schema.Types.ObjectId, ref: 'Level', index: true },
@@ -108,8 +107,8 @@ const questionSchema = new Schema<QuestionDocument>(
 
     lang: { type: String, require: true },
 
-    content: { type: Schema.Types.ObjectId, ref: 'Content' },
     contents: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
+    contentIdx: { type: Number, default: 1 },
     timeSpent: Number,
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
@@ -117,36 +116,21 @@ const questionSchema = new Schema<QuestionDocument>(
 
 questionSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 
-// TODO: like & dislike, correct
-/**
- * Virtual Property
- */
-questionSchema.virtual('correct').get(function (this: QuestionDocument) {
-  return this.members.filter(member => member.flags?.includes(QUESTION.MEMBER.FLAG.CORRECT)).length;
-});
+// /**
+//  * Virtual Property
+//  */
+// questionSchema.virtual('correct').get(function (this: QuestionDocument) {
+//   return this.members.filter(member => member.flags?.includes(QUESTION.MEMBER.FLAG.CORRECT)).length;
+// });
 
-questionSchema.virtual('like').get(function (this: QuestionDocument) {
-  return this.members.filter(member => member.flags?.includes(QUESTION.MEMBER.FLAG.LIKE)).length;
-});
+// questionSchema.virtual('like').get(function (this: QuestionDocument) {
+//   return this.members.filter(member => member.flags?.includes(QUESTION.MEMBER.FLAG.LIKE)).length;
+// });
 
-questionSchema.virtual('dislike').get(function (this: QuestionDocument) {
-  return this.members.filter(member => member.flags?.includes(QUESTION.MEMBER.FLAG.DISLIKE)).length;
-});
+// questionSchema.virtual('dislike').get(function (this: QuestionDocument) {
+//   return this.members.filter(member => member.flags?.includes(QUESTION.MEMBER.FLAG.DISLIKE)).length;
+// });
 
 const Question = model<QuestionDocument>('Question', questionSchema);
 
-const bidSchema = new Schema<BidDocument>({
-  ...baseDefinition,
-  messages: {
-    creator: { type: Schema.Types.ObjectId, ref: 'User' },
-    data: String,
-    updatedAt: { type: Date, default: Date.now() },
-  },
-});
-export const Bid = model<BidDocument>('Bid', bidSchema);
-
 export default Question;
-
-// TODO: static methods
-// if bidding & pass deadline, >>> expires
-// if assigned, and pass deadline >>> timeout

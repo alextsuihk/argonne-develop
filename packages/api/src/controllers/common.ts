@@ -8,22 +8,21 @@
  */
 
 import type { Query } from '@argonne/common';
-import { LOCALE, yupSchema } from '@argonne/common';
+import { LOCALE } from '@argonne/common';
 import merge from 'deepmerge';
 import type { Request } from 'express';
-import type { FilterQuery, LeanDocument } from 'mongoose';
+import type { FilterQuery, Types } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from '../models/common/base';
+import type { BaseDocument, Id } from '../models/common/base';
 import type { ContentDocument } from '../models/content';
-import Content from '../models/content';
+import Job from '../models/job';
 import Level from '../models/level';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';
+import { isTestMode } from '../utils/environment';
 import { containUtf8, schoolYear } from '../utils/helper';
 import type { Auth } from '../utils/token';
-import { verifyContentIds } from '../utils/token';
-export { signContentIds } from '../utils/token';
 
 type AuthRole = 'ADMIN' | 'ROOT';
 
@@ -32,8 +31,6 @@ export type StatusResponse = { code: string };
 const { MSG_ENUM } = LOCALE;
 const { USER } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
-
-const { idSchema, tokenSchema, updatedAfterSchema } = yupSchema;
 
 const DELETED_LOCALE = { enUS: '<Record Deleted>', zhCN: '<已被删除>', zhHK: '<已被刪除>' };
 const DELETED = DELETED_LOCALE.enUS;
@@ -67,18 +64,19 @@ const auth = (req: Request, role?: AuthRole): Auth => {
 };
 
 /**
- *
+ * Get gull user info (after checking suspension)
  */
-const authCheckUserSuspension = async (req: Request): Promise<void> => {
+const authCheckUserSuspension = async (req: Request): Promise<UserDocument & Id> => {
   const user = await authGetUser(req);
+
   if (user.suspension && user.suspension < new Date()) throw { statusCode: 403, code: MSG_ENUM.SUBMISSION_SUSPENDED };
+  return user;
 };
 
 /**
- * Get (cached) User based on req.userId
- * note: Apollo query would only need to query user once
+ * Get full user info
  */
-const authGetUser = async (req: Request, role?: AuthRole): Promise<LeanDocument<UserDocument>> => {
+const authGetUser = async (req: Request, role?: AuthRole): Promise<UserDocument & Id> => {
   const { userId } = auth(req, role);
   if (!req.user) {
     const user = await User.findOneActive({ _id: userId });
@@ -88,19 +86,29 @@ const authGetUser = async (req: Request, role?: AuthRole): Promise<LeanDocument<
   return req.user;
 };
 
-/**
- * Find single Content (Apollo)
- */
-const findContent = async (req: Request, args: unknown): Promise<LeanDocument<ContentDocument> | null> => {
-  const { userId } = auth(req);
-  const { id, token, updatedAfter } = await idSchema.concat(tokenSchema).concat(updatedAfterSchema).validate(args);
-  await verifyContentIds(userId, id, token);
+const censorContent = async (
+  tenantId: string | Types.ObjectId,
+  userId: string,
+  userLocale: string,
+  model: 'chat-groups' | 'questions',
+  parentId: string | Types.ObjectId,
+  content: string | Types.ObjectId | (ContentDocument & Id),
+) =>
+  !isTestMode &&
+  Job.queue({
+    task: 'censor',
+    args: {
+      tenantId: tenantId.toString(),
+      userId,
+      userLocale,
+      model,
+      parentId: parentId.toString(),
+      contentId: content.toString(),
+    },
+  });
 
-  return Content.findOne({ _id: id, ...(updatedAfter && { updatedAt: { $gt: updatedAfter } }) });
-};
-
 /**
- * Operation is NOT supported in cloud/satellite mode
+ * Operation is NOT supported in satellite mode
  */
 // const satelliteModeOnly = (): void => {
 //   if (config.mode !== 'SATELLITE') throw { statusCode: 400, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
@@ -139,7 +147,7 @@ let teacherLevelId: string | undefined; // simple caching (this is basically a c
 const isTeacher = async (userExtra: Auth['userExtra']) => {
   if (!userExtra) return false;
 
-  teacherLevelId ||= (await Level.findOne({ code: 'TEACHER' }).lean())?._id.toString();
+  teacherLevelId ||= (await Level.exists({ code: 'TEACHER' }))?._id.toString();
   const [prevSchoolYear, currSchoolYear, nextSchoolYear] = [schoolYear(-1), schoolYear(), schoolYear(1)];
 
   return (
@@ -215,7 +223,7 @@ export default {
   auth,
   authCheckUserSuspension,
   authGetUser,
-  findContent,
+  censorContent,
   guest,
   hubModeOnly,
   hasRole,

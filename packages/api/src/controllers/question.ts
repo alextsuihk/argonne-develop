@@ -1,245 +1,489 @@
 /**
  * Controller: Question
  *
- * presently, the structure supports multiple students to multiple tutors (or teachers), but 1x1 is preferred
- * student could add students, tutor could add tutors
  */
 
-import { DocumentSync, LOCALE, yupSchema } from '@argonne/common';
+import { LOCALE, yupSchema } from '@argonne/common';
+import { subDays } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import type { FilterQuery, LeanDocument, PopulateOptions, UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import { Homework } from '../models/assignment';
 import Book from '../models/book';
-import type { ChatDocument } from '../models/chat';
-import Chat from '../models/chat';
-import ChatGroup from '../models/chat-group';
 import Classroom from '../models/classroom';
 import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
-import DatabaseEvent from '../models/event/database';
+import Homework from '../models/homework';
+// import DatabaseEvent from '../models/event/database';
 import Level from '../models/level';
-import type { BidDocument, Member, QuestionDocument } from '../models/question';
-import Question, { Bid } from '../models/question';
+// import type { BidDocument, Id, Member, QuestionDocument } from '../models/question';
+import type { Id, QuestionDocument } from '../models/question';
+import Question from '../models/question';
 import Subject from '../models/subject';
 import Tenant from '../models/tenant';
 import TutorRanking from '../models/tutor-ranking';
 import User from '../models/user';
-import censor from '../utils/censor';
-import type { ChatResponse } from '../utils/chat';
 import { idsToString } from '../utils/helper';
-import { notify } from '../utils/messaging';
-import syncSatellite from '../utils/sync-satellite';
-import { checkOwnership } from './chat';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
+import { signContentIds } from './content';
 
 type Action =
-  | 'addStudents'
-  | 'addTutors'
-  | 'bid'
+  | 'addBidContent'
+  | 'addBidders'
+  | 'addContentByStudent'
+  | 'addContentByTutor'
+  | 'assignTutor'
   | 'clearFlag'
+  | 'clone'
+  | 'close'
+  | 'dispute'
   | 'setFlag'
   | 'updateLastViewedAt'
-  | 'updateTutorRanking';
+  | 'updateRanking';
 
-type Role = 'student' | 'tutor' | 'bidder';
+type QuestionDocumentEx = Omit<QuestionDocument & Id, 'contentIdx'> & { contentsToken: string };
+
+type Role = 'student' | 'tutor' | 'bidders' | 'marshals';
 
 const { MSG_ENUM } = LOCALE;
 const { QUESTION, TENANT, USER } = LOCALE.DB_ENUM;
-const { assertUnreachable, auth, paginateSort, searchFilter, select } = common;
-const { config } = configLoader;
+const { assertUnreachable, auth, authCheckUserSuspension, censorContent, paginateSort, searchFilter, select } = common;
+const { DEFAULTS } = configLoader;
 const {
+  contentSchema,
   flagSchema,
   idSchema,
-  questionBidSchema,
+  optionalTimestampSchema,
+  optionalTimeSpentSchema,
   questionSchema,
-  questionUpdateSchema,
   querySchema,
   rankingSchema,
-  optionalTimestampSchema,
+  userIdSchema,
   userIdsSchema,
 } = yupSchema;
 
 /**
- * (helper) Read Back with populate
+ * (helper) findOne active question
  */
-const findAndPopulate = async (
-  role: Role,
-  filter: FilterQuery<QuestionDocument>,
-  userId: string,
-): Promise<LeanDocument<QuestionDocument>[]> => {
-  role === 'student'
-    ? (filter.students = userId)
-    : role === 'tutor'
-    ? (filter.tutors = userId)
-    : (filter.bidders = userId);
+const findOneQuestion = async (id: string, userId: string, userTenants: string[], roles: Role[]) => {
+  const roleFilter: { [key in Role]?: string }[] = [];
+  if (roles.includes('student')) roleFilter.push({ student: userId });
+  if (roles.includes('tutor')) roleFilter.push({ tutor: userId });
+  if (roles.includes('bidders')) roleFilter.push({ bidders: userId });
+  if (roles.includes('marshals')) roleFilter.push({ marshals: userId });
 
-  const qSelect =
-    role === 'student' ? select() : role == 'tutor' ? `${select()} -bidders -bids` : `${select()} -tutors -bidders`;
+  const question = roles.length
+    ? await Question.findOne({
+        _id: id,
+        tenant: { $in: userTenants },
+        $or: roleFilter, // $or: [{ student: userId }, { tutor: userId }, { bidder: userId }, { marshals: userId }],
+        flags: { $nin: [QUESTION.FLAG.CLOSED, QUESTION.FLAG.PAID] },
+        deletedAt: { $exists: false },
+      }).lean()
+    : null;
+  if (question) return question;
 
-  const populate: PopulateOptions[] =
-    role === 'student'
-      ? [
-          { path: 'content', select: select() },
-          { path: 'contents', select: select() },
-          { path: 'bids', select: select() },
-        ]
-      : role === 'tutor'
-      ? [
-          { path: 'content', select: select() },
-          { path: 'contents', select: select() },
-        ]
-      : [
-          { path: 'content', select: select() },
-          { path: 'bids', select: select(), match: { user: userId } },
-        ];
-
-  return Question.find(filter, qSelect).populate(populate);
-};
-
-const findOneAndPopulate = async (question: LeanDocument<QuestionDocument>, userId: string) => {
-  const { _id, students, tutors } = question;
-  const questions = await findAndPopulate(
-    idsToString(students).includes(userId) ? 'student' : idsToString(tutors).includes(userId) ? 'tutor' : 'bidder',
-    { _id },
-    userId,
-  );
-
-  return questions[0]!;
+  throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 };
 
 /**
- * Bid Question
- * students or bidders could update bid
+ * (helper) conditionally hide bidders & bidContents info, and generate contentsToken
  */
-const bid = async (req: Request, args: unknown): Promise<LeanDocument<QuestionDocument>> => {
-  const { userId, userTenants } = auth(req);
-  const fields = await questionBidSchema.validate(args);
-  const { id, bidderIds, bidId, message, price, accept } = fields;
+const transform = async (
+  userId: string,
+  { contentIdx, ...question }: QuestionDocument & Id,
+): Promise<QuestionDocumentEx> => {
+  const isStudent = question.student.toString() === userId || idsToString(question.marshals).includes(userId);
+  const isTutor = question.tutor === userId;
+  const bidIndex = idsToString(question.bidders).findIndex(v => v === userId);
+  const bidders = isStudent ? question.bidders : question.bidders.filter((_, idx) => bidIndex === idx); // optionally, hide private info
+  const bidContents = isStudent ? question.bidContents : question.bidContents.filter((_, idx) => bidIndex === idx);
+  const contents = isStudent || isTutor ? question.contents : question.contents.slice(0, contentIdx);
 
-  const [bidders, question] = await Promise.all([
-    bidderIds.length ? User.find({ _id: bidderIds, tenants: { $in: userTenants } }).lean() : [], // student could add/remove bidderIds
-    Question.findOne({
-      _id: id,
-      $or: [{ students: userId }, { bidders: userId }],
-      'tutors.0': { $exists: false },
-      bids: bidId,
-      deletedAt: { $exists: false },
-    }).lean(),
+  return {
+    ...question,
+    bidders,
+    bidContents,
+    contents,
+    contentsToken: await signContentIds(userId, idsToString([...contents, ...bidContents.flat()])),
+  };
+};
+
+/**
+ * addBidContent
+ * student or bidders could update bidContent/message as long as tutor has not been assigned
+ * student could see all bidContents
+ * individual bidder ONLY see his/her bidContents
+ */
+const addBidContent = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
+  const { userId, userLocale, userTenants } = auth(req);
+  const {
+    id,
+    content: data,
+    userId: bidderId,
+  } = await contentSchema.concat(idSchema).concat(userIdSchema).validate(args);
+
+  const original = await findOneQuestion(id, userId, userTenants, ['bidders', 'student', 'tutor']);
+  if (!original.flags.includes(QUESTION.FLAG.SCHOOL)) await authCheckUserSuspension(req);
+
+  const content = new Content<Partial<ContentDocument>>({ parents: [`/questions/${id}`], creator: userId, data });
+
+  const [question] = await Promise.all([
+    Question.findOneAndUpdate(
+      { _id: id, bidders: bidderId },
+      { $push: { 'bidContents.$': content } },
+      { fields: select(), new: true },
+    ).lean(),
+    content.save(),
+    notifySync(
+      'QUESTION',
+      { tenantId: original.tenant, userIds: [userId, bidderId] },
+      { questionIds: [id], contentIds: [content] },
+    ),
+    censorContent(original.tenant, userId, userLocale, 'questions', id, content),
   ]);
 
-  // newBidders must be in question.tenant
-  if (!question || bidders.some(b => !idsToString(b.tenants).includes(question.tenant.toString())))
+  if (question) return transform(userId, question);
+  log('error', `questionController:addBidContent()`, { id }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
+ * addBidders
+ * student adds more bidders (not in original.bidders)
+ */
+const addBidders = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
+  const { userId, userTenants } = auth(req);
+  const { id, userIds: newBidderIds } = await idSchema.concat(userIdsSchema).validate(args);
+
+  const original = await findOneQuestion(id, userId, userTenants, ['student']);
+  const newBidderCount = await User.countDocuments({ _id: { $in: newBidderIds }, tenants: original.tenant });
+
+  if (
+    original.tutor ||
+    !newBidderIds.length ||
+    newBidderCount !== newBidderIds.length ||
+    idsToString(original.bidders).filter(x => newBidderIds.includes(x)).length
+  )
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const tenant = await Tenant.findByTenantId(question?.tenant);
-  if (!tenant.services.includes(TENANT.SERVICE.QUESTION_BID))
-    throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
-
-  const isOwner = idsToString(question.students).includes(userId);
-  // TODO: EOL
-  // const questionUpdate = merge.all<UpdateQuery<QuestionDocument>>([
-  //   !isOwner && accept ? { bidders: [], tutors: [userId], $push: { members: { user: userId, flags: [] } } } : {}, // update bidders & tutors, once any bidder accepts
-  //   isOwner && price ? { price } : {},
-  //   isOwner && bidderIds.length ? { bidders } : {},
-  // ]);
-  const questionUpdate: UpdateQuery<QuestionDocument> = {
-    ...(!isOwner && accept && { bidders: [], tutors: [userId], $push: { members: { user: userId, flags: [] } } }),
-    ...(isOwner && price && { price }),
-    ...(isOwner && bidderIds.length && { bidders }),
-  };
-
-  const userIds = [...question.students, ...question.bidders, ...bidderIds]; // notify old & new bidders
-
-  await Promise.all([
-    Object.keys(questionUpdate).length && Question.findByIdAndUpdate(question, questionUpdate),
-    message &&
-      Bid.findByIdAndUpdate(bidId, {
-        $push: { messages: { creator: userId, data: message, createdAt: Date.now() } },
-      }).lean(),
-    DatabaseEvent.log(userId, `/questions/${id}`, 'BID', { question: fields }),
-    notify(userIds, 'QUESTION', { questionIds: [id] }),
-    syncSatellite({ tenantId: question.tenant, userIds }, { questionIds: [id] }),
+  const [question] = await Promise.all([
+    Question.findByIdAndUpdate(
+      id,
+      { $push: { bidders: { $each: newBidderIds }, bidContents: { $each: Array(newBidderIds).fill([]) } } },
+      { fields: select(), new: true },
+    ).lean(),
+    notifySync(
+      'QUESTION',
+      { tenantId: original.tenant, userIds: [original.student, ...original.bidders, ...newBidderIds] },
+      { questionIds: [id] },
+    ),
   ]);
 
-  return findOneAndPopulate(question, userId); // read-back with populated
+  if (question) return transform(userId, question);
+  log('error', 'questionController:addBidders()', { id, newBidderIds }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
+ * addContent (optional with dispute)
+ *
+ * student, tutor or marshals could addContent
+ */
+const addContent = async (
+  req: Request,
+  args: unknown,
+  action: Extract<Action, 'addContentByStudent' | 'addContentByTutor' | 'dispute'>,
+): Promise<QuestionDocumentEx> => {
+  const { userId, userLocale, userTenants } = auth(req);
+  const {
+    id,
+    content: data,
+    timeSpent,
+    visibleAfter,
+  } = await contentSchema.concat(idSchema).concat(optionalTimeSpentSchema).validate(args);
+
+  const original = await findOneQuestion(id, userId, userTenants, ['marshals', 'student', 'tutor']);
+  if (!original.flags.includes(QUESTION.FLAG.SCHOOL)) await authCheckUserSuspension(req);
+
+  const content = new Content<Partial<ContentDocument>>({
+    parents: [`/questions/${id}`],
+    creator: userId,
+    data,
+    visibleAfter,
+  });
+
+  const userIds = [original.student];
+  original.tutor ? userIds.push(original.tutor) : userIds.push(...original.bidders);
+  const [question] = await Promise.all([
+    Question.findByIdAndUpdate(
+      id,
+      {
+        $push: { contents: content },
+        ...(!original.tutor && { $inc: { contentIdx: 1 } }), // increment publicly visible contentIndex before tutor is assigned
+        ...(action === 'addContentByTutor' && timeSpent && { timeSpent }),
+        ...(action === 'dispute' && { $addToSet: { flags: QUESTION.FLAG.DISPUTED } }),
+      },
+      { fields: select(), new: true },
+    ).lean(),
+    // transform(userId, question),
+    content.save(),
+    notifySync('QUESTION', { tenantId: original.tenant, userIds }, { questionIds: [id], contentIds: [content] }),
+    censorContent(original.tenant, userId, userLocale, 'questions', id, content),
+  ]);
+
+  if (question) return transform(userId, question);
+  log('error', `questionController:${action}()`, { id }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
+ * assignTutor
+ * student assigns one of the bidders to be tutor
+ */
+const assignTutor = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
+  const { userId, userTenants } = auth(req);
+  const { id, userId: bidderId } = await idSchema.concat(userIdSchema).validate(args);
+
+  const question = await Question.findOneAndUpdate(
+    {
+      _id: id,
+      tenant: { $in: userTenants },
+      student: userId,
+      tutor: { $exists: false },
+      bidders: bidderId,
+      flags: { $nin: [QUESTION.FLAG.CLOSED, QUESTION.FLAG.PAID] },
+      deletedAt: { $exists: false },
+    },
+    { tutor: bidderId },
+    { fields: select(), new: true },
+  ).lean();
+  if (!question) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  const [transformed] = await Promise.all([
+    transform(userId, question),
+    notifySync(
+      'QUESTION',
+      { tenantId: question.tenant, userIds: [question.student, ...question.bidders] },
+      { questionIds: [id] },
+    ),
+  ]);
+
+  return transformed;
+};
+
+const pay = async (question: QuestionDocument & Id): Promise<QuestionDocument & Id> => {
+  const transaction = async () => {
+    console.log('working transaction');
+  };
+
+  const [updated] = await Promise.all([
+    Question.findByIdAndUpdate(
+      question,
+      { paidAt: new Date(), $addToSet: { flags: QUESTION.FLAG.PAID } },
+      { fields: select(), new: true },
+    ).lean(),
+    transaction(),
+  ]);
+
+  if (updated) return updated;
+  log('error', 'questionController:pay()', { id: question._id.toString() });
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
+ * close or pay (by student)
+ */
+const close = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
+  const { userId, userTenants } = auth(req);
+  const { id } = await idSchema.validate(args);
+
+  const question = await Question.findOneAndUpdate(
+    {
+      _id: id,
+      tenant: { $in: userTenants },
+      student: userId,
+      price: { $exists: true },
+      tutor: { $exists: true },
+      flags: { $nin: [QUESTION.FLAG.CLOSED, QUESTION.FLAG.PAID] },
+      deletedAt: { $exists: false },
+    },
+    { $addToSet: { flags: QUESTION.FLAG.CLOSED } },
+  );
+  if (!question) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  const [transformed] = await Promise.all([
+    transform(userId, question.price ? await pay(question) : question),
+    notifySync(
+      'QUESTION',
+      { tenantId: question.tenant, userIds: [question.student, question.tutor!] },
+      { questionIds: [id] },
+    ),
+  ]);
+  return transformed;
+};
+
+/**
+ * close (or pay) questions by scheduler
+ */
+const closeByScheduler = async (): Promise<void> => {
+  const [payQuestions] = await Promise.all([
+    Question.find({
+      price: { $exists: true },
+      tutor: { $exists: true },
+      flags: { $nin: [QUESTION.FLAG.CLOSED, QUESTION.FLAG.DISPUTED, QUESTION.FLAG.PAID] },
+      deletedAt: { $exists: false },
+      updatedAt: {
+        $lt: subDays(Date.now(), DEFAULTS.QUESTION.CLOSE_DAYS),
+        $gt: subDays(Date.now(), DEFAULTS.QUESTION.CLOSE_DAYS + 14),
+      },
+    }).lean(),
+    Question.updateMany(
+      {
+        $or: [{ price: { $exists: false } }, { tutor: { $exists: false } }],
+        flags: { $ne: QUESTION.FLAG.CLOSED },
+        deletedAt: { $exists: false },
+        updatedAt: {
+          $lt: subDays(Date.now(), DEFAULTS.QUESTION.CLOSE_DAYS),
+          $gt: subDays(Date.now(), DEFAULTS.QUESTION.CLOSE_DAYS + 14),
+        },
+      },
+      { $addToSet: { flags: QUESTION.FLAG.CLOSED } },
+    ),
+  ]);
+
+  await Promise.all(
+    payQuestions.map(async question => {
+      const contents = await Content.find({ id: { $in: question.contents } }, '-data').lean(); // data is too big, and not needed
+
+      await Promise.all([
+        idsToString(contents.map(c => c.creator)).includes(question.tutor!.toString()) && pay(question), // pay IF tutor has at least a single content
+        notifySync(
+          'QUESTION',
+          { tenantId: question.tenant, userIds: [question.student, question.tutor!] },
+          { questionIds: [question] },
+        ),
+      ]);
+    }),
+  );
+};
+
+/**
+ * clone
+ * student clones (re-ask/reconfirm  someones else)
+ */
+const clone = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
+  const { userId, userTenants } = auth(req);
+  const { id, userIds } = await idSchema.concat(userIdsSchema).validate(args);
+
+  const original = await findOneQuestion(id, userId, userTenants, ['student']);
+  const [originalContents, userCount] = await Promise.all([
+    Content.find({ _id: { $in: original.contents } }).lean(),
+    User.countDocuments({ _id: { $in: userIds }, tenants: original.tenant }),
+  ]);
+  if (!userIds.length || userCount !== userIds.length) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  const question = new Question<Partial<QuestionDocument>>({
+    ...original,
+    parent: `/questions/${original._id}`,
+    ...(userIds.length == 1 ? { tutor: userIds[0], bidders: [] } : { bidders: userIds }),
+    bidContents: userIds.length == 1 ? [] : Array(userIds.length).fill([]), // construct bidContents empty array structure
+    members: [{ user: userId, flags: [], lastViewedAt: new Date() }],
+    contents: [],
+  });
+  const contents = originalContents.map(
+    ({ creator, data }) =>
+      new Content<Partial<ContentDocument>>({ parents: [`/questions/${question._id}`], creator, data }),
+  );
+  question.contents = idsToString(contents);
+
+  const [transformed] = await Promise.all([
+    transform(userId, question),
+    question.save(),
+    Content.create(contents),
+    notifySync(
+      'QUESTION',
+      { tenantId: original.tenant, userIds: [userId, ...userIds] },
+      { questionIds: [question], contentIds: contents },
+    ),
+  ]);
+
+  return transformed;
 };
 
 /**
  * Create (ask) a question
+ *
+ * args.userIds.length === 1: assign to a tutor
+ * args.userIds.length > 1: bidding
+ *
+ * note: userIds (tutor or bidders) cannot be userId himself
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<QuestionDocument>> => {
+const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
   const { userFlags, userId, userLocale, userTenants } = auth(req);
-  const {
-    question: { tenantId, tutors: inputTutors, content: data, ...fields },
-  } = await questionSchema.validate(args);
+  const { tenantId, userIds, content: data, ...fields } = await questionSchema.validate(args);
 
-  const [tutors, book, classroom, level, subject, homework, tenant] = await Promise.all([
-    User.find({ _id: { $in: inputTutors }, tenants: tenantId }).lean(),
-    fields.book && Book.findOne({ _id: fields.book, level: fields.level, subjects: fields.subject }),
-    fields.classroom && Classroom.findOne({ _id: fields.classroom, $or: [{ teachers: userId }, { students: userId }] }),
-    fields.homework && Homework.findOne({ _id: fields.homework, deletedAt: { $exists: false } }),
-    Level.findOne({ _id: fields.level, deletedAt: { $exists: false } }).lean(),
-    Subject.findOne({ _id: fields.subject, levels: fields.level, deletedAt: { $exists: false } }).lean(),
+  const [userCount, book, classroom, homework, level, subject, tenant] = await Promise.all([
+    User.countDocuments({ _id: { $in: userIds }, tenants: tenantId }),
+    fields.book && Book.exists({ _id: fields.book, level: fields.level, subjects: fields.subject }),
+    fields.classroom && Classroom.exists({ _id: fields.classroom, students: userId }),
+    fields.homework && Homework.exists({ _id: fields.homework, user: userId, deletedAt: { $exists: false } }),
+    Level.exists({ _id: fields.level, deletedAt: { $exists: false } }),
+    Subject.exists({ _id: fields.subject, levels: fields.level, deletedAt: { $exists: false } }),
     Tenant.findByTenantId(tenantId),
   ]);
 
-  if (
-    !userTenants.includes(tenantId) ||
-    !tenant.services.includes(TENANT.SERVICE.QUESTION) ||
-    (config.mode === 'SATELLITE' && inputTutors.length !== 1)
-  )
+  if (!userTenants.includes(tenantId) || !tenant.services.includes(TENANT.SERVICE.QUESTION))
     throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
+
+  if (!tenant.school) await authCheckUserSuspension(req); // check for user suspension if not school tenant
+
   if (
     !Object.keys(QUESTION.LANG).includes(fields.lang) ||
-    !level ||
-    !subject ||
+    !userIds.length ||
+    userIds.includes(userId) ||
+    userIds.length !== userCount ||
     (fields.book && !book) ||
     (fields.classroom && !classroom) ||
     (fields.homework && !homework) ||
-    (inputTutors.length !== tutors.length && tutors.length > 0)
+    !level ||
+    !subject ||
+    (!tenant.services.includes(TENANT.SERVICE.QUESTION_BID) && userIds.length !== 1) ||
+    fields.deadline.getTime() < Date.now()
   )
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const flags = userFlags.includes(USER.FLAG.EDA) ? [QUESTION.FLAG.EDA] : [];
-
-  const tutorIds = idsToString(tutors);
-  const isBidding = tutors.length != 1;
-  const members: Member[] = [{ user: userId, flags: [], lastViewedAt: new Date() }];
-  if (!isBidding) members.push(...tutorIds.map(user => ({ user, flags: [] })));
-
-  const bids = isBidding ? tutorIds.map(_ => new Bid<Partial<BidDocument>>({ messages: [] })) : [];
+  const flags: string[] = [];
+  if (userFlags.includes(USER.FLAG.EDA)) flags.push(QUESTION.FLAG.EDA);
+  if (tenant.school) flags.push(QUESTION.FLAG.SCHOOL);
 
   const question = new Question<Partial<QuestionDocument>>({
     tenant: tenantId,
     flags,
-    students: [userId],
-    ...(isBidding ? { tutors: [], bidders: tutorIds } : { tutors: tutorIds, bidders: [] }),
-    members,
-    bids,
+    student: userId,
+    ...(userIds.length == 1 ? { tutor: userIds[0], bidders: [] } : { bidders: userIds }),
+    bidContents: userIds.length == 1 ? [] : Array(userIds.length).fill([]), // construct bidContents empty array structure
+    members: [{ user: userId, flags: [], lastViewedAt: new Date() }],
     ...fields,
   });
-  const id = question._id.toString();
-  const content = new Content<Partial<ContentDocument>>({ parents: [`/questions/${id}`], creator: userId, data });
-  question.content = content;
+  const { _id } = question;
+  const content = new Content<Partial<ContentDocument>>({ parents: [`/questions/${_id}`], creator: userId, data });
+  question.contents = [content._id];
+  question.contentIdx = 1;
 
-  const userIds = [userId, ...tutorIds];
-
-  await Promise.all([
+  const [transformed] = await Promise.all([
+    transform(userId, question.toObject()),
+    homework && Homework.findByIdAndUpdate(homework, { $push: { questions: _id } }).lean(),
     question.save(),
     content.save(),
-    ...bids.map(bid => bid.save()),
-    DatabaseEvent.log(userId, `/questions/${id}`, 'CREATE', { question: fields }),
-    notify(userIds, 'QUESTION', { questionIds: [id], contentIds: [content._id.toString()] }),
-    syncSatellite({ tenantId, userIds }, { questionIds: [id], contentIds: [content._id.toString()] }),
-    censor(tenantId, `/questions/${id}`, content, userLocale),
+    notifySync('QUESTION', { tenantId, userIds: [userId, ...userIds] }, { questionIds: [_id], contentIds: [content] }),
+    censorContent(question.tenant, userId, userLocale, 'questions', _id, content),
   ]);
 
-  return question.populate([{ path: 'content', select: select() }]);
-  // (await findAndPopulate('student', { _id: id }, userId))[0];
+  return transformed;
 };
 
 /**
@@ -253,22 +497,31 @@ const createNew: RequestHandler = async (req, res, next) => {
   }
 };
 
+// (helper) common code for find(), findMany(), findOne()
+const findCommon = async (userId: string, args: unknown, getOne = false) => {
+  const { id, query } = getOne
+    ? await idSchema.concat(querySchema).validate(args)
+    : { ...(await querySchema.validate(args)), id: null };
+
+  return searchFilter<QuestionDocument>(
+    [],
+    { query },
+    {
+      ...(id && { _id: id }),
+      $or: [{ student: userId }, { tutor: userId }, { bidders: userId }, { marshals: userId }],
+    },
+  );
+};
+
 /**
  * Find Multiple Question (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<QuestionDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<QuestionDocumentEx[]> => {
   const { userId } = auth(req);
-  const { query } = await querySchema.validate(args);
+  const filter = await findCommon(userId, args);
+  const questions = await Question.find(filter, select()).lean();
 
-  const filter = searchFilter<QuestionDocument>([], { query });
-
-  const allQuestions = await Promise.all([
-    findAndPopulate('student', filter, userId),
-    findAndPopulate('tutor', filter, userId),
-    findAndPopulate('bidder', filter, userId),
-  ]);
-
-  return allQuestions.flat().sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  return Promise.all(questions.map(async question => transform(userId, question)));
 };
 
 /**
@@ -277,13 +530,7 @@ const find = async (req: Request, args: unknown): Promise<LeanDocument<QuestionD
 const findMany: RequestHandler = async (req, res, next) => {
   try {
     const { userId } = auth(req);
-    const { query } = await querySchema.validate({ query: req.query });
-
-    const filter = searchFilter<QuestionDocument>(
-      [],
-      { query },
-      { $or: [{ students: userId }, { tutors: userId }, { bidders: userId }] },
-    );
+    const filter = await findCommon(userId, { query: req.query });
     const options = paginateSort(req.query, { updatedAt: -1 });
 
     const [total, questions] = await Promise.all([
@@ -291,22 +538,10 @@ const findMany: RequestHandler = async (req, res, next) => {
       Question.find(filter, select(), options).lean(),
     ]);
 
-    // single mongoose population is slower, but preserve the sort-order
-    const populatedQuestions = await Promise.all(
-      questions.map(async ({ _id, students, tutors }) =>
-        findAndPopulate(
-          idsToString(students).includes(userId)
-            ? 'student'
-            : idsToString(tutors).includes(userId)
-            ? 'tutor'
-            : 'bidder',
-          { _id },
-          userId,
-        ),
-      ),
-    );
-
-    res.status(200).json({ meta: { total, ...options }, data: populatedQuestions.flat() });
+    res.status(200).json({
+      meta: { total, ...options },
+      data: await Promise.all(questions.map(async question => transform(userId, question))),
+    });
   } catch (error) {
     next(error);
   }
@@ -315,19 +550,11 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One Question by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<QuestionDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<QuestionDocumentEx | null> => {
   const { userId } = auth(req);
-  const { id, query } = await idSchema.concat(querySchema).validate(args);
-  const filter = searchFilter<QuestionDocument>(
-    [],
-    { query },
-    { _id: id, $or: [{ students: userId }, { tutors: userId }, { bidders: userId }] },
-  );
+  const filter = await findCommon(userId, args, true);
   const question = await Question.findOne(filter, select()).lean();
-
-  if (!question) return null;
-
-  return findOneAndPopulate(question, userId); // read-back with populated
+  return question && transform(userId, question);
 };
 
 /**
@@ -346,27 +573,30 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
 
 /**
  * Delete by ID
- * ONLY students could delete/cancel at bidding stage (without tutors)
+ * ONLY student could delete/cancel at bidding stage (without tutor)
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId } = auth(req);
+  const { userId, userTenants } = auth(req);
   const { id } = await idSchema.validate(args);
 
   const question = await Question.findOneAndUpdate(
-    { _id: id, students: userId, 'tutors.0': { $exists: false }, deletedAt: new Date() },
-    { bidders: [], bids: [], deletedAt: new Date() },
+    {
+      _id: id,
+      tenant: { $in: userTenants },
+      student: userId,
+      tutor: { $exists: false },
+      flags: { $nin: [QUESTION.FLAG.CLOSED, QUESTION.FLAG.PAID] },
+      deletedAt: { $exists: false },
+    },
+    { deletedAt: new Date(), $addToSet: { flags: QUESTION.FLAG.CLOSED } },
   ).lean();
-
   if (!question) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const userIds = [userId, ...question.bidders];
-  await Promise.all([
-    Bid.deleteMany({ _id: { $in: question.bids } }),
-    DatabaseEvent.log(userId, `/questions/${id}`, 'DELETE', {}),
-    notify(userIds, 'QUESTION', { questionIds: [id] }), // just mark question deleted, keep content untouched
-    syncSatellite({ tenantId: question.tenant, userIds }, { questionIds: [id] }),
-  ]);
-
+  await notifySync(
+    'QUESTION',
+    { tenantId: question.tenant, userIds: [userId, ...question.bidders] },
+    { questionIds: [id] },
+  );
   return { code: MSG_ENUM.COMPLETED };
 };
 
@@ -384,264 +614,132 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 };
 
 /**
- * Update Question
- * addContent, shareTo
- *
- */
-const update = async (req: Request, args: unknown): Promise<LeanDocument<QuestionDocument>> => {
-  const { userId, userLocale } = auth(req);
-  const fields = await questionUpdateSchema.validate(args);
-  const { id, content: data, timeSpent, pay, shareTo } = fields;
-
-  const question = await Question.findOne({
-    _id: id,
-    $or: [{ students: userId }, { tutors: userId }],
-    deletedAt: { $exists: false },
-  }).lean();
-
-  if (!question) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  if (!(data || !shareTo)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  // share to classroomId or another chatGroupId
-  if (shareTo) {
-    const { model, id: shareToId, parentDoc } = await checkOwnership(userId, shareTo, 'ADMIN_TEACHER');
-
-    const contentIds = idsToString([question.content, ...question.contents]);
-
-    const chat = new Chat<Partial<ChatDocument>>({
-      parents: [`/${model}/${shareToId}`],
-      title: 'Sharing student homework',
-      members: [{ user: userId, flags: [], lastViewedAt: new Date() }],
-      contents: contentIds,
-    });
-    if (model === 'chatGroups') {
-      const ids: ChatResponse = {
-        chatGroupIds: [id],
-        chatIds: [chat._id.toString()],
-        contentIds,
-      };
-      const userIds = [userId, ...idsToString(parentDoc.users)];
-      await Promise.all([
-        chat.save(),
-        Content.updateMany({ _id: { $in: contentIds } }, { $push: { parents: `/chats/${chat._id}` } }),
-        ChatGroup.findByIdAndUpdate(shareToId, { $push: { chats: chat } }).lean(),
-        DatabaseEvent.log(userId, `/chatGroups/${shareToId}`, 'SHARE', {
-          event: `sharing question (${id}) to chatGroup (${shareToId})`,
-        }),
-        notify(userIds, 'CHAT-GROUP', ids),
-        syncSatellite({ tenantId: parentDoc.tenant, userIds }, ids),
-      ]);
-    } else {
-      const ids: ChatResponse = {
-        classroomIds: [id],
-        chatIds: [chat._id.toString()],
-        contentIds,
-      };
-      const userIds = [userId, ...idsToString(parentDoc.teachers), ...idsToString(parentDoc.students)];
-      await Promise.all([
-        chat.save(),
-        Content.updateMany({ _id: { $in: contentIds } }, { $push: { parents: `/chats/${chat._id}` } }),
-        Classroom.findById(shareToId, { $push: { chats: chat } }).lean(),
-        DatabaseEvent.log(userId, `/classrooms/${shareToId}`, 'SHARE', {
-          event: `sharing homework (${id}) to classroom (${shareToId})`,
-        }),
-        notify(userIds, 'CLASSROOM', ids),
-        syncSatellite({ tenantId: parentDoc.tenant, userIds }, ids),
-      ]);
-    }
-  } else {
-    // addContent
-
-    const isOwner = idsToString(question.students).includes(userId);
-    const content = data
-      ? new Content<Partial<ContentDocument>>({ parents: [`/questions/${id}`], creator: userId, data })
-      : null;
-
-    // TODO: EOL
-    // const questionUpdate = merge.all<UpdateQuery<QuestionDocument>>([
-    //   content ? { $push: { contents: content } } : {},
-    //   !isOwner && timeSpent ? { timeSpent } : {},
-    //   isOwner && ranking ? { ranking } : {},
-    //   isOwner && pay && !question.paidAt ? { paidAt: new Date() } : {},
-    // ]);
-    const questionUpdate = {
-      ...(content && { $push: { contents: content } }),
-      ...(isOwner && timeSpent && { timeSpent }),
-      ...(isOwner && pay && !question.paidAt && { paidAt: new Date() }),
-    };
-
-    const ids: DocumentSync = {
-      questionIds: [id],
-      contentIds: content ? [content._id.toString()] : [],
-    };
-    const userIds = [...question.students, ...question.tutors];
-
-    await Promise.all([
-      isOwner && pay && !question.paidAt && console.log('TODO: run pay()'), //TODO! run pay()
-      Question.findByIdAndUpdate(id, questionUpdate).lean(),
-      content?.save(),
-      DatabaseEvent.log(userId, `/questions/${id}`, 'UPDATE', { question: fields }),
-      notify(userIds, 'QUESTION', ids),
-      syncSatellite({ tenantId: question.tenant, userIds }, ids),
-      content && censor(question.tenant, `/questions/${id}`, content, userLocale),
-    ]);
-  }
-  return findOneAndPopulate(question, userId); // read-back with populated
-};
-
-/**
  * Update Flag
- * note: students & tutors could update flag
+ * note: student & tutor could update flag
  */
-const updateFlag = async (req: Request, args: unknown, action: Action): Promise<LeanDocument<QuestionDocument>> => {
-  const { userId } = auth(req);
+const updateFlag = async (
+  req: Request,
+  args: unknown,
+  action: Extract<Action, 'clearFlag' | 'setFlag'>,
+): Promise<QuestionDocumentEx> => {
+  const { userId, userTenants } = auth(req);
   const { id, flag } = await flagSchema.concat(idSchema).validate(args);
 
   if (!Object.keys(QUESTION.MEMBER.FLAG).includes(flag)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const question =
-    action === 'setFlag'
-      ? await Question.findOneAndUpdate(
-          {
-            _id: id,
-            $or: [{ students: userId }, { tutors: userId }],
-            members: { $elemMatch: { user: userId, flags: { $ne: flag } } },
-            deletedAt: { $exists: false },
-          },
-          { $push: { 'members.$.flags': flag }, $set: { 'members.$.lastViewedAt': new Date() } },
-        ).lean()
-      : await Question.findOneAndUpdate(
-          {
-            _id: id,
-            $or: [{ students: userId }, { tutors: userId }],
-            members: { $elemMatch: { user: userId, flags: flag } },
-            deletedAt: { $exists: false },
-          },
-          { $pull: { 'members.$.flags': flag }, $set: { 'members.$.lastViewedAt': new Date() } },
-        ).lean();
+  const original = await findOneQuestion(id, userId, userTenants, ['student', 'tutor', 'marshals']);
+  const member = original.members.find(m => m.user.toString() === userId);
+  const updateMembers =
+    action === 'clearFlag' && member?.flags.includes(flag)
+      ? original.members.map(m => (m.user.toString() === userId ? { ...m, flags: m.flags.filter(f => f !== flag) } : m))
+      : action === 'setFlag' && !member
+      ? [...original.members, { user: userId, flags: [flag] }]
+      : action === 'setFlag' && member && !member.flags.includes(flag)
+      ? original.members.map(m => (m.user.toString() === userId ? { ...m, flags: [...m.flags, flag] } : m))
+      : null;
 
-  if (!question) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (!updateMembers) return transform(userId, original);
 
-  return findOneAndPopulate(question, userId); // read-back with populated
+  const [question] = await Promise.all([
+    Question.findByIdAndUpdate(id, { members: updateMembers }, { fields: select(), new: true }).lean(),
+    notifySync('QUESTION', { tenantId: original.tenant, userIds: [userId] }, { questionIds: [id] }),
+  ]);
+  if (question) return transform(userId, question);
+  log('error', `questionController:${action}()`, { id, flag }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
  * Update LastViewedAt
  */
-const updateLastViewedAt = async (req: Request, args: unknown): Promise<LeanDocument<QuestionDocument>> => {
-  const { userId } = auth(req);
-  const { id, timestamp = Date.now() } = await idSchema.concat(optionalTimestampSchema).validate(args);
+const updateLastViewedAt = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
+  const { userId, userTenants } = auth(req);
+  const { id, timestamp = new Date() } = await idSchema.concat(optionalTimestampSchema).validate(args);
+
+  const original = await findOneQuestion(id, userId, userTenants, ['student', 'tutor', 'bidders', 'marshals']);
+
+  const userIds = [original.student];
+  original.tutor ? userIds.push(original.tutor) : userIds.push(...original.bidders);
+  const [question] = await Promise.all([
+    Question.findByIdAndUpdate(
+      id,
+      original.members.find(m => m.user.toString() === userId)
+        ? { members: original.members.map(m => (m.user.toString() === userId ? { ...m, lastViewedAt: timestamp } : m)) }
+        : { members: [...original.members, { user: userId, flags: [], lastViewedAt: timestamp }] },
+      { fields: select(), new: true },
+    ).lean(),
+    notifySync('QUESTION', { tenantId: original.tenant, userIds }, { questionIds: [id] }),
+  ]);
+
+  if (question) return transform(userId, question);
+  log('error', 'questionController:updateLastViewedAt()', { id, timestamp }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
+ * Update Ranking
+ * note: student could update ranking
+ */
+const updateRanking = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
+  const { userId, userTenants } = auth(req);
+  const { id, correctness, explicitness, punctuality } = await idSchema.concat(rankingSchema).validate(args);
 
   const question = await Question.findOneAndUpdate(
     {
       _id: id,
-      $or: [{ students: userId }, { tutors: userId }],
-      'members.user': userId,
+      tenant: { $in: userTenants },
+      student: userId,
+      flags: { $nin: [QUESTION.FLAG.CLOSED, QUESTION.FLAG.PAID] },
       deletedAt: { $exists: false },
     },
-    { $set: { 'members.$.lastViewedAt': timestamp } },
+    { correctness, explicitness, punctuality },
+    { fields: select(), new: true },
   ).lean();
   if (!question) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  return findOneAndPopulate(question, userId); // read-back with populated
-};
+  const { tenant, tutor, lang, level, subject } = question;
+  const { _id } = await TutorRanking.findOneAndUpdate(
+    { tenant, tutor, student: userId, question: id },
+    { tenant, tutor, student: userId, question: id, lang, level, subject, correctness, explicitness, punctuality },
+    { fields: '_id', upsert: true, new: true },
+  ).lean();
 
-/**
- * updateMembers
- * note: student could add students, tutor could add tutors
- */
-const updateMembers = async (
-  req: Request,
-  args: unknown,
-  action: Extract<Action, 'addStudents' | 'addTutors'>,
-): Promise<LeanDocument<QuestionDocument>> => {
-  const { userId } = auth(req);
-  const { id, userIds } = await idSchema.concat(userIdsSchema).validate(args);
-  const uniqueUserIds = Array.from(new Set(userIds)); // remove duplicated userIds,
-
-  const question = await Question.findOne({
-    _id: id,
-    $or: [{ students: userId }, { tutors: userId }],
-    deletedAt: { $exists: false },
-  }).lean();
-  if (!question) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const userCount = await User.countDocuments({ _id: { $in: uniqueUserIds }, tenants: question.tenant });
-  if (userCount !== userIds.length) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const newUsers =
-    action === 'addStudents'
-      ? uniqueUserIds.filter(x => !idsToString(question.students).includes(x))
-      : uniqueUserIds.filter(x => !idsToString(question.tutors).includes(x));
-
-  const notifyUserIds = [...idsToString(question.students), ...idsToString(question.tutors), ...newUsers, userId];
-
-  await Promise.all([
-    Question.findByIdAndUpdate(
-      id,
-      action === 'addStudents'
-        ? { $push: { students: { $each: newUsers } } }
-        : { $push: { tutors: { $each: newUsers } } },
-    ).lean(),
-    DatabaseEvent.log(userId, `/questions/${id}`, 'UPDATE', { action, question, userIds }),
-    notify(notifyUserIds, 'QUESTION', { questionIds: [id] }),
-    syncSatellite({ tenantId: question.tenant, userIds: notifyUserIds }, { questionIds: [id] }),
+  const [transformed] = await Promise.all([
+    transform(userId, question),
+    notifySync('QUESTION', { tenantId: tenant, userIds: [userId] }, { questionIds: [id], rankingIds: [_id] }),
   ]);
 
-  return findOneAndPopulate(question, userId); // read-back with populated
+  return transformed;
 };
 
 /**
- * Update Tutor Ranking
- * note: only students could update ranking
+ * Update Question (RESTful)
  */
-const updateTutorRanking = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId } = auth(req);
-  const { id, correctness, explicitness, punctuality } = await idSchema.concat(rankingSchema).validate(args);
-
-  if (!correctness || !punctuality || !explicitness) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const question = await Question.findOne({ _id: id, students: userId, deletedAt: { $exists: false } }).lean();
-  if (!question) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const { tenant, tutors, lang, level, subject } = question;
-
-  const rankings = await Promise.all(
-    tutors.map(async tutor =>
-      TutorRanking.findOneAndUpdate(
-        { tenant, tutor, student: userId, question: id },
-        { tenant, tutor, student: userId, question: id, lang, level, subject, correctness, explicitness, punctuality },
-        { fields: '_id', upsert: true, new: true },
-      ).lean(),
-    ),
-  );
-
-  await syncSatellite({ tenantId: tenant }, { rankingIds: idsToString(rankings) });
-
-  return { code: MSG_ENUM.COMPLETED };
-};
-
-/**
- * Update Chat (RESTful)
- */
-const updateById: RequestHandler<{ id: string; action?: Action }> = async (req, res, next) => {
+const updateById: RequestHandler<{ id: string; action: Action }> = async (req, res, next) => {
   const { id, action } = req.params;
   if (!mongoose.isObjectIdOrHexString(id)) return next({ statusCode: 404 });
 
   try {
     switch (action) {
-      case undefined:
-        return res.status(200).json({ data: await update(req, { id, ...req.body }) });
-      case 'addStudents':
-      case 'addTutors':
-        return res.status(200).json({ data: await updateMembers(req, { id, ...req.body }, action) });
-      case 'bid':
-        return res.status(200).json({ data: await bid(req, { id, ...req.body }) });
+      case 'addBidContent':
+        return res.status(200).json({ data: await addBidContent(req, { id, ...req.body }) });
+      case 'addBidders':
+        return res.status(200).json({ data: await addBidders(req, { id, ...req.body }) });
+      case 'addContentByStudent':
+      case 'addContentByTutor':
+      case 'dispute':
+        return res.status(200).json({ data: await addContent(req, { id, ...req.body }, action) });
+      case 'assignTutor':
+        return res.status(200).json({ data: await assignTutor(req, { id, ...req.body }) });
       case 'clearFlag':
       case 'setFlag':
         return res.status(200).json({ data: await updateFlag(req, { id, ...req.body }, action) });
-      case 'updateTutorRanking':
-        return res.status(200).json({ data: await updateTutorRanking(req, { id, ...req.body }) });
+      case 'clone':
+        return res.status(200).json({ data: await clone(req, { id, ...req.body }) });
+      case 'close':
+        return res.status(200).json({ data: await close(req, { id, ...req.body }) });
+      case 'updateRanking':
+        return res.status(200).json({ data: await updateRanking(req, { id, ...req.body }) });
       case 'updateLastViewedAt':
         return res.status(200).json({ data: await updateLastViewedAt(req, { id, ...req.body }) });
       default:
@@ -653,7 +751,13 @@ const updateById: RequestHandler<{ id: string; action?: Action }> = async (req, 
 };
 
 export default {
-  bid,
+  addBidContent,
+  addBidders,
+  addContent,
+  assignTutor,
+  close,
+  closeByScheduler,
+  clone,
   create,
   createNew,
   find,
@@ -662,7 +766,7 @@ export default {
   findOneById,
   remove,
   removeById,
-  update,
   updateById,
+  updateFlag,
   updateLastViewedAt,
 };

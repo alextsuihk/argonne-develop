@@ -6,6 +6,7 @@ import confirmEmail from './confirm-email';
 import jobReport from './job-report';
 import resetPassword from './reset-password';
 import testEmail from './test-email';
+export { EMAIL_TOKEN_PREFIX } from './confirm-email';
 
 export default {
   confirmEmail,

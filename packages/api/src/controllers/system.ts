@@ -207,7 +207,11 @@ const getStatus = async (req: Request) => {
               if (!testUser) return { status: 'improper configuration' };
 
               const socket = io(`http://127.0.0.1:${config.port}`);
-              const accessToken = await token.sign({ id: testUser._id.toString() }, '5s');
+              const { accessToken } = await token.createTokens(testUser, {
+                ip: '127.0.0.1',
+                ua: 'Jest-User-Agent',
+                expiresIn: 5,
+              });
 
               socket.once('JOIN', (receivedMsg: { token?: string; error?: string; msg?: string }) => {
                 if (receivedMsg.token === accessToken) {

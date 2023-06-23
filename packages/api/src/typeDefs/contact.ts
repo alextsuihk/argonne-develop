@@ -19,6 +19,7 @@ export default gql`
 
   type Contact {
     _id: ID!
+    flags: [String!]!
     avatarUrl: String
     name: String!
     identifiedAt: Float

@@ -19,12 +19,6 @@ const { USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
 
 /**
- * Add Users to Tenant
- */
-export const addUsersToTenant = async (userIds: (string | Types.ObjectId)[], tenantId: string | Types.ObjectId) =>
-  User.updateMany({ _id: { $in: userIds }, tenants: { $ne: tenantId } }, { $push: { tenants: tenantId } });
-
-/**
  * Seeder()
  */
 const seed = async (): Promise<string> => {

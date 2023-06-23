@@ -7,7 +7,6 @@
 import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   apolloExpect,
@@ -20,6 +19,7 @@ import {
   FAKE_LOCALE,
   FAKE2,
   FAKE2_LOCALE,
+  genUser,
   idsToString,
   jestPutObject,
   jestRemoveObject,
@@ -31,7 +31,7 @@ import {
   testServer,
 } from '../jest';
 import School from '../models/school';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_TENANT,
@@ -50,7 +50,7 @@ describe('Tenant GraphQL', () => {
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let rootServer: ApolloServer | null;
-  let rootUser: LeanDocument<UserDocument> | null;
+  let rootUser: (UserDocument & Id) | null;
   let htmlUrl: string;
   let htmlUrl2: string;
   let logoUrl: string;
@@ -77,6 +77,7 @@ describe('Tenant GraphQL', () => {
     satelliteUrl: expect.toBeOneOf([null, expect.any(String)]),
 
     flaggedWords: expect.any(Array),
+    authServices: expect.any(Array),
 
     remarks: null,
 
@@ -140,7 +141,7 @@ describe('Tenant GraphQL', () => {
       variables: { id: newId, remark: FAKE },
     });
     apolloExpect(addRemarkRes, 'data', {
-      addTenantRemark: { ...expectedRootFormat, ...expectedRemark(rootUser!, FAKE, true) },
+      addTenantRemark: { ...expectedRootFormat, ...expectedRemark(rootUser!._id, FAKE, true) },
     });
 
     // not allow to change code
@@ -169,19 +170,11 @@ describe('Tenant GraphQL', () => {
     // create two fake users
     const users = Array(2)
       .fill(0)
-      .map(
-        (_, idx) =>
-          new User<Partial<UserDocument>>({
-            name: `tenantAdmin (${idx})`,
-            emails: [`tenant-admin-${idx}@${newId}.net`],
-            password: User.genValidPassword(),
-            tenants: [newId],
-          }),
-      );
+      .map((_, idx) => genUser(newId, `tenantAdmin (${idx})`));
     await User.create(users);
 
     // add one admin; and update website, htmlUrl, logoUrl
-    [htmlUrl, logoUrl] = await Promise.all([jestPutObject(rootUser!), jestPutObject(rootUser!)]);
+    [htmlUrl, logoUrl] = await Promise.all([jestPutObject(rootUser!._id), jestPutObject(rootUser!._id)]);
 
     const tenantExtra = {
       admins: idsToString(users),
@@ -226,7 +219,7 @@ describe('Tenant GraphQL', () => {
     });
 
     // update extra (as root), update logoUrl & htmlUrl
-    [htmlUrl2, logoUrl2] = await Promise.all([jestPutObject(rootUser!), jestPutObject(rootUser!)]);
+    [htmlUrl2, logoUrl2] = await Promise.all([jestPutObject(rootUser!._id), jestPutObject(rootUser!._id)]);
     const updateExtraRes3 = await rootServer!.executeOperation({
       query: UPDATE_TENANT_EXTRA,
       variables: { id: newId, tenant: { ...tenantExtra2, htmlUrl: htmlUrl2, logoUrl: logoUrl2 } },

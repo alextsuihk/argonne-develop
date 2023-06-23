@@ -9,8 +9,10 @@ import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import type { ChatDocument } from './chat';
-import type { BaseDocument } from './common';
+import type { BaseDocument, Id } from './common';
 import { baseDefinition } from './common';
+
+export type { Id } from './common';
 
 export interface ChatGroupDocument extends BaseDocument {
   tenant?: string | Types.ObjectId;
@@ -19,9 +21,9 @@ export interface ChatGroupDocument extends BaseDocument {
   membership: string;
   users: (string | Types.ObjectId)[];
   admins: (string | Types.ObjectId)[];
-  chats: (string | Types.ObjectId | ChatDocument)[];
+  marshals: (string | Types.ObjectId)[];
+  chats: (string | Types.ObjectId | (ChatDocument & Id))[];
 
-  adminKey?: string;
   key?: string;
   url?: string;
   logoUrl?: string;
@@ -36,19 +38,21 @@ export const searchableFields = [
   ...searchFields,
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
+
 const chatGroupSchema = new Schema<ChatGroupDocument>(
   {
     ...baseDefinition,
 
-    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant' },
+    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', index: true },
     title: String,
     description: String,
     membership: { type: String, default: CHAT_GROUP.MEMBERSHIP.NORMAL },
     users: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
     admins: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    marshals: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+
     chats: [{ type: Schema.Types.ObjectId, ref: 'Chat' }],
 
-    adminKey: { type: String, index: true },
     key: { type: String, index: true },
     url: String,
     logoUrl: String,

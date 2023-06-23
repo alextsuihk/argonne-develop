@@ -3,30 +3,39 @@
  *
  */
 
-import type { LeanDocument } from 'mongoose';
+import { LOCALE } from '@argonne/common';
 
 import {
+  expectChatFormat,
   expectedIdFormat,
+  expectedMember,
   expectedRemark,
   FAKE,
   FAKE2,
+  genChatGroup,
+  genClassroom,
   genClassroomUsers,
+  genClassroomWithAssignment,
+  genQuestion,
   idsToString,
   jestSetup,
   jestTeardown,
   prob,
 } from '../../jest';
-import Book from '../../models/book';
+import Book, { BookAssignment } from '../../models/book';
+import type { ChatDocument } from '../../models/chat';
 import type { ClassroomDocument } from '../../models/classroom';
 import Classroom from '../../models/classroom';
+import Content from '../../models/content';
 import Level from '../../models/level';
 import Tenant from '../../models/tenant';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
 import { schoolYear, shuffle } from '../../utils/helper';
 import commonTest from './rest-api-test';
 
-const { createUpdateDelete, getMany } = commonTest;
+const { CHAT } = LOCALE.DB_ENUM;
+const { createUpdateDelete, getMany, getUnauthenticated } = commonTest;
 
 const route = 'classrooms';
 
@@ -49,22 +58,22 @@ export const expectedMinFormat = {
   chats: expect.any(Array),
   assignments: expect.any(Array),
 
+  remarks: expect.any(Array), // could be empty array for non publisherAdmin or admin
+
   createdAt: expect.any(String),
   updatedAt: expect.any(String),
+
+  contentsToken: expect.any(String),
 };
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let tenantAdmin: LeanDocument<UserDocument> | null;
-
-  let teacherLevelId: string;
+  let normalUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantId: string | null;
 
   beforeAll(async () => {
-    ({ tenantAdmin, tenantId } = await jestSetup(['tenantAdmin']));
-
-    const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
-    teacherLevelId = teacherLevel!._id.toString();
+    ({ normalUser, tenantAdmin, tenantId } = await jestSetup(['normal', 'tenantAdmin']));
   });
   afterAll(jestTeardown);
 
@@ -74,7 +83,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       'students.0': { $exists: true },
       deletedAt: { $exists: false },
     }).lean();
-    const studentId = classrooms.sort(shuffle)[0]!.students.sort(shuffle)[0]!;
+    const [studentId] = classrooms[Math.floor(Math.random() * classrooms.length)].students.sort(shuffle);
 
     await getMany(route, { 'Jest-User': studentId }, expectedMinFormat, {
       testGetById: true,
@@ -89,7 +98,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       'teachers.0': { $exists: true },
       deletedAt: { $exists: false },
     }).lean();
-    const teacherId = classrooms.sort(shuffle)[0]!.teachers.sort(shuffle)[0]!;
+    const [teacherId] = classrooms[Math.floor(Math.random() * classrooms.length)].teachers.sort(shuffle);
 
     await getMany(route, { 'Jest-User': teacherId }, expectedMinFormat, {
       testGetById: true,
@@ -98,23 +107,154 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     });
   });
 
-  test('should pass the full suite', async () => {
-    expect.assertions(3 * 12 + 1 * 6);
+  test('should fail when accessing as guest', async () => getUnauthenticated(route, {}));
 
-    const [books, tenant] = await Promise.all([
+  test('should pass when attaching chat from another chatGroup', async () => {
+    const { classroom } = await genClassroom(tenantId!, normalUser!._id);
+    const { chatGroup: source, chat, content } = genChatGroup(tenantId!, normalUser!._id);
+    await Promise.all([classroom.save(), source.save(), chat.save(), content.save()]);
+    //! Note: at the point, classroom.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
+
+    await createUpdateDelete<ClassroomDocument & Id>(
+      route,
+      { 'Jest-User': normalUser!._id },
+      [
+        {
+          action: 'attachChatGroup',
+          data: { id: classroom._id.toString(), chatId: chat._id.toString(), sourceId: source._id.toString() },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({
+                ...expectChatFormat,
+                _id: chat._id.toString(),
+                contents: [content._id.toString()],
+              }),
+            ],
+          },
+        },
+      ],
+      { overrideId: classroom._id.toString() },
+    );
+
+    // clean-up (as the documents are only partially formatted)
+
+    await Promise.all([classroom.deleteOne(), source.deleteOne()]);
+  });
+
+  test('should pass when attaching chat from another classroom', async () => {
+    const [{ classroom }, { classroom: source, chat, content }] = await Promise.all([
+      genClassroom(tenantId!, normalUser!._id),
+      genClassroom(tenantId!, normalUser!._id),
+    ]);
+    await Promise.all([classroom.save(), source.save(), chat.save(), content.save()]);
+    //! Note: at the point, classroom.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
+
+    await createUpdateDelete<ClassroomDocument & Id>(
+      route,
+      { 'Jest-User': normalUser!._id },
+      [
+        {
+          action: 'attachClassroom',
+          data: { id: classroom._id.toString(), chatId: chat._id.toString(), sourceId: source._id.toString() },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({
+                ...expectChatFormat,
+                _id: chat._id.toString(),
+                contents: [content._id.toString()],
+              }),
+            ],
+          },
+        },
+      ],
+      { overrideId: classroom._id.toString() },
+    );
+
+    // clean-up (as the documents are only partially formatted)
+    await Promise.all([classroom.deleteOne(), source.deleteOne()]);
+  });
+
+  test('should pass when sharing homework to classroom', async () => {
+    // create a classroom with assignment + homework
+    const { assignment, book, classroom, homework, homeworkContents, assignmentIdx } = await genClassroomWithAssignment(
+      tenantId!,
+      normalUser!._id,
+    );
+
+    await Promise.all([classroom.save(), assignment.save(), homework.save(), Content.create(homeworkContents)]);
+    const bookAssignment = await BookAssignment.findById(book.assignments[assignmentIdx]).lean();
+
+    await createUpdateDelete<ClassroomDocument & Id>(
+      route,
+      { 'Jest-User': normalUser!._id },
+      [
+        {
+          action: 'shareHomework',
+          data: { id: classroom._id.toString(), sourceId: homework._id.toString() },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({
+                ...expectChatFormat,
+                contents: idsToString([bookAssignment!.content, ...idsToString(homeworkContents)]),
+              }),
+            ],
+          },
+        },
+      ],
+      { overrideId: classroom._id.toString() },
+    );
+
+    // clean-up (as the documents are only partially formatted)
+    await Promise.all([classroom.deleteOne(), assignment.deleteOne(), homework.deleteOne()]);
+  });
+
+  test('should pass when sharing question to classroom', async () => {
+    const { classroom } = await genClassroom(tenantId!, normalUser!._id); // create a classroom
+    const { question, content } = genQuestion(tenantId!, normalUser!._id, classroom._id, 'tutor'); // create source question as tutor
+
+    await Promise.all([classroom.save(), question.save(), content.save()]);
+
+    await createUpdateDelete<ClassroomDocument & Id>(
+      route,
+      { 'Jest-User': normalUser!._id },
+      [
+        {
+          action: 'shareQuestion',
+          data: { id: classroom._id.toString(), sourceId: question._id.toString() },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [expect.objectContaining({ ...expectChatFormat, contents: [content._id.toString()] })],
+          },
+        },
+      ],
+      { overrideId: classroom._id.toString() },
+    );
+
+    // clean-up (as the documents are only partially formatted)
+    await Promise.all([classroom.deleteOne(), question.deleteOne()]);
+  });
+
+  test('should pass the full suite', async () => {
+    expect.assertions(3 * (24 - 2));
+
+    const [books, teacherLevel, tenant] = await Promise.all([
       Book.find({ deletedAt: { $exists: false } }).lean(),
+      Level.findOne({ code: 'TEACHER' }).lean(),
       Tenant.findById(tenantId!),
     ]);
 
     const [{ _id: book, subjects, level }] = books.sort(shuffle);
     const [subject] = subjects.sort(shuffle);
-    const schoolClass = `${level.toString().slice(-1)}-A`;
+    const schoolClass = `${level.toString().slice(-1)}-Y`;
 
     const newStudents = genClassroomUsers(tenantId!, tenant!.school!, level, schoolClass, 20);
-    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevelId, schoolClass, 3);
+    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevel!._id.toString(), schoolClass, 3);
     await User.create([...newStudents, ...newTeachers]);
 
-    const [student0, ...students] = newStudents;
+    const [student0, student1, ...students] = newStudents;
     const [teacher0, ...teachers] = newTeachers;
 
     const create = {
@@ -130,7 +270,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const update = { title: FAKE2, room: FAKE2, schedule: FAKE2, books: [book.toString()] };
 
-    const classroom = await createUpdateDelete<ClassroomDocument>(
+    const flag = CHAT.MEMBER.FLAG.IMPORTANT;
+
+    const classroom = await createUpdateDelete<ClassroomDocument & Id>(
       route,
       { 'Jest-User': tenantAdmin!._id },
       [
@@ -140,19 +282,19 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: { ...expectedMinFormat, ...create, tenant: tenantId!, students: [], teachers: [] },
         },
         {
-          action: 'addTeachers', // tenantAdmin add teachers
+          action: 'updateTeachers', // tenantAdmin update teachers
           data: { userIds: [teacher0._id.toString()] },
           expectedMinFormat: { ...expectedMinFormat, students: [], teachers: [teacher0._id.toString()] },
         },
         {
-          action: 'addStudents', // tenantAdmin add teachers
+          action: 'updateStudents', // tenantAdmin update teachers
           data: { userIds: idsToString(students) },
           expectedMinFormat: { ...expectedMinFormat, students: idsToString(students) },
         },
         {
           action: 'addRemark', // tenantAdmin adds remark
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(tenantAdmin!, FAKE) },
+          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(tenantAdmin!._id, FAKE) },
         },
         {
           action: 'addRemark', // teacher could also add remark
@@ -167,7 +309,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           },
         },
         {
-          action: 'addTeachers', // teacher add teachers
+          action: 'updateTeachers', // teacher update teachers
           headers: { 'Jest-User': teacher0!._id },
           data: { userIds: idsToString(teachers) },
           expectedMinFormat: {
@@ -176,21 +318,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           },
         },
         {
-          action: 'addStudents', // teacher add students
+          action: 'updateStudents', // teacher update students
           headers: { 'Jest-User': teacher0!._id },
-          data: { userIds: [student0._id.toString()] },
-          expectedMinFormat: { ...expectedMinFormat, students: [...idsToString(students), student0._id.toString()] },
-        },
-        {
-          action: 'removeStudents', // teacher remove students
-          headers: { 'Jest-User': teacher0!._id },
-          data: { userIds: [student0._id.toString()] },
-          expectedMinFormat: { ...expectedMinFormat, students: idsToString(students) },
-        },
-        {
-          action: 'removeTeachers', // tenantAdmin remove teachers
-          data: { userIds: [teacher0._id.toString()] },
-          expectedMinFormat: { ...expectedMinFormat, teachers: idsToString(teachers) },
+          data: { userIds: [student0._id.toString(), student1._id.toString()] },
+          expectedMinFormat: { ...expectedMinFormat, students: [student0._id.toString(), student1._id.toString()] },
         },
         { action: 'delete', data: {} }, // tenantAdmin remove classroom
         {
@@ -199,23 +330,193 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat,
         },
         {
-          action: 'update', // tenantAdmin update class
+          action: 'update', // tenantAdmin or teacher update class
+          headers: { 'Jest-User': prob(0.5) ? tenantAdmin!._id : teacher0!._id },
           data: { tenantId: tenantId!, ...update },
           expectedMinFormat: { ...expectedMinFormat, ...update },
+        },
+        { action: 'delete', headers: { 'Jest-User': teacher0!._id }, data: {} }, // teacher remove classroom
+        {
+          action: 'recover', // teacher recover (un-delete) classroom
+          headers: { 'Jest-User': teacher0!._id },
+          data: prob(0.5) ? { remark: FAKE } : {},
+          expectedMinFormat,
+        },
+        {
+          action: 'addContentWithNewChat', // teacher addContentWithNewChat
+          headers: { 'Jest-User': teacher0!._id },
+          data: { content: FAKE },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({
+                ...expectChatFormat,
+                contents: [expect.any(String)],
+                ...expectedMember(teacher0._id.toString()),
+              }),
+            ],
+          },
         },
       ],
       { skipAssertion: true, skipDeleteCheck: true },
     );
 
-    // final delete
-    await createUpdateDelete<ClassroomDocument>(
+    const classroomId = classroom!._id.toString();
+    const chatId = (classroom!.chats[0] as ChatDocument & Id)._id.toString();
+
+    const classroom2 = await createUpdateDelete<ClassroomDocument & Id>(
       route,
-      { 'Jest-User': tenantAdmin!._id },
-      [{ action: 'delete', data: {} }],
-      { skipAssertion: true, overrideId: classroom!._id.toString() },
+      { 'Jest-User': student0!._id },
+      [
+        {
+          action: 'addContent', // student addContent
+          data: { chatId, content: FAKE },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
+            ],
+          },
+        },
+        {
+          action: 'addContentWithNewChat', // student addContentWithNewChat
+          data: { content: FAKE },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
+              expect.objectContaining({
+                ...expectChatFormat,
+                contents: [expect.any(String)],
+                ...expectedMember(student0._id.toString()),
+              }),
+            ],
+          },
+        },
+      ],
+      { overrideId: classroomId, skipAssertion: true },
+    );
+
+    const contentIds = (classroom2!.chats[0] as ChatDocument & Id).contents;
+    await createUpdateDelete<ClassroomDocument & Id>(
+      route,
+      { 'Jest-User': teacher0!._id },
+      [
+        {
+          action: 'recallContent', // teacher recall first content of first chat (his owner content)
+          data: { chatId, contentId: contentIds[0] },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
+              expect.objectContaining({
+                ...expectChatFormat,
+                contents: [expect.any(String)],
+                ...expectedMember(student0._id.toString()),
+              }),
+            ],
+          },
+        },
+        {
+          action: 'blockContent', // teacher block second content of first chat (student's content)
+          data: { chatId, contentId: contentIds[1] },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
+              expect.objectContaining({
+                ...expectChatFormat,
+                contents: [expect.any(String)],
+                ...expectedMember(student0._id.toString()),
+              }),
+            ],
+          },
+        },
+        {
+          action: 'setChatFlag', // teacher set chat flag
+          data: { chatId, flag },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({
+                ...expectChatFormat,
+                contents: [expect.any(String), expect.any(String)],
+                members: [
+                  {
+                    _id: expectedIdFormat,
+                    user: teacher0._id.toString(),
+                    flags: [flag],
+                    lastViewedAt: expect.any(String),
+                  },
+                ],
+              }),
+              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+            ],
+          },
+        },
+        {
+          action: 'clearChatFlag', // teacher clear chat flag
+          data: { chatId, flag },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({
+                ...expectChatFormat,
+                contents: [expect.any(String), expect.any(String)],
+                members: [
+                  { _id: expectedIdFormat, user: teacher0._id.toString(), flags: [], lastViewedAt: expect.any(String) },
+                ],
+              }),
+              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+            ],
+          },
+        },
+        {
+          action: 'updateChatLastViewedAt', // student updateChatLastViewedAt
+          headers: { 'Jest-User': student0!._id },
+          data: { chatId },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({
+                ...expectChatFormat,
+                contents: [expect.any(String), expect.any(String)],
+                members: [
+                  { _id: expectedIdFormat, user: teacher0._id.toString(), flags: [], lastViewedAt: expect.any(String) },
+                  { _id: expectedIdFormat, user: student0._id.toString(), flags: [], lastViewedAt: expect.any(String) },
+                ],
+              }),
+              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+            ],
+          },
+        },
+        {
+          action: 'updateChatTitle', // teacher updateChatTitle
+          data: { chatId, title: FAKE },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({ ...expectChatFormat, title: FAKE }),
+              expect.objectContaining(expectChatFormat),
+            ],
+          },
+        },
+        {
+          action: 'updateChatTitle', // teacher updateChatTitle
+          data: { chatId },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [expect.objectContaining(expectChatFormat), expect.objectContaining(expectChatFormat)],
+          },
+        },
+      ],
+      { overrideId: classroomId, skipAssertion: true },
     );
 
     // clean up
-    await User.deleteMany({ _id: { $in: [...newStudents, ...newTeachers] } });
+    await Promise.all([
+      Classroom.deleteOne({ _id: classroom }),
+      User.deleteMany({ _id: { $in: [...newStudents, ...newTeachers] } }),
+    ]);
   });
 });

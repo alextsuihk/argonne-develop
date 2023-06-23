@@ -9,10 +9,9 @@ import type { DocumentSync } from '@argonne/common';
 import { LOCALE, yupSchema } from '@argonne/common';
 import { addSeconds, subDays } from 'date-fns';
 import type { RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { AnnouncementDocument } from '../models/announcement';
+import type { AnnouncementDocument, Id } from '../models/announcement';
 import Announcement from '../models/announcement';
 import type { BookDocument } from '../models/book';
 import Book from '../models/book';
@@ -68,13 +67,16 @@ const create: RequestHandler = async (req, res, next) => {
       throw { statusCode: 400, code: MSG_ENUM.SATELLITE_ERROR, message: 'Satellite Already Initialized' };
 
     let multiplier = 0;
-    const syncJob = async (doc: DocumentSync) =>
-      Job.queue({
+    const syncJob = async (docSync: DocumentSync) => {
+      const doc = Object.fromEntries(Object.entries(docSync).map(([k, v]) => [k, idsToString(v)])); // convert ObjectId[] to string[]
+
+      return Job.queue({
         task: 'sync',
         args: { tenantId: tenant._id.toString(), ...doc },
         startAfter: addSeconds(Date.now(), 5 * multiplier++), // each job will be delay by additional 5 seconds
         priority: 10,
       });
+    };
 
     // TODO: add more document models, refer to packages\common\src\index.ts
     const [
@@ -139,7 +141,7 @@ const create: RequestHandler = async (req, res, next) => {
       typographies.length && syncJob({ typographyIds: idsToString(typographies) }),
       users.length && syncJob({ userIds: idsToString(users) }),
       syncJob({ userIds: [alexId] }),
-      syncJob({ tenantIds: [tutorTenant._id.toString()] }), // last item to send sync update
+      syncJob({ tenantIds: [tutorTenant._id] }), // last item to send sync update
     ]);
 
     res.status(200).json({ code: MSG_ENUM.COMPLETED, tenant });
@@ -195,7 +197,7 @@ const update: RequestHandler = async (req, res, next) => {
     // TODO
 
     // TODO: refer to packages\common\src\index.ts
-    const announcements = req.body.announcements as LeanDocument<AnnouncementDocument>[] | undefined;
+    const announcements = req.body.announcements as (AnnouncementDocument & Id)[] | undefined;
     const announcementUpdates = announcements
       ? announcements.map(async announcement =>
           Announcement.findByIdAndUpdate(
@@ -206,7 +208,7 @@ const update: RequestHandler = async (req, res, next) => {
         )
       : [];
 
-    const books = req.body.books as LeanDocument<BookDocument>[] | undefined;
+    const books = req.body.books as (BookDocument & Id)[] | undefined;
     const bookUpdates = books
       ? books.map(async book =>
           Book.findByIdAndUpdate({ _id: book._id, updatedAt: { $lt: book.updatedAt } }, book, { upsert: true }).lean(),

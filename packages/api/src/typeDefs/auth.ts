@@ -13,12 +13,10 @@ export default gql`
   }
 
   extend type Mutation {
+    addApiKey(scope: String!, note: String, expireAt: DateInput): AuthUser!
+    # addPaymentMethod(): AuthUser! ### TODO
     deregister(password: String!, coordinates: CoordinatesInput, clientHash: String): DeregisterResponse!
-    impersonateStart(
-      impersonatedAsId: String!
-      coordinates: CoordinatesInput
-      clientHash: String
-    ): AuthSuccessfulResponse!
+    impersonateStart(userId: String!, coordinates: CoordinatesInput, clientHash: String): AuthSuccessfulResponse!
     impersonateStop(refreshToken: String!, coordinates: CoordinatesInput): StatusResponse!
     login(
       email: String!
@@ -49,8 +47,8 @@ export default gql`
       coordinates: CoordinatesInput
       clientHash: String
     ): AuthResponse!
-    oAuth2Connect(provider: String!, token: String!, coordinates: CoordinatesInput): User!
-    oAuth2Disconnect(provider: String!, coordinates: CoordinatesInput): User!
+    oAuth2Link(provider: String!, token: String!, coordinates: CoordinatesInput): AuthUser!
+    oAuth2Unlink(provider: String!, coordinates: CoordinatesInput): AuthUser!
     register(
       name: String!
       email: String!
@@ -59,12 +57,25 @@ export default gql`
       coordinates: CoordinatesInput
       clientHash: String
     ): AuthSuccessfulResponse!
+    removeApiKey(id: String!): AuthUser!
+    removePaymentMethod(id: String!): AuthUser!
     renewToken(
       refreshToken: String!
       isPublic: Boolean
       coordinates: CoordinatesInput
       clientHash: String
     ): AuthSuccessfulResponse!
+    updateLocale(locale: String!): AuthUser!
+    updateNetworkStatus(networkStatus: String!): AuthUser!
+    updateUserProfile(
+      name: String!
+      formalName: LocaleInput
+      avatarUrl: String
+      mobile: String
+      whatsapp: String
+      yob: Int
+      dob: DateInput
+    ): AuthUser!
   }
 
   type AuthConflict {
@@ -79,7 +90,7 @@ export default gql`
     refreshToken: String
     refreshTokenExpireAt: Float
     conflict: AuthConflict
-    user: User!
+    user: AuthUser!
   }
 
   type AuthSuccessfulResponse {
@@ -87,7 +98,68 @@ export default gql`
     accessTokenExpireAt: Float!
     refreshToken: String!
     refreshTokenExpireAt: Float!
-    user: User!
+    user: AuthUser!
+  }
+
+  type AuthUser {
+    _id: ID!
+    flags: [String!]!
+
+    tenants: [String!]!
+    status: String!
+    name: String!
+    formalName: Locale
+    emails: [String!]!
+
+    oAuth2s: [String!]!
+    avatarUrl: String
+    mobile: String
+    whatsapp: String
+
+    networkStatus: String
+
+    timezone: String!
+    locale: String!
+
+    darkMode: Boolean!
+    theme: String
+
+    apiKeys: [UserApiKey]
+    roles: [String!]!
+    features: [String!]!
+    scopes: [String!]!
+
+    yob: Int
+    dob: String
+
+    coin: Int!
+    virtualCoin: Int!
+    balanceAuditedAt: Float!
+
+    paymentMethods: [UserPaymentMethod!]!
+    preference: String
+    subscriptions: [UserSubscription!]!
+
+    interests: [String!]!
+    supervisors: [String!]!
+    staffs: [String!]!
+
+    violations: [UserViolation!]!
+    suspension: String
+    expoPushTokens: [String!]!
+
+    creditability: Int!
+    identifiedAt: Float
+
+    studentIds: [String!]!
+    schoolHistories: [UserSchoolHistory]!
+
+    favoriteTutors: [String!]!
+
+    remarks: [Remark!]
+    createdAt: Float!
+    updatedAt: Float!
+    deletedAt: Float
   }
 
   type DeregisterResponse {
@@ -106,5 +178,44 @@ export default gql`
     ip: String!
     ua: String!
     updatedAt: Float!
+  }
+
+  type UserApiKey {
+    scope: String!
+    note: String
+    expireAt: Float!
+  }
+
+  type UserPaymentMethod {
+    currency: String!
+    type: String!
+    bank: String
+    account: String!
+    payable: Boolean!
+    receivable: Boolean!
+  }
+
+  type UserSchoolHistory {
+    year: String!
+    school: String!
+    level: String!
+    schoolClass: String
+    updatedAt: Float!
+  }
+
+  type UserSubscription {
+    token: String!
+    subscription: String!
+    enabled: Boolean!
+    permission: String!
+    ip: String!
+    ua: String!
+  }
+
+  type UserViolation {
+    # TODO
+    createdAt: Float!
+    reason: String!
+    links: [String!]!
   }
 `;

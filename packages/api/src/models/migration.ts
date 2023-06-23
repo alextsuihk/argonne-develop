@@ -10,6 +10,8 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 
+export type { Id } from './common';
+
 export interface MigrationDocument extends Document {
   file: string;
   migratedAt: Date;

@@ -6,7 +6,7 @@
 import 'jest-extended';
 
 import { apolloExpect, ApolloServer, jestSetup, jestTeardown } from '../jest';
-import { GET_SERVER_INFO, PING } from '../queries/system';
+import { GET_SERVER_INFO, GET_SERVER_TIME, PING } from '../queries/system';
 
 // Top system of this test suite:
 describe('System GraphQL', () => {
@@ -39,5 +39,12 @@ describe('System GraphQL', () => {
     expect.assertions(1);
     const res = await guestServer!.executeOperation({ query: PING });
     apolloExpect(res, 'data', { ping: 'pong' });
+  });
+
+  test('should report system time', async () => {
+    expect.assertions(2);
+    const res = await guestServer!.executeOperation({ query: GET_SERVER_TIME });
+    apolloExpect(res, 'data', { serverTime: expect.any(Number) });
+    expect(Math.abs(res.data!.serverTime - Date.now()) < 500).toBeTrue();
   });
 });

@@ -11,8 +11,10 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument } from './common';
 import { baseDefinition } from './common';
 
+export type { Id } from './common';
+
 export interface SchoolCourseDocument extends BaseDocument {
-  status: typeof LOCALE.DB_TYPE.SCHOOL_COURSE.STATUS[number];
+  status: (typeof LOCALE.DB_TYPE.SCHOOL_COURSE.STATUS)[number];
 
   school: string | Types.ObjectId;
   year: string;

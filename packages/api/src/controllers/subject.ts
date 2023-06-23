@@ -5,15 +5,15 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import Level from '../models/level';
-import type { SubjectDocument } from '../models/subject';
+import type { Id, SubjectDocument } from '../models/subject';
 import Subject, { searchableFields } from '../models/subject';
 import { messageToAdmin } from '../utils/chat';
-import syncSatellite from '../utils/sync-satellite';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -23,15 +23,15 @@ const { MSG_ENUM } = LOCALE;
 const { assertUnreachable, auth, DELETED_LOCALE, hubModeOnly, paginateSort, searchFilter, select } = common;
 const { idSchema, querySchema, remarkSchema, removeSchema, subjectSchema } = yupSchema;
 
-const validateInputs = async ({ levels }: { levels: string[] }): Promise<void> => {
-  if (levels.length !== (await Level.countDocuments({ _id: { $in: levels } })))
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+const validateLevel = async (levels: string[]): Promise<void> => {
+  const levelCount = await Level.countDocuments({ _id: { $in: levels } });
+  if (levels.length !== levelCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 };
 
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<SubjectDocument>> => {
+const addRemark = async (req: Request, args: unknown): Promise<SubjectDocument & Id> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -51,11 +51,11 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<Subj
 /**
  * Create
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<SubjectDocument>> => {
+const create = async (req: Request, args: unknown): Promise<SubjectDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { subject: fields } = await subjectSchema.validate(args);
-  await validateInputs(fields);
+  await validateLevel(fields.levels);
 
   const subject = new Subject<Partial<SubjectDocument>>(fields);
   const { _id, name } = subject;
@@ -71,7 +71,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<Subject
     subject.save(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/subjects/${_id}`, 'CREATE', { subject: fields }),
-    syncSatellite({}, { subjectIds: [_id.toString()] }),
+    notifySync('CORE', {}, { subjectIds: [_id] }),
   ]);
 
   return subject;
@@ -91,7 +91,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<SubjectDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<(SubjectDocument & Id)[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<SubjectDocument>(searchableFields, { query });
@@ -122,7 +122,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<SubjectDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<(SubjectDocument & Id) | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<SubjectDocument>(searchableFields, { query }, { _id: id });
@@ -172,7 +172,7 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   await Promise.all([
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/subjects/${id}`, 'DELETE', { remark, original }),
-    syncSatellite({}, { subjectIds: [id] }),
+    notifySync('CORE', {}, { subjectIds: [id] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -194,13 +194,15 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Subject
  */
-const update = async (req: Request, args: unknown): Promise<LeanDocument<SubjectDocument>> => {
+const update = async (req: Request, args: unknown): Promise<SubjectDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { id, subject: fields } = await idSchema.concat(subjectSchema).validate(args);
-  await validateInputs(fields);
 
-  const original = await Subject.findOne({ _id: id, deletedAt: { $exists: false } }).lean();
+  const original = await Promise.all([
+    Subject.findOne({ _id: id, deletedAt: { $exists: false } }).lean(),
+    validateLevel(fields.levels),
+  ]);
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const common = `(ENG): ${fields.name.enUS}, (繁): ${fields.name.zhHK}, (简): ${fields.name.zhCN}) [/subjects/${id}]`;
@@ -214,10 +216,11 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<Subject
     Subject.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/subjects/${id}`, 'UPDATE', { original, update: fields }),
-    syncSatellite({}, { subjectIds: [id] }),
+    notifySync('CORE', {}, { subjectIds: [id] }),
   ]);
-
-  return subject!;
+  if (subject) return subject;
+  log('error', `subjectController:update()`, { id, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

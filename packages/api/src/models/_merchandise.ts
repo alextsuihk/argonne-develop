@@ -15,6 +15,8 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument, Locale } from './common';
 import { baseDefinition, localeDefinition } from './common';
 
+export type { Id } from './common';
+
 export interface MerchandiseDocument extends BaseDocument {
   owner: string | Types.ObjectId;
   name: Locale;

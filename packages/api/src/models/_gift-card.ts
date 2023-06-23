@@ -14,6 +14,8 @@ import configLoader from '../config/config-loader';
 import type { BaseDocument } from './common';
 import { baseDefinition } from './common';
 
+export type { Id } from './common';
+
 export interface GiftCardDocument extends BaseDocument {
   createdBy: string | Types.ObjectId;
   value: number;

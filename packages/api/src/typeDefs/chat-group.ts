@@ -19,15 +19,28 @@ export default gql`
       membership: String!
       logoUrl: String
     ): ChatGroup!
-    addChatGroupAdmins(id: ID!, userIds: [String!]!): ChatGroup!
-    addChatGroupUsers(id: ID!, userIds: [String!]!): ChatGroup!
+    addChatGroupContent(id: ID!, chatId: String!, content: String!, visibleAfter: DateInput): ChatGroup!
+    addChatGroupContentWithNewChat(id: ID!, content: String!, title: String, visibleAfter: DateInput): ChatGroup!
+    attachChatGroupChatToChatGroup(id: ID!, chatId: String!, sourceId: String!): ChatGroup!
+    blockChatGroupContent(id: ID!, chatId: String!, contentId: String!, remark: String): ChatGroup!
+    clearChatGroupChatFlag(id: ID!, chatId: String!, flag: String!): ChatGroup!
     joinChatGroup(id: ID!): ChatGroup!
+    joinBookChatGroup(id: ID!): ChatGroup!
     leaveChatGroup(id: ID!): StatusResponse!
-    removeChatGroupUsers(id: ID!, userIds: [String!]!): ChatGroup!
-    toAlexChatGroup(content: String!): ChatGroup!
-    toAdminChatGroup(content: String!): ChatGroup!
-    toTenantAdminsChatGroup(tenantId: String!, content: String!): ChatGroup!
+    recallChatGroupContent(id: ID!, chatId: String!, contentId: String!): ChatGroup!
+    setChatGroupChatFlag(id: ID!, chatId: String!, flag: String!): ChatGroup!
+    shareQuestionToChatGroup(id: ID!, sourceId: String!): ChatGroup!
     updateChatGroup(id: ID!, title: String, description: String, membership: String!, logoUrl: String): ChatGroup!
+    updateChatGroupAdmins(id: ID!, userIds: [String!]!): ChatGroup!
+    updateChatGroupChatLastViewedAt(id: ID!, chatId: String!, timestamp: DateInput): ChatGroup!
+    updateChatGroupChatTitle(id: ID!, chatId: String!, title: String): ChatGroup!
+    updateChatGroupUsers(id: ID!, userIds: [String!]!): ChatGroup!
+
+    toAdminChatGroup(content: String!): ChatGroup!
+    toAlexChatGroup(content: String!): ChatGroup!
+    toTenantAdminsChatGroup(tenantId: String!, content: String!): ChatGroup!
+    toTenantCounselorsChatGroup(tenantId: String!, content: String!): ChatGroup!
+    toTenantSupportsChatGroup(tenantId: String!, content: String!): ChatGroup!
   }
 
   type ChatGroup {
@@ -39,12 +52,14 @@ export default gql`
     membership: String!
     users: [String!]!
     admins: [String!]!
-    chats: [String!]!
-    adminKey: String
+    marshals: [String!]!
+    chats: [Chat!]!
     key: String
     url: String
     logoUrl: String
     createdAt: Float!
     updatedAt: Float!
+
+    contentsToken: String!
   }
 `;

@@ -7,6 +7,7 @@ import request from 'supertest';
 
 import app from '../../app';
 import configLoader from '../../config/config-loader';
+import { PASSWORD_TOKEN_PREFIX } from '../../controllers/password';
 import { jestSetup, jestTeardown, uniqueTestUser } from '../../jest';
 import User from '../../models/user';
 import token from '../../utils/token';
@@ -89,7 +90,10 @@ describe('Password API Routes', () => {
   test('should pass when confirm password reset with an valid token', async () => {
     expect.assertions(3);
 
-    const resetToken = await token.signEvent(userId, 'password', DEFAULTS.AUTH.PASSWORD_RESET_EXPIRES_IN);
+    const resetToken = await token.signStrings(
+      [PASSWORD_TOKEN_PREFIX, userId],
+      DEFAULTS.AUTH.PASSWORD_RESET_EXPIRES_IN,
+    );
 
     const res = await request(app)
       .post('/api/password/reset-confirm')

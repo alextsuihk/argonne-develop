@@ -6,12 +6,11 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument, Types } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
 import { expectedIdFormat, FAKE, jestSetup, jestTeardown, prob } from '../../jest';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -22,12 +21,13 @@ const route = 'contacts';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUsers: LeanDocument<UserDocument>[] | null;
-  let normalUser: LeanDocument<UserDocument> | null;
+  let normalUsers: (UserDocument & Id)[] | null;
+  let normalUser: (UserDocument & Id) | null;
 
   const expectedMinFormat = {
     _id: expectedIdFormat,
-    avatarUrl: expect.toBeOneOf([null, expect.any(String)]),
+    flags: expect.any(Array),
+    // avatarUrl:  expect.any(String), // could be undefined
     name: expect.any(String),
     status: expect.any(String),
     tenants: expect.arrayContaining([expect.any(String)]),
@@ -41,27 +41,21 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should pass when getMany & getById', async () =>
     getMany(route, { 'Jest-User': normalUser!._id }, expectedMinFormat, {
-      skipMeta: true,
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
     }));
 
   test('should pass when generate token, add contact, and then remove', async () => {
-    // normalUser is auth-user, activeUser is the friend
     expect.assertions(18);
 
-    // remove contact relationship if exists
-    const cleanUp = async (user1Id: string | Types.ObjectId, user2Id: string | Types.ObjectId) =>
-      Promise.all([
-        User.findByIdAndUpdate(user1Id, { $pull: { contacts: { user: user2Id } } }),
-        User.findByIdAndUpdate(user2Id, { $pull: { contacts: { user: user1Id } } }),
-      ]);
+    const userId = normalUser!._id.toString();
 
+    // find an user who not in contacts
+    const myContactIds = normalUser!.contacts.map(c => c.user.toString());
     const friendId = normalUsers!
-      .find(user => user.contacts.map(c => c.user.toString()).includes(normalUser!._id.toString()))!
+      .find(({ _id }) => _id.toString() !== normalUser!._id.toString() && !myContactIds.includes(_id.toString()))!
       ._id.toString();
-    await cleanUp(normalUser!._id, friendId); // this is unnecessary
 
     // create contactToken
     const tokenRes = await request(app)
@@ -74,25 +68,24 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const { token } = tokenRes.body.data;
 
     // add contact
-    const addRes = await request(app).post(`/api/contacts`).send({ token }).set({ 'Jest-User': normalUser!._id });
-    expect(addRes.body).toEqual({ data: expect.objectContaining(expectedMinFormat) });
+    const addRes = await request(app).post(`/api/contacts`).send({ token }).set({ 'Jest-User': userId });
+    expect(addRes.body).toEqual({ data: expect.objectContaining({ ...expectedMinFormat, _id: friendId }) });
     expect(addRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(addRes.status).toBe(201);
 
-    // get my contacts (as JestUser)
-    const jestRes = await request(app).get('/api/contacts').set({ 'Jest-User': normalUser!._id });
-    expect(jestRes.body).toEqual({
-      data: expect.arrayContaining([expect.objectContaining({ ...expectedMinFormat, _id: friendId })]),
+    // get my contacts (as normalUser) [pagination might not show friendId on first page]
+    const contactRes = await request(app).get(`/api/contacts/${friendId}`).set({ 'Jest-User': userId });
+
+    expect(contactRes.body).toEqual({
+      data: expect.objectContaining({ ...expectedMinFormat, _id: friendId }),
     });
-    expect(jestRes.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(jestRes.status).toBe(200);
+    expect(contactRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(contactRes.status).toBe(200);
 
     // get my contacts (as friend)
-    const friendRes = await request(app).get('/api/contacts').set({ 'Jest-User': friendId });
+    const friendRes = await request(app).get(`/api/contacts/${userId}`).set({ 'Jest-User': friendId });
     expect(friendRes.body).toEqual({
-      data: expect.arrayContaining([
-        expect.objectContaining({ ...expectedMinFormat, _id: normalUser!._id.toString() }),
-      ]),
+      data: expect.objectContaining({ ...expectedMinFormat, _id: userId }),
     });
 
     expect(friendRes.header['content-type']).toBe('application/json; charset=utf-8');
@@ -102,19 +95,23 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const updateRes = await request(app)
       .patch(`/api/contacts/${friendId}`)
       .send({ name: FAKE })
-      .set({ 'Jest-User': normalUser!._id });
+      .set({ 'Jest-User': userId });
     expect(updateRes.body).toEqual({
       data: expect.objectContaining({ ...expectedMinFormat, _id: friendId, name: FAKE }),
     });
     expect(updateRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(updateRes.status).toBe(200);
 
-    // delete contact (as JestUser)
-    const removeRes = await request(app).delete(`/api/contacts/${friendId}`).set({ 'Jest-User': normalUser!._id });
+    // delete contact (as normalUser)
+    const removeRes = await request(app).delete(`/api/contacts/${friendId}`).set({ 'Jest-User': userId });
     expect(removeRes.body).toEqual({ data: { code: MSG_ENUM.COMPLETED } });
     expect(removeRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(removeRes.status).toBe(200);
 
-    await cleanUp(normalUser!._id, friendId);
+    // undo the contact relationship
+    await Promise.all([
+      User.updateOne({ _id: userId }, { $pull: { contacts: { user: friendId } } }),
+      User.updateOne({ _id: friendId }, { $pull: { contacts: { user: userId } } }),
+    ]);
   });
 });

@@ -5,6 +5,7 @@
 
 import axios from 'axios';
 import chalk from 'chalk';
+import type { Types } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
@@ -19,7 +20,13 @@ const { instance, pm2 } = config;
 /**
  * Send { msg, optional fields } to Logger Server
  */
-const log = async (level: Level, msg: string, extra?: unknown, user?: string, url?: string): Promise<void> => {
+const log = async (
+  level: Level,
+  msg: string,
+  extra?: unknown,
+  user?: string | Types.ObjectId,
+  url?: string,
+): Promise<void> => {
   try {
     await Promise.all([
       config.loggerApiKey &&

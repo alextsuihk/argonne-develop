@@ -3,11 +3,9 @@
  *
  */
 
-import type { LeanDocument } from 'mongoose';
-
 import { expectedIdFormat, jestSetup, jestTeardown } from '../../jest';
 import Tutor from '../../models/tutor';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { getMany } = commonTest;
@@ -16,7 +14,7 @@ const route = 'tutor-rankings';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let user: LeanDocument<UserDocument> | undefined;
+  let user: (UserDocument & Id) | undefined;
 
   const expectedFormat = {
     _id: expectedIdFormat,

@@ -3,8 +3,6 @@
  *
  */
 
-import type { LeanDocument } from 'mongoose';
-
 import {
   expectedIdFormat,
   expectedLocaleFormat,
@@ -20,7 +18,7 @@ import {
 import type { LevelDocument } from '../../models/level';
 import Level from '../../models/level';
 import type { SubjectDocument } from '../../models/subject';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { createUpdateDelete, getMany } = commonTest;
@@ -29,8 +27,8 @@ const { createUpdateDelete, getMany } = commonTest;
 describe('Subject API Routes', () => {
   const route = 'subjects';
 
-  let adminUser: LeanDocument<UserDocument> | null;
-  let levels: LeanDocument<LevelDocument>[] = [];
+  let adminUser: (UserDocument & Id) | null;
+  let levels: (LevelDocument & Id)[] = [];
 
   // expected MINIMUM single subject format
   const expectedMinFormat = {
@@ -65,7 +63,7 @@ describe('Subject API Routes', () => {
         {
           action: 'addRemark',
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!, FAKE) },
+          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
         },
         {
           action: 'update',

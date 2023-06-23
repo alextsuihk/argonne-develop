@@ -4,7 +4,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import {
   expectedIdFormat,
@@ -25,7 +24,7 @@ import {
 import District from '../../models/district';
 import Level from '../../models/level';
 import type { SchoolDocument } from '../../models/school';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -36,7 +35,7 @@ const route = 'schools';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
   let url: string;
   let url2: string;
 
@@ -64,7 +63,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       Level.find({ code: { $regex: '[S][1-6]' }, deletedAt: { $exists: false } }),
     ]);
 
-    [url, url2] = await Promise.all([jestPutObject(adminUser!), jestPutObject(adminUser!)]);
+    [url, url2] = await Promise.all([jestPutObject(adminUser!._id), jestPutObject(adminUser!._id)]);
 
     const create = {
       code: FAKE,
@@ -89,7 +88,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       levels: idsToString(levels.sort(shuffle).slice(0, 3)),
     };
 
-    await createUpdateDelete<SchoolDocument>(route, { 'Jest-User': adminUser!._id }, [
+    await createUpdateDelete<SchoolDocument & Id>(route, { 'Jest-User': adminUser!._id }, [
       {
         action: 'create',
         data: { ...create, address: FAKE_LOCALE, district: randomId(districts) },
@@ -98,7 +97,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       {
         action: 'addRemark',
         data: { remark: FAKE },
-        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!, FAKE) },
+        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
       },
       {
         action: 'update',

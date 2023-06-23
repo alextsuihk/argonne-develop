@@ -4,8 +4,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
-import mongoose from 'mongoose';
 
 import {
   apolloExpect,
@@ -13,6 +11,7 @@ import {
   expectedIdFormat,
   expectedRemark,
   FAKE,
+  FAKE_ID,
   FAKE2,
   jestSetup,
   jestTeardown,
@@ -24,7 +23,7 @@ import {
 import Level from '../models/level';
 import Subject from '../models/subject';
 import Tutor from '../models/tutor';
-import User, { UserDocument } from '../models/user';
+import User, { Id, UserDocument } from '../models/user';
 import {
   ADD_TUTOR,
   ADD_TUTOR_CREDENTIAL,
@@ -46,8 +45,8 @@ const { QUESTION } = LOCALE.DB_ENUM;
 describe('Tutor GraphQL', () => {
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUsers: LeanDocument<UserDocument>[] | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let normalUsers: (UserDocument & Id)[] | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantAdminServer: ApolloServer | null;
   let tenantId: string | null;
 
@@ -126,7 +125,7 @@ describe('Tutor GraphQL', () => {
     // return empty arrays with nonExistingId
     const nonExistingIdRes = await server.executeOperation({
       query: GET_TUTOR,
-      variables: { id: new mongoose.Types.ObjectId().toString() },
+      variables: { id: FAKE_ID },
     });
     apolloExpect(nonExistingIdRes, 'data', { tutor: null });
   };
@@ -135,13 +134,13 @@ describe('Tutor GraphQL', () => {
     // find an intersection of levels of tutors & normalUsers
     const tutors = await Tutor.find({
       'specialties.level': {
-        $in: normalUsers!.map(user => user.histories[0]?.level.toString()).filter(lvl => !!lvl),
+        $in: normalUsers!.map(user => user.schoolHistories[0]?.level.toString()).filter(lvl => !!lvl),
       },
       deletedAt: { $exists: false },
     }).lean();
     const [{ level }] = tutors.sort(shuffle)[0].specialties.sort(shuffle);
     const student = normalUsers!.find(
-      ({ histories }) => histories[0] && histories[0].level.toString() === level.toString(),
+      ({ schoolHistories }) => schoolHistories[0] && schoolHistories[0].level.toString() === level.toString(),
     );
 
     await getMany(testServer(student!));
@@ -152,7 +151,7 @@ describe('Tutor GraphQL', () => {
     const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
 
     const teacher = normalUsers!.find(
-      ({ histories }) => histories[0]?.level.toString() === teacherLevel!._id.toString(),
+      ({ schoolHistories }) => schoolHistories[0]?.level.toString() === teacherLevel!._id.toString(),
     );
 
     await getMany(testServer(teacher!));
@@ -169,7 +168,7 @@ describe('Tutor GraphQL', () => {
 
     const res2 = await guestServer!.executeOperation({
       query: GET_TUTOR,
-      variables: { id: new mongoose.Types.ObjectId().toString() },
+      variables: { id: FAKE_ID },
     });
     apolloExpect(res2, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
   });
@@ -221,7 +220,7 @@ describe('Tutor GraphQL', () => {
       variables: { id: tutorId, remark: FAKE },
     });
     apolloExpect(addRemarkRes, 'data', {
-      addTutorRemark: { ...expectedFormat, ...expectedRemark(tenantAdmin!, FAKE, true) },
+      addTutorRemark: { ...expectedFormat, ...expectedRemark(tenantAdmin!._id, FAKE, true) },
     });
 
     // tutor addCredential
@@ -326,27 +325,26 @@ describe('Tutor GraphQL', () => {
   test('should fail when adding specialty without lang, level, subject', async () => {
     expect.assertions(3);
 
-    const id = () => new mongoose.Types.ObjectId().toString();
     const [lang] = Object.keys(QUESTION.LANG).sort(shuffle);
 
     // add without lang
     const res1 = await normalServer!.executeOperation({
       query: ADD_TUTOR_SPECIALTY,
-      variables: { id: id(), level: id(), subject: id() },
+      variables: { id: FAKE_ID, level: FAKE_ID, subject: FAKE_ID },
     });
     apolloExpect(res1, 'error', 'Variable "$lang" of required type "String!" was not provided.');
 
     // add without level
     const res2 = await normalServer!.executeOperation({
       query: ADD_TUTOR_SPECIALTY,
-      variables: { id: id(), lang, subject: id() },
+      variables: { id: FAKE_ID, lang, subject: FAKE_ID },
     });
     apolloExpect(res2, 'error', 'Variable "$level" of required type "String!" was not provided.');
 
     // add without subject
     const res3 = await normalServer!.executeOperation({
       query: ADD_TUTOR_SPECIALTY,
-      variables: { id: id(), lang, level: id() },
+      variables: { id: FAKE_ID, lang, level: FAKE_ID },
     });
     apolloExpect(res3, 'error', 'Variable "$subject" of required type "String!" was not provided.');
   });
@@ -354,12 +352,10 @@ describe('Tutor GraphQL', () => {
   test('should fail when adding specialty without AUTH', async () => {
     expect.assertions(1);
 
-    const id = () => new mongoose.Types.ObjectId().toString();
-
     // add a document
     const res = await guestServer!.executeOperation({
       query: ADD_TUTOR_SPECIALTY,
-      variables: { id: id(), lang: FAKE, subject: id(), level: id() },
+      variables: { id: FAKE_ID, lang: FAKE, subject: FAKE_ID, level: FAKE_ID },
     });
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
   });

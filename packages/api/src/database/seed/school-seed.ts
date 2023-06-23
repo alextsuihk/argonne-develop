@@ -24,9 +24,6 @@ const seed = async (): Promise<string> => {
   const getDistrictIdByName = (selectedDistrict: string): string =>
     districts.find(district => Object.values(district.name).includes(selectedDistrict))!._id.toString();
 
-  // TODO:
-  console.log('"school-seed" >>>>>>>>>>>>>>> TODO: number of international schools: ', internationalSchools.length);
-
   // add levels if not specified
   primarySchools.forEach(school => {
     school.levels ||= idsToString(primaryLevels);
@@ -42,13 +39,18 @@ const seed = async (): Promise<string> => {
     ({ district, name, ...rest }) =>
       new School<Partial<SchoolDocument>>({
         district: getDistrictIdByName(district!),
-        name: { ...name, zhCN: name.zhCN ?? convert.tw2cn(name.zhHK) },
+        name: { ...name, zhCN: name.zhCN || convert.tw2cn(name.zhHK) },
         ...rest,
       }),
   );
 
   await School.create(schools);
-  return `(${chalk.green(schools.length)} created)`;
+
+  const intl = internationalSchools.length;
+  const pri = primarySchools.length;
+  const sec = secondarySchools.length;
+  const ter = tertiarySchools.length;
+  return `(${chalk.green(schools.length)} created  ${intl}, ${pri}, ${sec}, ${ter})`;
 };
 
 export { seed };

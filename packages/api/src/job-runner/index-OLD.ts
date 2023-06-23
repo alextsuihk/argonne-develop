@@ -28,7 +28,7 @@ import log from '../utils/log';
 import { notify } from '../utils/messaging';
 import { client as minioClient, privateBucket } from '../utils/storage';
 import questionDispatch from './scripts/question-dispatch';
-import sync from './scripts/sync';
+import sync from './sync';
 
 const { JOB } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
@@ -95,17 +95,11 @@ const downloadAndRun = async (job: JobDocument, scriptUrl: string, mongoDbUrl?: 
       throw 'only support javascript & python script';
     }
 
-    await Promise.all([
-      fsPromises.rm(scriptPath),
-      job.owners?.length && notify(job.owners ?? [], 'JOB', { jobIds: [job._id.toString()] }),
-    ]);
+    await Promise.all([fsPromises.rm(scriptPath), job.owners?.length && notify(job.owners ?? [], 'JOB')]);
 
     return result;
   } catch (error) {
-    await Promise.all([
-      fsPromises.rm(scriptPath),
-      job.owners?.length && notify(job.owners ?? [], 'JOB', { jobIds: [job._id.toString()] }),
-    ]);
+    await Promise.all([fsPromises.rm(scriptPath), job.owners?.length && notify(job.owners ?? [], 'JOB')]);
     throw error;
   }
 };
@@ -138,8 +132,8 @@ const start = async (jobId?: string | Types.ObjectId): Promise<void> => {
     for (const job of runningJobs) {
       if (Date.now() - job.startedAt!.getTime() > job.scriptTimeout)
         job.retry >= DEFAULTS.JOB.RETRY
-          ? await Job.findByIdAndUpdate(job, { status: JOB.STATUS.TIMEOUT, completedAt: new Date() }).lean()
-          : await Job.findByIdAndUpdate(job, { status: JOB.STATUS.QUEUED, $inc: { retry: 1 } }).lean();
+          ? await Job.updateOne(job, { status: JOB.STATUS.TIMEOUT, completedAt: new Date() })
+          : await Job.updateOne(job, { status: JOB.STATUS.QUEUED, $inc: { retry: 1 } });
     }
   }
 
@@ -159,16 +153,16 @@ const start = async (jobId?: string | Types.ObjectId): Promise<void> => {
         if (!Array.isArray(questions) || !questions.length) throw `invalid dispatch questions/${questions}`;
 
         reStartsInMs = await questionDispatch(questions[0]);
-        await Job.findByIdAndUpdate(
+        await Job.updateOne(
           job,
           reStartsInMs
             ? { status: JOB.STATUS.QUEUED, startAfter: addMilliseconds(Date.now(), reStartsInMs) }
             : completed,
-        ).lean();
+        );
       } else if (job.script === 'sync') {
         // sync between hub & satellite
         await Promise.race([sync(job.args), timeout()]);
-        await Job.findByIdAndUpdate(job, completed).lean();
+        await Job.updateOne(job, completed);
       } else if (job.script.startsWith('analytic#')) {
         // run report
         const script = await Script.findById(job.script.replace('analytic#', ''));
@@ -179,14 +173,14 @@ const start = async (jobId?: string | Types.ObjectId): Promise<void> => {
           Math.ceil(script.timeout / 1000),
         );
         await Promise.race([downloadAndRun(job, script.url, mongoDbUrl, url), timeout(script.timeout)]);
-        await Job.findByIdAndUpdate(job, { ...completed, result: { url } }).lean();
+        await Job.updateOne(job, { ...completed, result: { url } });
         console.log(`report result ${job._id}, result URL: ${url}`);
       } else if (job.script.startsWith('generator#') || job.script.startsWith('grader#')) {
         // generate content (e.g. assignment)
         const script = await Script.findById(job.script.replace('generator#', '').replace('grader#', ''));
         if (!script) throw { type: 'report', msg: 'invalid scriptId' };
         const result = await Promise.race([downloadAndRun(job, script.url), timeout(script.timeout)]);
-        await Job.findByIdAndUpdate(job, { ...completed, result }).lean();
+        await Job.updateOne(job, { ...completed, result });
         console.log(`generator result ${job._id} : `, result);
         // TODO: save back to assignment directly. ......
       } else {
@@ -199,19 +193,19 @@ const start = async (jobId?: string | Types.ObjectId): Promise<void> => {
 
         log('warn', `jobId: ${job._id} timeout, retries: ${job.retry} (${job.retry >= DEFAULTS.JOB.RETRY})`);
         job.retry >= DEFAULTS.JOB.RETRY
-          ? await Job.findByIdAndUpdate(job, { status: JOB.STATUS.TIMEOUT, completedAt: new Date() }).lean()
-          : await Job.findByIdAndUpdate(job, {
+          ? await Job.updateOne(job, { status: JOB.STATUS.TIMEOUT, completedAt: new Date() })
+          : await Job.updateOne(job, {
               status: JOB.STATUS.QUEUED,
               $inc: { retry: 1 },
               startAfter: addMilliseconds(new Date(), reStartsInMs),
-            }).lean();
+            });
       } else {
         log('error', `jobId: ${jobId}, message: ${error}`);
-        await Job.findByIdAndUpdate(job, {
+        await Job.updateOne(job, {
           status: JOB.STATUS.ERROR,
           completedAt: new Date(),
           result: { error },
-        }).lean();
+        });
       }
     } finally {
       job = await getNextJob();

@@ -10,7 +10,7 @@ import MobileDetect from 'mobile-detect';
 
 import User from '../models/user';
 import { isStagingMode, isTestMode } from '../utils/environment';
-import { idsToString } from '../utils/helper';
+import { idsToString, latestSchoolHistory } from '../utils/helper';
 import token from '../utils/token';
 
 /**
@@ -28,14 +28,7 @@ export const decodeHeader = async (req: Request, _res: Response, next: NextFunct
       const jestUser = await User.findOneActive({ _id: jestUserId });
 
       if (jestUser) {
-        if (jestUser.histories[0])
-          req.userExtra = {
-            year: jestUser.histories[0].year,
-            school: jestUser.histories[0].school.toString(),
-            level: jestUser.histories[0].level.toString(),
-            ...(jestUser.histories[0].schoolClass && { schoolClass: jestUser.histories[0].schoolClass }),
-          };
-
+        req.userExtra = latestSchoolHistory(jestUser.schoolHistories);
         req.userFlags = jestUser.flags;
         req.userId = jestUserId;
         req.userLocale = jestUser.locale;
@@ -50,7 +43,7 @@ export const decodeHeader = async (req: Request, _res: Response, next: NextFunct
       const apiKey = req.get('x-api-key');
 
       if (authToken) {
-        const decoded = await token.decodeAuth(authToken);
+        const decoded = await token.verifyAuth(authToken);
 
         req.authUserId = decoded.authUserId;
         req.userExtra = decoded.userExtra;
@@ -62,17 +55,11 @@ export const decodeHeader = async (req: Request, _res: Response, next: NextFunct
         req.userScopes = decoded.userScopes;
         req.userTenants = decoded.userTenants;
       } else if (apiKey) {
-        const { userId, scope } = await token.decodeApi(apiKey);
+        const { userId, scope } = await token.verifyApi(apiKey);
         const user = await User.findOneActive({ _id: userId });
 
         if (user?.scopes.includes(scope) || (user && scope === 'systems:r')) {
-          if (user.histories[0])
-            req.userExtra = {
-              year: user.histories[0].year,
-              school: user.histories[0].school.toString(),
-              level: user.histories[0].level.toString(),
-              ...(user.histories[0].schoolClass && { schoolClass: user.histories[0].schoolClass }),
-            };
+          req.userExtra = latestSchoolHistory(user.schoolHistories);
           req.userFlags = user.flags;
           req.userId = user._id.toString();
           req.userLocale = user.locale;

@@ -5,15 +5,15 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
-import type { LevelDocument } from '../models/level';
+import type { Id, LevelDocument } from '../models/level';
 import Level, { searchableFields } from '../models/level';
 import { messageToAdmin } from '../utils/chat';
 import { randomString } from '../utils/helper';
-import syncSatellite from '../utils/sync-satellite';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -26,7 +26,7 @@ const { levelSchema, idSchema, querySchema, remarkSchema, removeSchema } = yupSc
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<LevelDocument>> => {
+const addRemark = async (req: Request, args: unknown): Promise<LevelDocument & Id> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -46,7 +46,7 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<Leve
 /**
  * Create
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<LevelDocument>> => {
+const create = async (req: Request, args: unknown): Promise<LevelDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { level: fields } = await levelSchema.validate(args);
@@ -68,7 +68,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<LevelDo
     level.save(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/levels/${_id}`, 'CREATE', { level: fields }),
-    syncSatellite({}, { levelIds: [_id.toString()] }),
+    notifySync('CORE', {}, { levelIds: [_id] }),
   ]);
 
   return level;
@@ -88,7 +88,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<LevelDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<(LevelDocument & Id)[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<LevelDocument>(searchableFields, { query });
@@ -118,7 +118,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<LevelDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<(LevelDocument & Id) | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<LevelDocument>(searchableFields, { query }, { _id: id });
@@ -168,7 +168,7 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   await Promise.all([
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/levels/${id}`, 'DELETE', { remark, original }),
-    syncSatellite({}, { levelIds: [id] }),
+    notifySync('CORE', {}, { levelIds: [id] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -190,7 +190,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Level
  */
-const update = async (req: Request, args: unknown): Promise<LeanDocument<LevelDocument>> => {
+const update = async (req: Request, args: unknown): Promise<LevelDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const {
@@ -213,10 +213,11 @@ const update = async (req: Request, args: unknown): Promise<LeanDocument<LevelDo
     Level.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
     DatabaseEvent.log(userId, `/levels/${id}`, 'UPDATE', { original, update: fields }),
-    syncSatellite({}, { levelIds: [id] }),
+    notifySync('CORE', {}, { levelIds: [id] }),
   ]);
-
-  return level!;
+  if (level) return level;
+  log('error', `levelController:update()`, { id, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

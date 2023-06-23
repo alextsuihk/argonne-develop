@@ -7,8 +7,8 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import bcrypt from 'bcryptjs';
-import { CookieOptions, Request, RequestHandler, Response } from 'express';
-import type { LeanDocument } from 'mongoose';
+import type { CookieOptions, Request, RequestHandler, Response } from 'express';
+import type { UpdateQuery } from 'mongoose';
 import ms from 'ms';
 
 import configLoader from '../config/config-loader';
@@ -16,27 +16,39 @@ import AuthEvent from '../models/event/auth';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
 import type { TokenDocument } from '../models/token';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import User, { userLoginSelect, userNormalSelect } from '../models/user';
 import socketServer from '../socket-server';
 import authenticateClient from '../utils/authenticate-client';
 import { extract } from '../utils/chat';
 import { idsToString, randomString } from '../utils/helper';
-import { notify } from '../utils/messaging';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import mail from '../utils/sendmail';
 import storage from '../utils/storage';
-import syncSatellite from '../utils/sync-satellite';
 import type { TokensResponseConflict, TokensResponseSuccessful } from '../utils/token';
+import { REFRESH_TOKEN } from '../utils/token';
 import token from '../utils/token';
-import type { OAuthPayload } from './auth-oauth2';
 import oAuth2Decode from './auth-oauth2';
 import type { StatusResponse } from './common';
 import common from './common';
 
-type AuthResponse = { user: LeanDocument<UserDocument> } & (TokensResponseConflict | TokensResponseSuccessful); // response of login or register
-type AuthSuccessfulResponse = { user: LeanDocument<UserDocument> } & TokensResponseSuccessful; // response of login or register
+type AuthResponse = { user: UserDocument & Id } & (TokensResponseConflict | TokensResponseSuccessful); // response of login or register
+type AuthSuccessfulResponse = { user: UserDocument & Id } & TokensResponseSuccessful; // response of login or register
+
+// patch actions
+type Action =
+  | 'addApiKey'
+  | 'addPaymentMethod'
+  | 'oAuth2Link'
+  | 'oAuth2Unlink'
+  | 'removeApiKey'
+  | 'removePaymentMethod'
+  | 'updateLocale'
+  | 'updateNetworkStatus';
 
 type GetAction = 'listSockets' | 'listTokens' | 'loginToken';
+
 type PostAction =
   | 'deregister'
   | 'impersonateStart'
@@ -47,31 +59,37 @@ type PostAction =
   | 'logout'
   | 'logoutOthers'
   | 'oAuth2'
-  | 'oAuth2Connect'
-  | 'oAuth2Disconnect'
   | 'register'
   | 'renewToken';
 
 const { MSG_ENUM } = LOCALE;
-const { USER } = LOCALE.DB_ENUM;
+const { SYSTEM, USER } = LOCALE.DB_ENUM;
 const { assertUnreachable, auth, authGetUser, hubModeOnly, guest, isAdmin, isRoot } = common;
 const {
   deregisterSchema,
+  idSchema,
   impersonateSchema,
   loginSchema,
   loginWithStudentIdSchema,
-  oAuth2DisconnectSchema,
+  loginWithTokenSchema,
+  oAuth2UnlinkSchema,
   oAuth2Schema,
   optionalExpiresInSchema,
   refreshTokenSchema,
   registerSchema,
   renewTokenSchema,
   tenantIdSchema,
-  tokenSchema,
+  userApiKeySchema,
   userIdSchema,
+  userLocaleSchema,
+  userNetworkStatusSchema,
+  userPaymentMethodsSchema,
+  userProfileSchema,
 } = yupSchema;
 
 const { DEFAULTS } = configLoader;
+
+const LOGIN_TOKEN_PREFIX = 'LOGIN';
 
 const JWT_COOKIE = 'jwt';
 const cookieOptions: CookieOptions = {
@@ -80,12 +98,25 @@ const cookieOptions: CookieOptions = {
 };
 
 /**
+ * (helper) login message
+ */
+const loginMsg = (ip: string) => ({
+  enUS: `You are being logged in from IP (${ip}).`,
+  zhCN: `您正在从 IP (${ip}) 登入。`,
+  zhHK: `您正在從 IP (${ip}) 登錄。`,
+});
+
+/**
  * Clear expired user.suspension
  * ! note: user document might contain subset of fields
  */
-const clearExpiredUserSuspension = async (user: LeanDocument<UserDocument>): Promise<LeanDocument<UserDocument>> =>
+const clearExpiredUserSuspension = async (user: UserDocument & Id): Promise<UserDocument & Id> =>
   user.suspension && user.suspension < new Date()
-    ? User.findByIdAndUpdate(user, { $unset: { suspension: 1 } }, { fields: userNormalSelect, new: true }).lean()
+    ? (await User.findByIdAndUpdate(
+        user,
+        { $unset: { suspension: 1 } },
+        { fields: userNormalSelect, new: true },
+      ).lean())!
     : user;
 
 /**
@@ -95,31 +126,36 @@ const clearExpiredUserSuspension = async (user: LeanDocument<UserDocument>): Pro
  */
 const deregister = async (req: Request, res: Response, args: unknown): Promise<StatusResponse & { days: number }> => {
   hubModeOnly();
-  const user = await authGetUser(req);
-  const { password, coordinates, clientHash } = await deregisterSchema.validate(args);
-  await authenticateClient(clientHash);
+  const [user, { password, coordinates, clientHash }] = await Promise.all([
+    authGetUser(req),
+    deregisterSchema.validate(args),
+  ]);
+  const [isPasswordMatched] = await Promise.all([
+    bcrypt.compare(password, user.password),
+    authenticateClient(clientHash),
+  ]);
 
   // NOT allow to deregister under impersonated, or as a tenanted-user, or user is root
   if (req.authUserId || user.tenants.length > 2 || isRoot(user.roles))
     throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
   // check if password is correct
-  if (!(await bcrypt.compare(password, user.password)))
-    throw { statusCode: 401, code: MSG_ENUM.AUTH_CREDENTIALS_ERROR };
+  if (!isPasswordMatched) throw { statusCode: 401, code: MSG_ENUM.AUTH_CREDENTIALS_ERROR };
 
   await Promise.all([
     token.revokeAll(user._id),
-    User.findByIdAndUpdate(user, {
+    User.updateOne(user, {
       status: USER.STATUS.DELETED,
       password: `${randomString()}:::${randomString()}`,
       oAuth2: [], // clear out OAuth providers
       deletedAt: new Date(),
       emails: user.emails.map(email => `${email}@@${Date.now()}`), // make the email(s) invalid format
       tokens: [],
-    }).lean(),
+    }),
     User.updateMany({ _id: { $in: user.contacts.map(c => c.user) } }, { $pull: { contacts: { user: user._id } } }),
     User.updateMany({ _id: { $in: user.supervisors } }, { $pull: { staffs: user._id } }),
     AuthEvent.log(user._id, 'deregister', req.ua, req.ip, coordinates),
+    notifySync('RENEW-TOKEN', { userIds: [user] }, { userIds: [user] }), // force other clients to renew (logout)
   ]);
 
   res.clearCookie(JWT_COOKIE);
@@ -131,26 +167,37 @@ const deregister = async (req: Request, res: Response, args: unknown): Promise<S
  * ! TODO: not yet tested
  * ! TODO: root could impersonate anyone
  */
-const impersonateStart = async (req: Request, args: unknown): Promise<AuthSuccessfulResponse> => {
+const impersonateStart = async (req: Request, res: Response, args: unknown): Promise<AuthSuccessfulResponse> => {
   const { userId, authUserId } = auth(req);
-  const user = await authGetUser(req);
-  const { impersonatedAsId, coordinates, clientHash } = await impersonateSchema.validate(args);
-  await authenticateClient(clientHash);
+  const [user, { userId: impersonatedAsId, coordinates, clientHash }] = await Promise.all([
+    authGetUser(req),
+    impersonateSchema.validate(args),
+  ]);
+
+  const [impersonatedUser] = await Promise.all([
+    User.findOneActive({ _id: impersonatedAsId }, userNormalSelect),
+    authenticateClient(clientHash),
+  ]);
 
   // nested impersonation is NOT allowed, and only admin & parent could impersonate
   if (req.isMobile || authUserId || (!isAdmin(user.roles) && !user.staffs.includes(impersonatedAsId)))
     throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
-  const impersonatedUser = await User.findOneActive({ _id: impersonatedAsId }, userNormalSelect);
   if (!impersonatedUser) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   // NO ONE could impersonate ROOT
-  if (isRoot(impersonatedUser.roles)) {
-    const remark = `NOT allow impersonating ${impersonatedUser._id} (because of ROOT)`;
+  let remark = isRoot(impersonatedUser.roles)
+    ? `NOT allow impersonating ${impersonatedUser._id} (because of impersonated user is ROOT)`
+    : !isAdmin(user.roles) && !idsToString(impersonatedUser.supervisors).includes(userId)
+    ? `NOT allow impersonating ${impersonatedUser._id} (not supervisors)`
+    : null;
+
+  if (remark) {
     await AuthEvent.log(userId, 'impersonateStart', req.ua, req.ip, coordinates, remark);
     throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
   }
-  const remark = `${userId} starts impersonating ${impersonatedUser._id}`;
+
+  remark = `${userId} starts impersonating ${impersonatedUser._id}`;
   const tokensResponse = await token.generate(impersonatedUser, {
     authUserId: userId,
     force: true,
@@ -158,28 +205,40 @@ const impersonateStart = async (req: Request, args: unknown): Promise<AuthSucces
     ua: req.ua,
   });
 
-  const msg = {
-    enUS: `You are being impersonated by ${user.name} (IP: ${req.ip}).`,
-    zhCN: `${user.name} 使用你身份登入。(IP: ${req.ip}).`,
-    zhHK: `${user.name} 使用伙身份登錄。(IP: ${req.ip}).`,
-  };
   await Promise.all([
     AuthEvent.log(userId, 'impersonateStart', req.ua, req.ip, coordinates, remark),
     AuthEvent.log(impersonatedUser._id, 'impersonateStart', req.ua, req.ip, coordinates, remark),
-    notify([impersonatedUser._id], 'IMPERSONATION', { msg: extract(msg, impersonatedUser.locale) }),
+    notifySync(
+      'IMPERSONATION',
+      { userIds: [impersonatedUser] },
+      {},
+      {
+        msg: extract(
+          {
+            enUS: `You are being impersonated by ${name} (IP: ${req.ip}).`,
+            zhCN: `${name} 使用你身份登入。(IP: ${req.ip}).`,
+            zhHK: `${name} 使用伙身份登錄。(IP: ${req.ip}).`,
+          },
+          impersonatedUser.locale,
+        ),
+      },
+    ), // notify user who is being impersonated
+    notifySync('LOAD-AUTH', { userIds: [userId] }, {}), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
+  res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
   return { ...tokensResponse, user: impersonatedUser };
 };
 
 /**
  * Stop Impersonation
  * ! TODO: not yet tested
- * destroy impersonation JWT token
+ * destroy impersonation JWT token (user should renew original refreshToken)
  */
-const impersonateStop = async (req: Request, args: unknown): Promise<StatusResponse> => {
+const impersonateStop = async (req: Request, res: Response, args: unknown): Promise<StatusResponse> => {
   const { userId, authUserId } = auth(req);
-  const { refreshToken, coordinates } = await refreshTokenSchema.validate(args);
+  const { refreshToken, coordinates, clientHash } = await refreshTokenSchema.validate(args);
+  await authenticateClient(clientHash);
 
   if (!authUserId) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
@@ -188,8 +247,10 @@ const impersonateStop = async (req: Request, args: unknown): Promise<StatusRespo
     token.revokeCurrent(userId, refreshToken),
     AuthEvent.log(userId, 'impersonateStop', req.ua, req.ip, coordinates, remark),
     AuthEvent.log(authUserId, 'impersonateStop', req.ua, req.ip, coordinates, remark),
+    notifySync('LOAD-AUTH', { userIds: [userId] }, {}), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
+  res.clearCookie(JWT_COOKIE);
   return { code: MSG_ENUM.COMPLETED };
 };
 
@@ -216,29 +277,28 @@ const login = async (req: Request, res: Response, args: unknown): Promise<AuthRe
   hubModeOnly();
   guest(req);
   const { email, password, isPublic, force, coordinates, clientHash } = await loginSchema.validate(args);
-  await authenticateClient(clientHash);
 
   // accept verified (lower-cased) & unverified email (upper-cased)
-  const user = await User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, userLoginSelect);
+  const [user] = await Promise.all([
+    User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, userLoginSelect),
+    authenticateClient(clientHash),
+  ]);
 
   // check if password is correct
   if (!user || !(await bcrypt.compare(password, user.password)))
     throw { statusCode: 401, code: MSG_ENUM.AUTH_CREDENTIALS_ERROR };
 
-  const msg = {
-    enUS: `You are being logged in from IP (${req.ip}).`,
-    zhCN: `您正在从 IP (${req.ip}) 登入。`,
-    zhHK: `您正在從 IP (${req.ip}) 登錄。`,
-  };
   const [tokensResponse, updatedUser] = await Promise.all([
     token.generate(user, { isPublic, force, ip: req.ip, ua: req.ua }),
     clearExpiredUserSuspension(user),
     AuthEvent.log(user._id, 'login', req.ua, req.ip, coordinates),
-    notify([user._id], 'LOGIN', { msg: extract(msg, user.locale) }),
+    notifySync('LOGIN', { userIds: [user] }, {}, { msg: extract(loginMsg(req.ip), user.locale) }),
   ]);
 
   updatedUser.password = '*'.repeat(password.length); // remove password information
-  if ('accessToken' in tokensResponse) res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
+  'accessToken' in tokensResponse
+    ? res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions) // update cookie only for successful token
+    : res.clearCookie(JWT_COOKIE);
   return { ...tokensResponse, user: updatedUser };
 };
 
@@ -260,34 +320,31 @@ const login = async (req: Request, res: Response, args: unknown): Promise<AuthRe
  */
 const loginWithStudentId = async (req: Request, res: Response, args: unknown): Promise<AuthResponse> => {
   guest(req);
-  const { studentId, password, isPublic, force, coordinates, clientHash, tenantId } =
+  const { tenantId, studentId, password, isPublic, force, coordinates, clientHash } =
     await loginWithStudentIdSchema.validate(args);
 
-  const [tenant] = await Promise.all([Tenant.findByTenantId(tenantId), authenticateClient(clientHash)]);
+  const [user, tenant] = await Promise.all([
+    User.findOneActive({ 'tenants.0': tenantId, studentIds: `${tenantId}#${studentId}` }, userLoginSelect),
+    Tenant.findByTenantId(tenantId),
+    authenticateClient(clientHash),
+  ]);
   if (!tenant.school) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const user = await User.findOneActive(
-    { tenants: tenantId, studentIds: `${tenantId}#${studentId}`, school: tenant.school },
-    userLoginSelect,
-  );
 
   // check if password is correct
   if (!user || !(await bcrypt.compare(password, user.password)))
     throw { statusCode: 401, code: MSG_ENUM.AUTH_CREDENTIALS_ERROR };
 
-  const msg = {
-    enUS: `You are being logged in from IP (${req.ip}).`,
-    zhCN: `您正在从 IP (${req.ip}) 登入。`,
-    zhHK: `您正在從 IP (${req.ip}) 登錄。`,
-  };
   const [tokensResponse, updatedUser] = await Promise.all([
     token.generate(user, { isPublic, force, ip: req.ip, ua: req.ua }),
     clearExpiredUserSuspension(user),
     AuthEvent.log(user._id, 'login', req.ua, req.ip, coordinates),
-    notify([user._id], 'LOGIN', { msg: extract(msg, user.locale) }),
+    notifySync('LOGIN', { userIds: [user] }, {}, { msg: extract(loginMsg(req.ip), user.locale) }),
   ]);
 
-  if ('accessToken' in tokensResponse) res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
+  updatedUser.password = '*'.repeat(password.length); // remove password information
+  'accessToken' in tokensResponse
+    ? res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions) // update cookie only for successful token
+    : res.clearCookie(JWT_COOKIE);
   updatedUser.password = '*'.repeat(password.length); // remove password information
   return { ...tokensResponse, user: updatedUser };
 };
@@ -315,8 +372,8 @@ const loginToken = async (req: Request, _res: Response, args: unknown): Promise<
   if (!tenant.school) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
   const [loginToken] = await Promise.all([
-    token.signEvent(userId, 'login', expiresIn),
-    DatabaseEvent.log(tenantAdminId, `/users/${userId}`, 'loginToken', { user: userId }),
+    token.signStrings([LOGIN_TOKEN_PREFIX, userId], expiresIn),
+    DatabaseEvent.log(tenantAdminId, `/users/${userId}`, 'loginToken', { user: userId, tenantAdminId }),
   ]);
 
   return loginToken;
@@ -327,8 +384,9 @@ const loginToken = async (req: Request, _res: Response, args: unknown): Promise<
  */
 const loginWithToken = async (req: Request, res: Response, args: unknown): Promise<AuthResponse> => {
   guest(req);
-  const { token: loginToken } = await tokenSchema.validate(args);
-  const { id: userId } = await token.verifyEvent(loginToken, 'login');
+  const { token: loginToken, coordinates, clientHash } = await loginWithTokenSchema.validate(args);
+  const [[prefix, userId]] = await Promise.all([token.verifyStrings(loginToken), authenticateClient(clientHash)]);
+  if (prefix !== LOGIN_TOKEN_PREFIX || !userId) throw { statusCode: 422, code: MSG_ENUM.TOKEN_ERROR };
 
   const user = await User.findOneActive({ _id: userId }, userNormalSelect);
   if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
@@ -336,7 +394,8 @@ const loginWithToken = async (req: Request, res: Response, args: unknown): Promi
   const [tokensResponse, updatedUser] = await Promise.all([
     token.generate(user, { isPublic: true, force: true, ip: req.ip, ua: req.ua }),
     clearExpiredUserSuspension(user),
-    AuthEvent.log(user._id, 'loginToken', req.ua, req.ip, null),
+    AuthEvent.log(user._id, 'loginToken', req.ua, req.ip, coordinates),
+    notifySync('LOGIN', { userIds: [user] }, {}, { msg: extract(loginMsg(req.ip), user.locale) }),
   ]);
 
   res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
@@ -349,11 +408,13 @@ const loginWithToken = async (req: Request, res: Response, args: unknown): Promi
  */
 const logout = async (req: Request, res: Response, args: unknown): Promise<StatusResponse> => {
   const { userId } = auth(req);
-  const { refreshToken, coordinates } = await refreshTokenSchema.validate(args);
+  const { refreshToken, coordinates, clientHash } = await refreshTokenSchema.validate(args);
+  await authenticateClient(clientHash);
 
   await Promise.all([
     token.revokeCurrent(userId, refreshToken),
     AuthEvent.log(userId, 'logout', req.ua, req.ip, coordinates),
+    notifySync('LOAD-AUTH', { userIds: [userId] }, {}), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
   res.clearCookie(JWT_COOKIE);
@@ -366,11 +427,13 @@ const logout = async (req: Request, res: Response, args: unknown): Promise<Statu
  */
 const logoutOther = async (req: Request, args: unknown): Promise<StatusResponse & { count: number }> => {
   const { userId } = auth(req);
-  const { refreshToken, coordinates } = await refreshTokenSchema.validate(args);
+  const { refreshToken, coordinates, clientHash } = await refreshTokenSchema.validate(args);
+  await authenticateClient(clientHash);
 
   const [revokedCount] = await Promise.all([
     token.revokeOthers(userId, refreshToken),
     AuthEvent.log(userId, 'logoutOther', req.ua, req.ip, coordinates),
+    notifySync('RENEW-TOKEN', { userIds: [userId] }, {}), // force other clients to renew (logout)
   ]);
 
   return { code: MSG_ENUM.COMPLETED, count: revokedCount };
@@ -378,49 +441,33 @@ const logoutOther = async (req: Request, args: unknown): Promise<StatusResponse 
 
 /**
  * Register or Login with OAuth
+ * note: only
  */
-const oAuth2 = async (req: Request, args: unknown): Promise<AuthResponse> => {
+const oAuth2 = async (req: Request, res: Response, args: unknown): Promise<AuthResponse> => {
   hubModeOnly();
   guest(req);
   const { provider, code, isPublic, force, coordinates, clientHash } = await oAuth2Schema.validate(args);
-  await authenticateClient(clientHash);
-
-  let oAuthPayload: OAuthPayload;
-  switch (provider) {
-    case USER.OAUTH2.PROVIDER.FACEBOOK:
-    case USER.OAUTH2.PROVIDER.GITHUB:
-      throw { statusCode: 999, code: MSG_ENUM.WIP };
-    case USER.OAUTH2.PROVIDER.GOOGLE:
-      oAuthPayload = await oAuth2Decode.google(code);
-      break;
-    default:
-      throw { statusCode: 401, code: MSG_ENUM.OAUTH2_UNSUPPORTED_PROVIDER };
-  }
-
-  // for register or login
+  const [oAuthPayload] = await Promise.all([oAuth2Decode(code, provider), authenticateClient(clientHash)]);
 
   const oAuthId = `${provider}#${oAuthPayload.subId}`;
   const existingUser = await User.findOneActive({ oAuth2s: oAuthId }, userNormalSelect);
 
   // login if user exists
   if (existingUser) {
-    const msg = {
-      enUS: `You are being logged in from IP (${req.ip}).`,
-      zhCN: `您正在从 IP (${req.ip}) 登入。`,
-      zhHK: `您正在從 IP (${req.ip}) 登錄。`,
-    };
     const [tokensResponse, updatedUser] = await Promise.all([
       token.generate(existingUser, { isPublic, force, ip: req.ip, ua: req.ua }),
       clearExpiredUserSuspension(existingUser),
       AuthEvent.log(existingUser._id, 'oauth', req.ua, req.ip, coordinates, `oauth login ${oAuthId}`),
-      syncSatellite({ userIds: [existingUser._id.toString()] }, { userIds: [existingUser._id.toString()] }),
-      notify([existingUser._id], 'LOGIN', { msg: extract(msg, existingUser.locale) }),
+      notifySync('LOGIN', { userIds: [existingUser] }, {}, { msg: extract(loginMsg(req.ip), existingUser.locale) }),
     ]);
+
+    'accessToken' in tokensResponse
+      ? res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions) // update cookie only for successful token
+      : res.clearCookie(JWT_COOKIE);
     return { ...tokensResponse, user: updatedUser };
   }
 
   // otherwise, try to register
-  hubModeOnly();
   const isOAuthTaken = await User.exists({ oAuth2s: oAuthId });
   if (isOAuthTaken) throw { statusCode: 400, code: MSG_ENUM.AUTH_OAUTH_ALREADY_REGISTERED };
 
@@ -437,68 +484,63 @@ const oAuth2 = async (req: Request, args: unknown): Promise<AuthResponse> => {
   await createdUser.save();
 
   const [tokensResponse, registeredUser] = await Promise.all([
-    token.generate(createdUser, { isPublic, force, ip: req.ip, ua: req.ua }),
+    token.generate(createdUser, { isPublic, force: true, ip: req.ip, ua: req.ua }),
     User.findOneActive({ _id: createdUser }, userNormalSelect), // read back with proper selected fields
     AuthEvent.log(createdUser._id, 'oauth', req.ua, req.ip, coordinates, `oauth register ${oAuthId}`),
-    syncSatellite({ userIds: [createdUser._id.toString()] }, { userIds: [createdUser._id.toString()] }),
   ]);
 
+  res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
   return { ...tokensResponse, user: registeredUser! };
 };
 
 /**
  * Connect OAuth2
  */
-const oAuth2Connect = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
+const oAuth2Link = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
   hubModeOnly();
-  const { provider, code, coordinates } = await oAuth2Schema.validate(args);
-
-  let oAuthPayload: OAuthPayload;
-  switch (provider) {
-    case USER.OAUTH2.PROVIDER.FACEBOOK:
-    case USER.OAUTH2.PROVIDER.GITHUB:
-      throw { statusCode: 999, code: MSG_ENUM.WIP };
-    case USER.OAUTH2.PROVIDER.GOOGLE:
-      oAuthPayload = await oAuth2Decode.google(code);
-      break;
-    default:
-      throw { statusCode: 401, code: MSG_ENUM.OAUTH2_UNSUPPORTED_PROVIDER };
-  }
-
-  // update user document
-  const oAuthId = `${provider}#${oAuthPayload.subId}`;
   const { userId } = auth(req);
-  const [user, oAuthTaken] = await Promise.all([
-    User.findOneActive({ _id: userId, oAuth2s: { $ne: oAuthId } }),
-    User.exists({ _id: { $ne: userId }, oAuth2s: oAuthId }),
+  const { provider, code, coordinates, clientHash } = await oAuth2Schema.validate(args);
+
+  const [user, oAuthPayload] = await Promise.all([
+    authGetUser(req),
+    oAuth2Decode(code, provider),
+    authenticateClient(clientHash),
   ]);
+  const oAuthId = `${provider}#${oAuthPayload.subId}`;
+  const isOAuthTaken = await User.exists({ _id: { $ne: userId }, oAuth2s: oAuthId });
 
-  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // oAuth already set
-  if (oAuthTaken) throw { statusCode: 400, code: MSG_ENUM.AUTH_OAUTH_ALREADY_REGISTERED };
+  if (!user.oAuth2s.includes(oAuthId)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // oAuth already set
+  if (isOAuthTaken) throw { statusCode: 400, code: MSG_ENUM.AUTH_OAUTH_ALREADY_REGISTERED };
 
-  // also try to verify emails
-  const updatedEmails = !!oAuthPayload.email && {
-    emails: Array.from(
-      new Set([
-        ...user.emails.map(email =>
-          email.toLowerCase() === oAuthPayload.email?.toLowerCase() ? email.toLowerCase() : email,
-        ),
-        oAuthPayload.email.toLowerCase(),
-      ]),
-    ),
-  };
-
-  // download avatar from extenal URL to localStorage
-  const updateAvatarUrl = !user.avatarUrl &&
-    !!oAuthPayload.avatarUrl && { avatarUrl: await storage.fetchToLocal(oAuthPayload.avatarUrl) };
+  // download avatar from external URL to localStorage
+  const avatarUrl =
+    !user.avatarUrl && oAuthPayload.avatarUrl ? await storage.fetchToLocal(oAuthPayload.avatarUrl) : null;
 
   const [updatedUser] = await Promise.all([
     User.findByIdAndUpdate(
-      user,
-      { ...updatedEmails, ...updateAvatarUrl, $push: { oAuth2s: oAuthId } },
+      userId,
+      {
+        ...(oAuthPayload.email && {
+          emails: Array.from(
+            new Set([
+              ...user.emails.map(
+                email => (email.toLowerCase() === oAuthPayload.email?.toLowerCase() ? email.toLowerCase() : email), // verify email
+              ),
+              oAuthPayload.email.toLowerCase(),
+            ]),
+          ),
+        }),
+        ...(avatarUrl && { avatarUrl }),
+        $push: { oAuth2s: oAuthId },
+      },
       { fields: userNormalSelect, new: true },
     ).lean(),
-    AuthEvent.log(user._id, 'oauthConnect', req.ua, req.ip, coordinates, `oAuthId: ${oAuthId}`),
+    AuthEvent.log(userId, 'oauthConnect', req.ua, req.ip, coordinates, `oAuthId: ${oAuthId}`),
+    notifySync(
+      'RENEW-TOKEN',
+      { userIds: [userId] },
+      { userIds: [userId], ...(avatarUrl && { minioAddItems: [avatarUrl] }) },
+    ),
   ]);
   return updatedUser!;
 };
@@ -506,10 +548,11 @@ const oAuth2Connect = async (req: Request, args: unknown): Promise<LeanDocument<
 /**
  * Disconnect OAuth2
  */
-const oAuth2Disconnect = async (req: Request, args: unknown): Promise<LeanDocument<UserDocument>> => {
+const oAuth2Unlink = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
   hubModeOnly();
   const { userId } = auth(req);
-  const { oAuthId, coordinates } = await oAuth2DisconnectSchema.validate(args);
+  const { oAuthId, coordinates, clientHash } = await oAuth2UnlinkSchema.validate(args);
+  await authenticateClient(clientHash);
 
   const user = await User.findOneAndUpdate(
     { _id: userId, oAuth2s: oAuthId },
@@ -518,7 +561,10 @@ const oAuth2Disconnect = async (req: Request, args: unknown): Promise<LeanDocume
   ).lean();
   if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await AuthEvent.log(userId, 'oauthDisconnect', req.ua, req.ip, coordinates, `oAuthId: ${oAuthId}`);
+  await Promise.all([
+    AuthEvent.log(userId, 'oauthDisconnect', req.ua, req.ip, coordinates, `oAuthId: ${oAuthId}`),
+    notifySync('RENEW-TOKEN', { userIds: [userId] }, { userIds: [userId] }),
+  ]);
 
   return user;
 };
@@ -530,10 +576,13 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
   hubModeOnly();
   guest(req);
   const { name, email, password, isPublic, coordinates, clientHash } = await registerSchema.validate(args);
-  await authenticateClient(clientHash);
 
   // check if email already exists
-  const existingUser = await User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, '_id'); // check if either lowerCase() or upperCase() email is taken
+  const [existingUser] = await Promise.all([
+    User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, '_id'), // check if either lowerCase() or upperCase() email is taken
+    authenticateClient(clientHash),
+  ]);
+
   if (existingUser) throw { statusCode: 400, code: MSG_ENUM.AUTH_EMAIL_ALREADY_REGISTERED };
 
   // create a new user & store into database, password encryption is achieved in model hook
@@ -553,8 +602,13 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
     AuthEvent.log(createdUser._id, 'register', req.ua, req.ip, coordinates),
   ]);
 
+  if (!createdUserReadBack) {
+    log('error', `questionController:register()`, { id: createdUser._id.toString() });
+    throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+  }
+
   res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
-  return { ...tokensResponse, user: createdUserReadBack! };
+  return { ...tokensResponse, user: createdUserReadBack };
 };
 
 // const registerRestApi: RequestHandler = async (req, res, next) => {
@@ -571,15 +625,16 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
 
 /**
  * Renew Tokens (access & refresh)
- * generate a new access token (& and possibly reload updated user profile)
+ * generate (access & refresh) tokens & updated userProfile (note: accessToken is not needed, possibly expired)
  */
 const renewToken = async (req: Request, res: Response, args: unknown): Promise<AuthSuccessfulResponse> => {
   const { refreshToken, isPublic, coordinates, clientHash } = await renewTokenSchema.validate(args);
-  await authenticateClient(clientHash);
-  const { userId } = await token.verify<{ userId?: string }>(refreshToken);
+
+  const [[prefix, userId]] = await Promise.all([token.verifyStrings(refreshToken), authenticateClient(clientHash)]);
+  if (prefix !== REFRESH_TOKEN || !userId) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 
   const user = await User.findOneActive({ _id: userId }, userNormalSelect);
-  if (!userId || !user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const tokensResponse = await token.renew(user, refreshToken, { isPublic, ip: req.ip, ua: req.ua });
 
@@ -587,11 +642,89 @@ const renewToken = async (req: Request, res: Response, args: unknown): Promise<A
   const [updatedUser] = await Promise.all([
     clearExpiredUserSuspension(user),
     AuthEvent.log(user._id, 'renew', req.ua, req.ip, coordinates, remark),
+    notifySync('LOAD-AUTH', { userIds: [userId] }, {}), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
   res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions);
 
   return { ...tokensResponse, user: updatedUser };
+};
+
+const update = async (req: Request, args: unknown, action?: Action): Promise<UserDocument & Id> => {
+  const { userId } = auth(req);
+
+  const updateAndNotify = async (updateQuery: UpdateQuery<UserDocument>, event: Record<string, unknown>) => {
+    const [updatedUser] = await Promise.all([
+      User.findByIdAndUpdate(userId, updateQuery, { fields: userNormalSelect, new: true }).lean(),
+      DatabaseEvent.log(userId, `/users/${userId}`, action || 'update', event),
+      notifySync('RENEW-TOKEN', { userIds: [userId] }, { userIds: [userId] }), // renew-token to reload updated user
+    ]);
+    if (updatedUser) return updatedUser;
+    log('error', `authController:${action}()`, { userId, action }, userId);
+    throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+  };
+
+  if (action === 'addApiKey') {
+    const fields = await userApiKeySchema.validate(args);
+    return updateAndNotify({ $push: { value: randomString(), ...fields } }, { ...fields });
+  } else if (action === 'addPaymentMethod') {
+    const fields = await userPaymentMethodsSchema.validate(args);
+    return updateAndNotify({ $push: { paymentMethods: fields } }, fields);
+  } else if (action === 'removeApiKey') {
+    const { id } = await idSchema.validate(args);
+    return updateAndNotify({ $pull: { apiKeys: { _id: id } } }, { id });
+  } else if (action === 'removePaymentMethod') {
+    const [original, { id }] = await Promise.all([authGetUser(req), idSchema.validate(args)]);
+
+    const originalPaymentMethod = original.paymentMethods.find(p => p._id?.toString() === id);
+    if (!originalPaymentMethod) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+    return updateAndNotify({ $pull: { paymentMethods: { _id: id } } }, { originalPaymentMethod });
+  } else if (action === 'updateLocale') {
+    const [user, { locale }] = await Promise.all([authGetUser(req), userLocaleSchema.validate(args)]);
+    if (!Object.keys(SYSTEM.LOCALE).includes(locale)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // re-verify locale value (YUP has verified already)
+    return updateAndNotify({ locale }, { original: user.locale, new: locale });
+  } else if (action === 'updateNetworkStatus') {
+    const { networkStatus } = await userNetworkStatusSchema.validate(args);
+    if (!Object.keys(USER.NETWORK_STATUS).includes(networkStatus) || networkStatus === USER.NETWORK_STATUS.OFFLINE)
+      throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // make no sense to set OFFLINE (auto-detected by socket-server)
+
+    return networkStatus === USER.NETWORK_STATUS.ONLINE
+      ? updateAndNotify({ $unset: { networkStatus: 1 } }, { networkStatus })
+      : updateAndNotify({ networkStatus }, { networkStatus });
+  } else {
+    const [user, { avatarUrl, ...fields }] = await Promise.all([authGetUser(req), userProfileSchema.validate(args)]);
+
+    if (user.avatarUrl !== avatarUrl)
+      await Promise.all([
+        avatarUrl && storage.validateObject(avatarUrl, userId, avatarUrl.startsWith('avatarUrl-')), // only need to validate NEW avatarUrl, skip ownership check for built-in avatar
+        user.avatarUrl && !user.avatarUrl.startsWith('avatarUrl-') && storage.removeObject(user.avatarUrl), // remove old avatarUrl from minio if exists and is different from new avatarUrl (& non built-in avatar)
+      ]);
+
+    return updateAndNotify(
+      { ...fields, ...(avatarUrl ? { avatarUrl } : { $unset: { avatarUrl: 1 } }) },
+      { original: user, update: { avatarUrl, ...fields } },
+    );
+  }
+};
+
+/**
+ * Update by ID (RESTful)
+ */
+const updateById: RequestHandler<{ action?: Action }> = async (req, res, next) => {
+  const { action } = req.params;
+  try {
+    switch (action) {
+      case 'oAuth2Link':
+        return res.status(200).json(await oAuth2Link(req, req.body));
+      case 'oAuth2Unlink':
+        return res.status(200).json(await oAuth2Unlink(req, req.body));
+      default:
+        return res.status(200).json({ data: await update(req, req.body, action) });
+    }
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**
@@ -625,9 +758,9 @@ const postAction: RequestHandler<{ action: PostAction }> = async (req, res, next
       case 'deregister':
         return res.status(200).json(await deregister(req, res, req.body));
       case 'impersonateStart':
-        return res.status(200).json({ data: await impersonateStart(req, req.body) });
+        return res.status(200).json({ data: await impersonateStart(req, res, req.body) });
       case 'impersonateStop':
-        return res.status(200).json({ data: await impersonateStop(req, req.body) });
+        return res.status(200).json({ data: await impersonateStop(req, res, req.body) });
       case 'login':
         return res.status(200).json({ data: await login(req, res, req.body) });
       case 'loginWithStudentId':
@@ -639,11 +772,7 @@ const postAction: RequestHandler<{ action: PostAction }> = async (req, res, next
       case 'logoutOthers':
         return res.status(200).json(await logoutOther(req, req.body));
       case 'oAuth2':
-        return res.status(200).json({ data: await oAuth2(req, req.body) });
-      case 'oAuth2Connect':
-        return res.status(200).json(await oAuth2Connect(req, req.body));
-      case 'oAuth2Disconnect':
-        return res.status(200).json(await oAuth2Disconnect(req, req.body));
+        return res.status(200).json({ data: await oAuth2(req, res, req.body) });
       case 'register':
         return res.status(201).json({ data: await register(req, res, req.body) });
       case 'renewToken':
@@ -670,9 +799,11 @@ export default {
   logout,
   logoutOther,
   oAuth2,
-  oAuth2Connect,
-  oAuth2Disconnect,
+  oAuth2Link,
+  oAuth2Unlink,
   postAction,
   register,
   renewToken,
+  update,
+  updateById,
 };

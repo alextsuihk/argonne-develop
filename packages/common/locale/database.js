@@ -13,12 +13,13 @@ const EDA = { enUS: 'EDA', zhHK: '關愛', zhCN: '关爱' }; // Economically-Dis
 // const TEACHER = { enUS: 'Teacher', zhHK: '老師', zhCN: '老师' };
 const TUTOR = { enUS: 'Tutor', zhHK: '導師', zhCN: '导师' };
 
+const BLOCKED = { enUS: 'Blocked', zhHK: '封鎖', zhCN: '封锁' };
+const CENSOR = { enUS: 'Censorship', zhHK: '審查', zhCN: '审查' };
 const IMPORTANT = { enUS: 'Important', zhHK: '重要', zhCN: '重要' };
 const STEM = { enUS: 'STEM', zhHK: 'STEM', zhCN: 'STEM' };
-const CENSOR = { enUS: 'Censorship', zhHK: '審查', zhCN: '审查' };
 
 const COMMON_FLAGS = {
-  BLOCKED: { enUS: 'Blocked', zhHK: '封鎖', zhCN: '封锁' },
+  BLOCKED,
   REMOVED: { enUS: 'Removed' },
 };
 
@@ -98,9 +99,10 @@ module.exports = {
 
   CHAT_GROUP: {
     FLAG: {
-      ...COMMON_FLAGS,
+      ADMIN,
       ADMIN_JOINED: { enUS: '', zhHK: '', zhCN: '' }, // at least one administration has joined the chat,
       BOOK: { enUS: 'Book', zhHK: '書本', zhCN: '书本' },
+      CENSOR,
     },
     MEMBERSHIP: {
       NORMAL: { enUS: 'Normal', zhHK: '正常', zhCN: '正常' },
@@ -110,7 +112,7 @@ module.exports = {
   },
 
   CHAT: {
-    MEMBER: { FLAG: { ARCHIVED, IMPORTANT, REMOVED: COMMON_FLAGS.REMOVED } },
+    MEMBER: { FLAG: { ARCHIVED, IMPORTANT } },
   },
 
   COMPLAINT: {
@@ -128,9 +130,13 @@ module.exports = {
     },
   },
 
+  CONTACT: {
+    FLAG: { FRIEND: { enUS: 'Friend' } },
+  },
+
   CONTENT: {
     FLAG: {
-      ...COMMON_FLAGS,
+      BLOCKED,
       ADMIN,
       RECALLED: { enUS: 'Recalled', zhHK: '召回 ', zhCN: '召回' },
       INAPPROPRIATE: { enUS: 'Inappropriate Content', zhHK: '不當內容', zhCN: '不当内容' },
@@ -139,8 +145,8 @@ module.exports = {
 
   CONTRIBUTION: {
     FLAG: {
-      BOOK_ASSIGMENT: { enUS: 'Assignment', zhHK: '作业', zhCN: '作业' },
-      BOOK_SUPPLEMENT: { enUS: 'Supplment', zhHK: '補充', zhCN: '补充' },
+      BOOK_ASSIGNMENT: { enUS: 'Assignment', zhHK: '作业', zhCN: '作业' },
+      BOOK_SUPPLEMENT: { enUS: 'Supplement', zhHK: '補充', zhCN: '补充' },
     },
   },
 
@@ -199,7 +205,6 @@ module.exports = {
 
   JOB: {
     STATUS: {
-      INCOMPLETE: { enUS: 'Incomplete' }, // system crashes before completion
       QUEUED: { enUS: 'Queued' },
       RUNNING: { enUS: 'Running' },
       COMPLETED: { enUS: 'Completed' },
@@ -209,7 +214,13 @@ module.exports = {
   },
 
   QUESTION: {
-    FLAG: { EDA },
+    FLAG: {
+      SCHOOL: { enUS: 'School' },
+      CLOSED: { enUS: 'Closed' },
+      DISPUTED: { enUS: 'Dispute' },
+      EDA,
+      PAID: { enUS: 'Paid' },
+    },
 
     LANG: {
       CSE: { enUS: 'Cantonese supplemented with English', zhHK: '粵語輔以英語', zhCN: '粤语辅以英语' },
@@ -219,20 +230,7 @@ module.exports = {
     },
 
     MEMBER: {
-      FLAG: {
-        ...COMMON_FLAGS,
-        ARCHIVED,
-        IMPORTANT,
-        DISPUTE_INSUFFICIENT_EXPLANATION: { enUS: 'Insufficient Explanation' },
-        DISPUTE_NO_EXPLANATION: { enUS: 'No Explanation' },
-        DISPUTE_WRONG: { enUS: 'TODO' },
-        AGREE: { enUS: 'Agree' },
-        CORRECT: { enUS: 'Correct' },
-        LIKE: { enUS: 'Like' },
-        DISLIKE: { enUS: 'Dislike' },
-        USEFUL: { enUS: 'This answer if useful' },
-        USELESS: { enUS: 'This answer is useless' },
-      },
+      FLAG: { ARCHIVED, IMPORTANT },
     },
   },
 
@@ -327,7 +325,6 @@ module.exports = {
     FLAG: {
       EDA,
       REQUIRE_PASSWORD_CHANGE: { enUS: 'Require Password Change' },
-      SCHOOL_LOCK: { enUS: 'School Lock' }, // not allow to bind another school
       // TRUSTED_ADVERTISER: { enUS: 'Trusted Advertiser', zhHK: '高信譽廣告商', zhCN: '高信誉广告商' },
       // TRUSTED_ORGANIZER: { enUS: 'Trusted Event Organizer', zhHK: '高信譽活動主辦者', zhCN: '高信誉活动主办者' },
       // TRUSTED_TUTOR: { enUS: 'Trusted Tutor', zhHK: '高信譽導師', zhCN: '高信誉导师' },

@@ -3,7 +3,7 @@
  */
 
 import mongoose from 'mongoose';
-import type { TypeOf } from 'yup';
+import type { InferType } from 'yup';
 import * as yup from 'yup';
 
 import LOCALE from '../generated-locale';
@@ -20,9 +20,12 @@ const coordinates = yup
   .nullable()
   .noUnknown();
 
-const optionalId = yup
-  .string()
-  .test('id', `MSG_CODE#${MSG_ENUM.INVALID_ID}`, id => !id || mongoose.isValidObjectId(id));
+const optionalId = yup.string().test(
+  'id',
+  `MSG_CODE#${MSG_ENUM.INVALID_ID}`,
+  (value: unknown) => typeof value !== 'string' || mongoose.isObjectIdOrHexString(value),
+  // (value: unknown) => typeof value !== 'string' || mongoose.isValidObjectId(value),
+);
 const optionalIds = yup.array().of(optionalId);
 const id = optionalId.required();
 const ids = yup.array().of(id).required();
@@ -110,40 +113,35 @@ export const apiKeySchema = yup.object({
   apiKey: yup.string().trim().required(),
 });
 
+export const assignmentIdSchema = yup.object({ assignmentId: id });
 export const assignmentSchema = yup.object({
-  assignment: yup
-    .object({
-      classroom: id,
-      flags: yup.array().of(yup.string().trim()).required(),
-      chapter: yup.string().trim().optional(),
-      title: yup.string().trim().optional(),
-      deadline: yup.date().required(),
-      questions: yup.array().of(yup.string().trim().required()).required(),
-      maxScores: yup.array().of(yup.number()),
+  classroom: id,
+  flags: yup.array().of(yup.string().trim()).required(),
+  chapter: yup.string().trim().optional(),
+  title: yup.string().trim().optional(),
+  deadline: yup.date().required(),
+  questions: yup.array().of(yup.string().trim().required()).required(),
+  maxScores: yup.array().of(yup.number()),
 
-      homeworks: yup
-        .array()
-        .of(
-          yup.object({
-            user: id,
-            assignmentIdx: yup.number().required(),
-            dynParamIdx: yup.number().optional(),
-          }),
-        )
-        .required(),
-    })
-    .noUnknown(),
+  homeworks: yup
+    .array()
+    .of(
+      yup.object({
+        user: id,
+        assignmentIdx: yup.number().required(),
+        dynParamIdx: yup.number().optional(),
+      }),
+    )
+    .required(),
 });
-export const assignmentUpdateSchema = yup.object({
-  id: id,
+export const assignmentGradeSchema = yup.object({
   homeworkId: id,
-  deadline: yup.date().optional(),
   content: yup.string().trim().optional(),
-  answer: yup.string().trim().optional(),
-  timeSpent: yup.number().optional(),
   score: yup.number().optional(),
-  viewExample: yup.number().optional(),
-  shareTo: yup.string().trim().optional(),
+});
+
+export const assignmentUpdateSchema = yup.object({
+  deadline: yup.date().required(),
 });
 
 export const bookSchema = yup.object({
@@ -169,7 +167,6 @@ export const bookAssignmentSchema = yup.object({
     .concat(contributionSchema)
     .noUnknown(),
 });
-export const bookAssignmentIdSchema = yup.object({ assignmentId: id });
 export const bookIsbnSchema = yup.object({ isbn: yup.string().trim().required() });
 export const bookRevisionSchema = yup.object({
   revision: yup
@@ -186,13 +183,13 @@ export const bookSupplementSchema = yup.object({
   supplement: yup.object({ chapter: yup.string().trim().required() }).concat(contributionSchema).noUnknown(),
 });
 export const bookSupplementIdSchema = yup.object({ supplementId: id });
+export const chatIdSchema = yup.object({ chatId: id });
 export const chatGroupSchema = yup.object({
   title: yup.string().trim().optional(),
   description: yup.string().trim().optional(),
   membership: yup.string().trim().required(),
   logoUrl: yup.string().trim().optional(),
 });
-export const chatParentSchema = yup.object({ parent: yup.string().trim().required() });
 export const classroomCoreSchema = yup.object({
   tenantId: id,
   level: id,
@@ -206,18 +203,32 @@ export const classroomExtraSchema = yup.object({
   schedule: yup.string().trim().optional(),
   books: yup.array().of(id).required(),
 });
-export const classroomIdSchema = yup.object({ classroomId: id });
+export const clientSchema = yup.object({
+  client: yup.string().trim().required(),
+});
 export const contactNameSchema = yup.object({
   name: yup.string().trim().optional(),
 });
 export const contentIdSchema = yup.object({ contentId: id });
-export const contentSchema = yup.object({ content: yup.string().trim().required() });
+export const contentSchema = yup.object({
+  content: yup.string().trim().required(),
+  visibleAfter: yup.date().optional(),
+});
 
 export const districtSchema = yup.object({
   district: yup.object({ name: locale, region: locale }).noUnknown(),
 });
 export const emailSchema = yup.object({ email });
-export const flagSchema = yup.object({ flag: yup.string().trim().required() });
+export const featureSchema = yup.object({ feature: yup.string().trim().uppercase().required() });
+export const flagSchema = yup.object({ flag: yup.string().trim().uppercase().required() });
+
+export const homeworkSchema = yup.object({
+  answer: yup.string().trim().optional(),
+  content: yup.string().trim().optional(),
+  timeSpent: yup.number().optional(),
+  viewedExample: yup.number().optional(),
+});
+
 export const idSchema = yup.object({ id });
 export const levelSchema = yup.object({
   level: yup
@@ -226,19 +237,10 @@ export const levelSchema = yup.object({
 });
 export const optionalExpiresInSchema = yup.object({ expiresIn: yup.number() });
 export const optionalIdSchema = yup.object({ id: optionalId });
+export const optionalTimeSpentSchema = yup.object({ timeSpent: yup.number().optional() });
 export const optionalTimestampSchema = yup.object({ timestamp: yup.date().optional() });
 export const optionalTitleSchema = yup.object({ title: yup.string().trim().optional() });
-export const passwordChangeSchema = yup.object({
-  currPassword: yup.string().trim().required(),
-  newPassword: password,
-  refreshToken: yup.string().trim().required(),
-  coordinates,
-});
-export const passwordConfirmResetSchema = yup.object({
-  password,
-  token: yup.string().trim().required(),
-  coordinates,
-});
+
 export const passwordSchema = yup.object({ password });
 export const presignedUrlSchema = yup.object({
   bucketType: yup.string().trim().required().oneOf(BUCKETS),
@@ -258,50 +260,31 @@ export const querySchema = yup.object({
   }),
 });
 
-export const questionBidSchema = yup.object({
-  id: id,
-  bidderIds: ids,
-  bidId: id,
-  message: yup.string().required(),
-  price: yup.number().optional(),
-  accept: yup.boolean().default(false),
-});
 export const questionSchema = yup.object({
-  question: yup
-    .object({
-      tenantId: id,
-      tutors: ids,
+  tenantId: id,
+  userIds: ids,
 
-      deadline: yup.date().required(),
+  deadline: yup.date().required(),
 
-      classroom: optionalId,
-      level: id,
-      subject: id,
-      book: optionalId,
-      bookRev: yup.string().trim().optional(),
-      chapter: yup.string().trim().optional(),
-      assignmentIdx: yup.number().optional(),
-      dynParamIdx: yup.number().optional(),
+  classroom: optionalId,
+  level: id,
+  subject: id,
+  book: optionalId,
+  bookRev: yup.string().trim().optional(),
+  chapter: yup.string().trim().optional(),
+  assignmentIdx: yup.number().optional(),
+  dynParamIdx: yup.number().optional(),
 
-      homework: optionalId,
-      lang: yup.string().trim().required().oneOf(Object.keys(QUESTION.LANG)),
+  homework: optionalId,
+  lang: yup.string().trim().required().oneOf(Object.keys(QUESTION.LANG)),
 
-      price: yup.number().optional(),
-      content: yup.string().trim().required(),
-    })
-    .noUnknown(),
-});
-export const questionUpdateSchema = yup.object({
-  id: id,
-  content: yup.string().trim().optional(),
-  timeSpent: yup.number().optional(),
-  pay: yup.boolean().default(false),
-  shareTo: yup.string().trim().optional(),
+  price: yup.number().optional(),
+  content: yup.string().trim().required(),
 });
 export const rankingSchema = yup.object({
-  correctness: yup.number().min(1000).max(5000).optional(),
-  punctuality: yup.number().min(1000).max(5000).optional(),
-  explicitness: yup.number().min(1000).max(5000).optional(),
+  correctness: yup.number().min(1000).max(5000).required(),
+  punctuality: yup.number().min(1000).max(5000).required(),
+  explicitness: yup.number().min(1000).max(5000).required(),
 });
 export const remarkSchema = yup.object({ remark: yup.string().trim().required() });
 export const removeSchema = yup.object({ id, remark: yup.string().trim().optional() });
@@ -325,7 +308,7 @@ export const schoolSchema = yup.object({
     })
     .noUnknown(),
 });
-export const shareToSchema = yup.object({ shareTo: yup.string().required() });
+export const sourceIdSchema = yup.object({ sourceId: id });
 export const subjectSchema = yup.object({
   subject: yup.object({ name: locale, levels: ids }).noUnknown(),
 });
@@ -394,11 +377,14 @@ export const typographyCustomSchema = yup.object({
   custom: yup.object({ title: locale, content: locale }).noUnknown(),
 });
 
-export const updatedAfterSchema = yup.object({ updatedAfter: yup.date().optional() });
 export const urlSchema = yup.object({ url: url.required() });
 
 export const versionSchema = yup.object({ version: yup.string().trim().required() });
-export const userFeatureSchema = yup.object({ feature: yup.string().trim().uppercase().required() });
+export const userApiKeySchema = yup.object({
+  scope: yup.string().trim().required(),
+  note: yup.string().trim().optional(),
+  expireAt: yup.date().required(),
+});
 export const userLocaleSchema = yup.object({
   locale: yup.string().trim().required().oneOf(Object.keys(SYSTEM.LOCALE)),
 });
@@ -417,7 +403,7 @@ export const userPaymentMethodsSchema = yup.object({
 export const userProfileSchema = yup.object({
   name: yup.string().trim().optional(),
   formalName: locale.optional(),
-  avatarUrl: yup.string().optional(),
+  avatarUrl: yup.string().trim().optional(),
   mobile: phone.optional(),
   whatsapp: phone.optional(),
   yob: yup.number().optional(),
@@ -440,48 +426,39 @@ export const userSchoolSchema = yup.object({
   schoolClass: yup.string().trim().optional(),
 });
 
-// auth related schemas
-const clientHash = yup.string().trim().optional();
+// auth & password related schemas
 const force = yup.boolean();
 const isPublic = yup.boolean();
 const refreshToken = yup.string().trim().required();
 
-const loginCommon = yup.object({ isPublic, force, coordinates, clientHash });
-export const deregisterSchema = yup.object({
-  password,
-  coordinates,
-  clientHash,
-});
-export const impersonateSchema = yup.object({
-  impersonatedAsId: id,
-  coordinates,
-  clientHash,
-});
+export const authCommon = yup.object({ coordinates, clientHash: yup.string().trim().optional() });
+const loginCommon = authCommon.concat(yup.object({ isPublic, force }));
+export const deregisterSchema = authCommon.concat(passwordSchema);
+
+export const impersonateSchema = authCommon.concat(userIdSchema);
 export const loginSchema = loginCommon.concat(emailSchema).concat(passwordSchema);
 export const loginWithStudentIdSchema = loginCommon
   .concat(yup.object({ studentId: yup.string().trim().required(), password }))
   .concat(tenantIdSchema);
-export const oAuth2DisconnectSchema = yup.object({ oAuthId: yup.string().trim().required(), coordinates });
+export const loginWithTokenSchema = authCommon.concat(tokenSchema);
+export const oAuth2UnlinkSchema = authCommon.concat(yup.object({ oAuthId: yup.string().trim().required() }));
 export const oAuth2Schema = loginCommon.concat(
   yup.object({ provider: yup.string().trim().uppercase().required(), code: yup.string().trim().required() }),
 );
-export const refreshTokenSchema = yup.object({ refreshToken, coordinates });
-export const registerSchema = yup.object({
-  email,
-  name,
-  password,
-  isPublic,
-  coordinates,
-  clientHash,
-});
-export const renewTokenSchema = yup.object({
-  refreshToken,
-  isPublic,
-  coordinates,
-  clientHash,
-});
+export const passwordChangeSchema = authCommon.concat(
+  yup.object({
+    currPassword: yup.string().trim().required(),
+    newPassword: password,
+    refreshToken,
+  }),
+);
+export const passwordConfirmResetSchema = authCommon.concat(passwordSchema).concat(tokenSchema);
+export const passwordResetRequestSchema = authCommon.concat(emailSchema);
+export const refreshTokenSchema = authCommon.concat(yup.object({ refreshToken }));
+export const registerSchema = authCommon.concat(yup.object({ email, name, password, isPublic }));
+export const renewTokenSchema = authCommon.concat(yup.object({ refreshToken, isPublic }));
 
-export type Query = TypeOf<typeof querySchema>;
+export type Query = InferType<typeof querySchema>;
 
 // TODO: lazy validation  https://objectpartners.com/2020/06/04/validating-optional-objects-with-yup/
 const lazySchema = yup.object({
@@ -491,9 +468,9 @@ const lazySchema = yup.object({
     if (value && Object.values(value).some(v => !(v === null || v === undefined || v === ''))) {
       // Return our normal validation
       return yup.object({
-        default: yup.string().required(),
-        dark: yup.string().required(),
-        light: yup.string().required(),
+        default: yup.string().trim().required(),
+        dark: yup.string().trim().required(),
+        light: yup.string().trim().required(),
       });
     }
     // Otherwise, return a simple validation

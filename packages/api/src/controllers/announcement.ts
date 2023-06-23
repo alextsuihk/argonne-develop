@@ -5,31 +5,31 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
-import type { AnnouncementDocument } from '../models/announcement';
+import type { AnnouncementDocument, Id } from '../models/announcement';
 import Announcement, { searchableFields } from '../models/announcement';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
 import { messageToAdmin } from '../utils/chat';
-import syncSatellite from '../utils/sync-satellite';
+import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
 const { MSG_ENUM } = LOCALE;
-const { auth, DELETED, isAdmin, paginateSort, searchFilter, select } = common;
+const { auth, DELETED, hubModeOnly, isAdmin, paginateSort, searchFilter, select } = common;
 const { announcementSchema, idSchema, querySchema } = yupSchema;
 
 /**
  * Create
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<AnnouncementDocument>> => {
+const create = async (req: Request, args: unknown): Promise<AnnouncementDocument & Id> => {
   const { userId, userLocale, userRoles } = auth(req);
   const {
     announcement: { tenantId, ...fields },
   } = await announcementSchema.validate(args);
 
+  if (!tenantId) hubModeOnly();
   if (tenantId) await Tenant.findByTenantId(tenantId, userId, isAdmin(userRoles));
   if (!isAdmin(userRoles) && !tenantId) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
@@ -47,7 +47,9 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<Announc
     announcement.save(),
     messageToAdmin(msg, userId, userLocale, userRoles, [], tenantId ? `TENANT#${tenantId}` : 'ANNOUNCEMENT'),
     DatabaseEvent.log(userId, `/announcements/${_id}`, 'CREATE', { tenant: tenantId, announcement: fields }),
-    syncSatellite({ tenantId }, { announcementIds: [_id.toString()] }),
+    tenantId
+      ? notifySync('CORE', {}, { announcementIds: [_id] })
+      : notifySync('ANNOUNCEMENT', { tenantId }, { announcementIds: [_id] }),
   ]);
 
   return announcement;
@@ -64,20 +66,30 @@ const createNew: RequestHandler = async (req, res, next) => {
   }
 };
 
+// (helper) common code for find(), findMany(), findOne()
+const findCommon = async (userTenants: string[], isAdmin: boolean, args: unknown, getOne = false) => {
+  const { id, query } = getOne
+    ? await idSchema.concat(querySchema).validate(args)
+    : { ...(await querySchema.validate(args)), id: null };
+
+  return searchFilter<AnnouncementDocument>(
+    id ? [] : searchableFields,
+    { query },
+    {
+      ...(id && { _id: id }),
+      tenant: { $in: [undefined, ...userTenants] },
+      // $or: [{ tenant: { $exists: false } }, { tenant: { $in: userTenants } }],
+      ...(!isAdmin && { endAt: { $gte: new Date() } }),
+    },
+  );
+};
+
 /**
  * Find Multiple (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<AnnouncementDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<AnnouncementDocument & Id[]> => {
   const { userRoles, userTenants } = auth(req);
-  const { query } = await querySchema.validate(args);
-
-  const filter = searchFilter<AnnouncementDocument>(
-    searchableFields,
-    { query },
-    isAdmin(userRoles)
-      ? { $or: [{ tenant: { $exists: false } }, { tenant: { $in: userTenants } }] }
-      : { $or: [{ tenant: { $exists: false } }, { tenant: { $in: userTenants } }], endAt: { $gte: new Date() } },
-  );
+  const filter = await findCommon(userTenants, isAdmin(userRoles), args);
 
   return Announcement.find(filter, select(userRoles)).lean();
 };
@@ -88,15 +100,7 @@ const find = async (req: Request, args: unknown): Promise<LeanDocument<Announcem
 const findMany: RequestHandler = async (req, res, next) => {
   try {
     const { userRoles, userTenants } = auth(req);
-    const { query } = await querySchema.validate({ query: req.query });
-
-    const filter = searchFilter<AnnouncementDocument>(
-      searchableFields,
-      { query },
-      isAdmin(userRoles)
-        ? { $or: [{ tenant: { $exists: false } }, { tenant: { $in: userTenants } }] }
-        : { $or: [{ tenant: { $exists: false } }, { tenant: { $in: userTenants } }], endAt: { $gte: new Date() } },
-    );
+    const filter = await findCommon(userTenants, isAdmin(userRoles), { query: req.query });
     const options = paginateSort(req.query, { name: 1 });
 
     const [total, announcements] = await Promise.all([
@@ -113,21 +117,9 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<LeanDocument<AnnouncementDocument> | null> => {
+const findOne = async (req: Request, args: unknown): Promise<(AnnouncementDocument & Id) | null> => {
   const { userRoles, userTenants } = auth(req);
-  const { id, query } = await idSchema.concat(querySchema).validate(args);
-
-  const filter = searchFilter<AnnouncementDocument>(
-    [],
-    { query },
-    isAdmin(userRoles)
-      ? { _id: id, $or: [{ tenant: { $exists: false } }, { tenant: { $in: userTenants } }] }
-      : {
-          _id: id,
-          $or: [{ tenant: { $exists: false } }, { tenant: { $in: userTenants } }],
-          endAt: { $gte: new Date() },
-        },
-  );
+  const filter = await findCommon(userTenants, isAdmin(userRoles), args, true);
 
   return Announcement.findOne(filter, select(userRoles)).lean();
 };
@@ -163,7 +155,7 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
     }).lean();
 
     if (!original?.tenant) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // only admin could remove "announcement for all"
-    await Tenant.findByTenantId(original.tenant, userId, isAdmin(userRoles));
+    await Tenant.findByTenantId(original.tenant, userId);
   }
 
   const now = new Date();
@@ -182,10 +174,13 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
     zhHK: `剛刪除通告：${common}。`,
   };
 
+  const tenantId = announcement.tenant;
   await Promise.all([
     messageToAdmin(msg, userId, userLocale, userRoles, [], 'ANNOUNCEMENT'),
     DatabaseEvent.log(userId, `/announcements/${id}`, 'DELETE', { announcement }),
-    syncSatellite({ tenantId: announcement.tenant }, { announcementIds: [id] }),
+    tenantId
+      ? notifySync('CORE', {}, { announcementIds: [id] })
+      : notifySync('ANNOUNCEMENT', { tenantId }, { announcementIds: [id] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };

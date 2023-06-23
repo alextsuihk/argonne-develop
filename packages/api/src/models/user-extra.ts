@@ -15,7 +15,7 @@ import { Schema } from 'mongoose';
 export interface UserExtra {
   studentIds: string[];
 
-  histories: {
+  schoolHistories: {
     year: string;
     school: string | Types.ObjectId;
     level: string | Types.ObjectId;
@@ -29,10 +29,10 @@ export interface UserExtra {
 export const userExtraDefinition = {
   studentIds: [{ type: String, index: true }],
 
-  histories: [
+  schoolHistories: [
     {
       year: String,
-      school: { type: Schema.Types.ObjectId, ref: 'School', index: true },
+      school: { type: Schema.Types.ObjectId, ref: 'School' },
       level: { type: Schema.Types.ObjectId, ref: 'Level' },
       schoolClass: String,
       updatedAt: { type: Date, default: Date.now },

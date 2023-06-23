@@ -5,19 +5,18 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { LeanDocument } from 'mongoose';
 import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
-import type { TenantDocument } from '../models/tenant';
+import type { Id, TenantDocument } from '../models/tenant';
 import Tenant, { searchableFields } from '../models/tenant';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import { messageToAdmin } from '../utils/chat';
-import { randomString } from '../utils/helper';
-import mail from '../utils/sendmail';
+import { idsToString, randomString } from '../utils/helper';
+import log from '../utils/log';
+import { notifySync } from '../utils/notify-sync';
 import storage from '../utils/storage';
-import syncSatellite from '../utils/sync-satellite';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -27,15 +26,27 @@ const { MSG_ENUM } = LOCALE;
 const { USER } = LOCALE.DB_ENUM;
 
 const { assertUnreachable, auth, hubModeOnly, DELETED, DELETED_LOCALE, isRoot, paginateSort, searchFilter } = common;
-const { emailSchema, idSchema, querySchema, remarkSchema, removeSchema, tenantCoreSchema, tenantExtraSchema } =
-  yupSchema;
+const { idSchema, querySchema, remarkSchema, removeSchema, tenantCoreSchema, tenantExtraSchema } = yupSchema;
 
 export const select = (userRoles?: string[]) => `${common.select(userRoles)} -apiKey -meta`;
 
 /**
+ * (helper) transform
+ */
+const transform = (tenant: TenantDocument & Id, showAuthServices = false): TenantDocument & Id => ({
+  ...tenant,
+  ...(showAuthServices
+    ? tenant.authServices.map(authService => {
+        const [clientId, , redirectUri, , friendKey] = authService.split('#'); // hide clientSecret & select
+        return `${friendKey ?? ''}#${clientId}#${redirectUri}`;
+      })
+    : []),
+});
+
+/**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<TenantDocument>> => {
+const addRemark = async (req: Request, args: unknown): Promise<TenantDocument & Id> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ROOT');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -49,14 +60,14 @@ const addRemark = async (req: Request, args: unknown): Promise<LeanDocument<Tena
 
   await DatabaseEvent.log(userId, `/tenants/${id}`, 'REMARK', { remark });
 
-  return tenant;
+  return transform(tenant, true);
 };
 
 /**
  * Create New Tenant (core)
  * first tenantAdmin is also created, for system-generated data
  */
-const create = async (req: Request, args: unknown): Promise<LeanDocument<TenantDocument>> => {
+const create = async (req: Request, args: unknown): Promise<TenantDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ROOT');
   const { tenant: fields } = await tenantCoreSchema.validate(args);
@@ -96,7 +107,7 @@ const create = async (req: Request, args: unknown): Promise<LeanDocument<TenantD
   ]);
 
   if (tenant.apiKey) delete tenant.apiKey; // hide apiKey if exists
-  return tenant!;
+  return transform(tenant.toObject(), true);
 };
 
 /**
@@ -113,11 +124,14 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple Tenants (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<LeanDocument<TenantDocument>[]> => {
+const find = async (req: Request, args: unknown): Promise<(TenantDocument & Id)[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<TenantDocument>(searchableFields, { query });
-  return Tenant.find(filter, select(req.userRoles)).lean();
+  const tenants = await Tenant.find(filter, select(req.userRoles)).lean();
+  return tenants.map(tenant =>
+    transform(tenant, isRoot(req.userRoles) || (!!req.userId && idsToString(tenant.admins).includes(req.userId))),
+  );
 };
 
 /**
@@ -135,7 +149,12 @@ const findMany: RequestHandler = async (req, res, next) => {
       Tenant.find(filter, select(req.userRoles), options).lean(),
     ]);
 
-    res.status(200).json({ meta: { total, ...options }, data: tenants });
+    res.status(200).json({
+      meta: { total, ...options },
+      data: tenants.map(tenant =>
+        transform(tenant, isRoot(req.userRoles) || (!!req.userId && idsToString(tenant.admins).includes(req.userId))),
+      ),
+    });
   } catch (error) {
     next(error);
   }
@@ -149,33 +168,30 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   const { userId, userLocale, userRoles } = auth(req, 'ROOT');
   const { id, remark } = await removeSchema.validate(args);
 
-  const original = await Tenant.findOneAndUpdate(
-    { _id: id, deletedAt: { $exists: false } },
-    {
-      $unset: {
-        apiKey: 1,
-        school: 1,
-        theme: 1,
-        htmlUrl: 1,
-        logoUrl: 1,
-        website: 1,
-        satelliteUrl: 1,
-        userSelect: 1,
-        meta: 1,
-      },
-      code: `${DELETED}#${randomString()}`,
-      name: DELETED_LOCALE,
-      admins: [],
-      supports: [],
-      counselors: [],
-      marshals: [],
-
-      services: [],
-      flaggedWords: [],
-      deletedAt: new Date(),
-      ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
+  const original = await Tenant.findByIdAndUpdate(id, {
+    $unset: {
+      apiKey: 1,
+      school: 1,
+      theme: 1,
+      htmlUrl: 1,
+      logoUrl: 1,
+      website: 1,
+      satelliteUrl: 1,
+      userSelect: 1,
+      meta: 1,
     },
-  ).lean();
+    code: `${DELETED}#${randomString()}`,
+    name: DELETED_LOCALE,
+    admins: [],
+    supports: [],
+    counselors: [],
+    marshals: [],
+
+    services: [],
+    flaggedWords: [],
+    deletedAt: new Date(),
+    ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
+  }).lean();
 
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
@@ -185,11 +201,15 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
     zhCN: `刚删除组织 ：${common}。`,
     zhHK: `剛刪除組織 ：${common}。`,
   };
+
+  const users = await User.find({ tenants: id }, '_id').lean();
+
   await Promise.all([
+    User.updateMany({ tenants: id }, { $pull: { tenants: id } }),
     original.logoUrl && storage.removeObject(original.logoUrl), // delete file in Minio if exists
     messageToAdmin(msg, userId, userLocale, userRoles, [], `TENANT#${id}`),
-    DatabaseEvent.log(userId, `/tenants/${id}`, 'DELETE', { remark, original }),
-    syncSatellite({ tenantId: id }, { tenantIds: [id] }),
+    DatabaseEvent.log(userId, `/tenants/${id}`, 'DELETE', { remark, original, users: idsToString(users) }),
+    notifySync('_SYNC-ONLY', { tenantId: id }, { tenantIds: [id] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -212,7 +232,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
  * Update Tenant (core)
  * !note: ONLY root could update
  */
-const updateCore = async (req: Request, args: unknown): Promise<LeanDocument<TenantDocument>> => {
+const updateCore = async (req: Request, args: unknown): Promise<TenantDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ROOT');
   const {
@@ -234,17 +254,18 @@ const updateCore = async (req: Request, args: unknown): Promise<LeanDocument<Ten
     Tenant.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
     messageToAdmin(msg, userId, userLocale, userRoles, original.admins, `TENANT#${id}`),
     DatabaseEvent.log(userId, `/tenants/${id}`, 'UPDATE-CORE', { original, update: fields }),
-    syncSatellite({ tenantId: id }, { tenantIds: [id] }),
+    notifySync('_SYNC-ONLY', { tenantId: id }, { tenantIds: [id] }),
   ]);
-
-  return tenant!;
+  if (tenant) return transform(tenant, true);
+  log('error', `tenantController:updateCore()`, { id, code, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
  * Update Tenant (non-core)
  * !note: for tenantAdmins to update non-core portion (either in satellite or HQ mode)
  */
-const updateExtra = async (req: Request, args: unknown): Promise<LeanDocument<TenantDocument>> => {
+const updateExtra = async (req: Request, args: unknown): Promise<TenantDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const {
@@ -305,17 +326,20 @@ const updateExtra = async (req: Request, args: unknown): Promise<LeanDocument<Te
     Tenant.findByIdAndUpdate(id, update, { fields: select(userRoles), new: true }).lean(),
     messageToAdmin(msg, userId, userLocale, userRoles, [...original.admins, ...fields.admins], `TENANT#${id}`),
     DatabaseEvent.log(userId, `/tenants/${id}`, 'UPDATE-EXTRA', { original, update: fields }),
-    syncSatellite(
+
+    notifySync(
+      '_SYNC-ONLY',
       { tenantId: id },
       {
         tenantIds: [id],
         ...(minioAddItems.length && { minioAddItems }),
-        ...(minioRemoveItems && { minioRemoveItems }),
+        ...(minioRemoveItems.length && { minioRemoveItems }),
       },
     ),
   ]);
-
-  return tenant!;
+  if (tenant) return transform(tenant, isRoot(userRoles) || idsToString(tenant.admins).includes(userId));
+  log('error', `tenantController:updateExtra()`, { id, htmlUrl, logoUrl, ...fields }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

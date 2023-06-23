@@ -22,78 +22,16 @@ export const USER_FIELDS = gql`
     }
     emails
 
-    oAuth2s
     avatarUrl
-    mobile
-    whatsapp
-
-    networkStatus
-    timezone
-    locale
-
-    darkMode
-    theme
-
-    apiKeys {
-      value
-      scope
-      note
-      expireAt
-    }
-    roles
-    features
-    scopes
-
-    yob
-    dob
-
-    coin
-    virtualCoin
-    balanceAuditedAt
-
-    paymentMethods {
-      currency
-      type
-      bank
-      account
-      payable
-      receivable
-    }
-    preference
-    subscriptions {
-      token
-      subscription
-      enabled
-      permission
-      ip
-      ua
-    }
-
-    interests
-    supervisors
-    staffs
-
-    violations {
-      createdAt
-      reason
-      links
-    }
-    suspension
-    expoPushTokens
-
-    creditability
-    identifiedAt
 
     studentIds
-    histories {
+    schoolHistories {
       year
       school
       level
       schoolClass
       updatedAt
     }
-
-    favoriteTutors
 
     remarks {
       ...RemarkFields

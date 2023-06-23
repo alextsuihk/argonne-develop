@@ -7,7 +7,6 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
@@ -21,14 +20,14 @@ import {
   uniqueTestUser,
 } from '../../jest';
 import Token from '../../models/token';
-import type { UserDocument } from '../../models/user';
+import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
 
 const { MSG_ENUM } = LOCALE;
 const { DEFAULTS } = configLoader;
 
 const VALID_EMAIL = 'valid@email.com';
-const INVALID_EMAIL = 'invalid@mail';
+const INVALID_EMAIL = 'invalid_mail'; // yup thinks invalid@email is valid
 const INVALID_PASSWORD = 'invalid'; // not meeting PASSWORD_REGEX
 
 // expect auth (login & register) response
@@ -42,8 +41,8 @@ export const expectedAuthResponse = {
 
 // Top level of this test suite:
 describe('Authentication API (token)', () => {
-  let normalUser: LeanDocument<UserDocument> | null;
-  let tenantAdmin: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let tenantId: string | null;
 
   beforeAll(async () => {

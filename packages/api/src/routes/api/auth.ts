@@ -21,6 +21,12 @@ router.get('/:action', authController.getAction);
  */
 router.post('/:action', authController.postAction);
 
+/**
+ * @route   PATCH api/auth/:action
+ * @desc    update authUser
+ */
+router.patch('/:action?', authController.updateById);
+
 //! Note: code below is old approach, moving logic into authController
 
 /**
@@ -86,13 +92,13 @@ router.post('/:action', authController.postAction);
  * @route   DELETE api/auth/oauth2
  * @desc    connected OAuth2 to logged-in user
  */
-// router.patch('/oauth2', authController.oAuth2ConnectRestApi);
+// router.patch('/oauth2', authController.oAuth2LinkRestApi);
 
 /**
  * @route   DELETE api/auth/oauth2
  * @desc    disconnect user from OAuth2
  */
-// router.delete('/oauth2', authController.oAuth2DisconnectRestApi);
+// router.delete('/oauth2', authController.oAuth2UnlinkRestApi);
 
 /**
  * @route   POST api/auth/register

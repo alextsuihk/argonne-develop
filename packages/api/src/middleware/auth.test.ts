@@ -7,10 +7,10 @@
 
 import { LOCALE } from '@argonne/common';
 import type { Request, Response } from 'express';
-import type { LeanDocument } from 'mongoose';
+import jwt from 'jsonwebtoken';
 
 import { jestSetup, jestTeardown } from '../jest';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import token from '../utils/token';
 import { decodeHeader } from './auth';
 
@@ -18,7 +18,7 @@ const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('Auth Middleware Test', () => {
-  let normalUser: LeanDocument<UserDocument> | null;
+  let normalUser: (UserDocument & Id) | null;
 
   beforeAll(async () => {
     ({ normalUser } = await jestSetup(['normal'], { apollo: true }));
@@ -108,7 +108,11 @@ describe('Auth Middleware Test', () => {
   test('should pass without populating userId if signing with a "fake JWT secret', async () => {
     expect.assertions(2);
 
-    const accessToken = await token.sign({ id: 'invalid-userId' }, '5s', 'fakeJwtSecret'); // generate a accessToken with fake-JWT-secret
+    const accessToken = await new Promise<string>((resolve, reject) =>
+      jwt.sign({ id: 'invalid-userId' }, 'fakeJwtSecret', { noTimestamp: true, expiresIn: 5 }, (_, token) =>
+        token ? resolve(token) : reject(),
+      ),
+    );
 
     const req = mockRequest({}, {}, { Authorization: `Bearer ${accessToken}` });
     const res = mockResponse();

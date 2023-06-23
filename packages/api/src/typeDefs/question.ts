@@ -8,51 +8,41 @@ export default gql`
   extend type Query {
     question(id: ID!): Question
     questions(query: QueryInput): [Question!]!
-    # questionsSearch(search: String!): [Question!]! # TODO
   }
 
   extend type Mutation {
-    addQuestion(tenantId: String!, question: QuestionInput!): Question!
+    addQuestion(
+      tenantId: String!
+      userIds: [String!]!
 
-    bidQuestion(
-      id: ID!
-      bidderIds: [String!]!
-      bidId: String!
-      message: String!
+      deadline: DateInput
+      classroom: String
+      level: String!
+      subject: String!
+      book: String
+      bookRev: String
+      chapter: String
+      assignmentIdx: Int
+      dynParamIdx: Int
+      homework: String
+      lang: String!
+
       price: Int
-      accept: Boolean
+      content: String!
     ): Question!
+
+    addQuestionBidContent(id: ID!, content: String!, userId: String!): Question!
+    addQuestionBidders(id: ID!, userIds: [String!]!): Question!
+    addQuestionContentByStudent(id: ID!, content: String!, visibleAfter: DateInput): Question!
+    addQuestionContentByTutor(id: ID!, content: String!, visibleAfter: DateInput, timeSpent: Int): Question!
+    addQuestionContentWithDispute(id: ID!, content: String!, visibleAfter: DateInput): Question!
+    assignQuestionTutor(id: ID!, userId: String!): Question!
+    clearQuestionFlag(id: ID!, flag: String!): Question!
+    closeQuestion(id: ID!): Question!
+    cloneQuestion(id: ID!, userIds: [String!]!): Question!
     removeQuestion(id: ID!): StatusResponse!
-    updateQuestion(id: String!, content: String, timeSpent: Int, ranking: Int, pay: Boolean, shareTo: String): Question!
-  }
-
-  input QuestionInput {
-    tenantId: String
-    tutors: [String!]!
-    deadline: Float!
-    classroom: String
-    level: String!
-    subject: String!
-    book: String
-    bookRev: String
-    chapter: String
-    assignmentIdx: String
-    dynParamIdx: String
-
-    homework: String
-    lang: String!
-
-    price: Int
-    content: String!
-  }
-
-  input QuestionBidInput {
-    id: ID!
-    bidders: [String!]!
-    bidId: String!
-    message: String!
-    price: Int
-    accept: Boolean
+    setQuestionFlag(id: ID!, flag: String!): Question!
+    updateQuestionLastViewedAt(id: String!, timestamp: DateInput): Question!
   }
 
   type Question {
@@ -60,8 +50,11 @@ export default gql`
     flags: [String!]!
 
     tenant: String!
-    students: [String!]!
-    tutors: [String!]
+    parent: String
+
+    student: String!
+    tutor: String
+    marshals: [String!]!
 
     members: [Member!]!
     deadline: Float!
@@ -72,33 +65,28 @@ export default gql`
     book: String
     bookRev: String
     chapter: String
-    assignmentIdx: String
-    dynParamIdx: String
+    assignmentIdx: Int
+    dynParamIdx: Int
+    homework: String
 
     lang: String!
 
-    content: Content!
-    contents: [Content!]!
-
+    contents: [String!]!
     timeSpent: Int
 
     createdAt: Float!
     updatedAt: Float!
+    deletedAt: Float
 
     price: Int
     bidders: [String!]!
-    bids: [Bid!]!
+    bidContents: [[String!]]!
     paidAt: Float
-  }
 
-  type Bid {
-    _id: ID!
-    messages: [BidMessage!]!
-  }
+    correctness: Int!
+    explicitness: Int!
+    punctuality: Int!
 
-  type BidMessage {
-    creator: String!
-    data: Content!
-    createdAt: Float!
+    contentsToken: String!
   }
 `;

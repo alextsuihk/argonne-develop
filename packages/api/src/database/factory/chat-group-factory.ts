@@ -10,52 +10,52 @@
 import { LOCALE } from '@argonne/common';
 import { faker } from '@faker-js/faker';
 import chalk from 'chalk';
-import mongoose from 'mongoose';
 
 import type { ChatDocument } from '../../models/chat';
 import Chat from '../../models/chat';
-import type { ChatGroupDocument } from '../../models/chat-group';
+import type { ChatGroupDocument, Id } from '../../models/chat-group';
 import ChatGroup from '../../models/chat-group';
 import type { ContentDocument } from '../../models/content';
 import Content from '../../models/content';
 import Tenant from '../../models/tenant';
 import User from '../../models/user';
 import { messageToAdmin } from '../../utils/chat';
-import { idsToString, prob, shuffle } from '../../utils/helper';
-import { fakeContents } from './helper';
+import { idsToString, mongoId, prob, shuffle } from '../../utils/helper';
+import { fakeChatsWithContents } from '../helper';
 
-const { CHAT, CHAT_GROUP, TENANT, USER } = LOCALE.DB_ENUM;
+const { CHAT_GROUP, TENANT, USER } = LOCALE.DB_ENUM;
 
 /**
  * Generate (factory)
  *
- * @param chatGroupCount: number of chatGroups (per user)
+ * @param codes: tenantCodes
+ * @param chatGroupCount: number of chatGroups (per user per tenant)
  * @param chatMax: max chats (per chatGroup)
  * @param contentMax: max contents(per chat)
  */
-const fake = async (chatGroupCount = 5, chatMax = 5, contentMax = 6): Promise<string> => {
-  const [users, adminUser, tenants] = await Promise.all([
+const fake = async (codes: string[], chatGroupCount = 5, chatMax = 5, contentMax = 6): Promise<string> => {
+  const [users, { adminIds }, tenants] = await Promise.all([
     User.find({ status: USER.STATUS.ACTIVE }).lean(),
-    User.findOneActive({ roles: USER.ROLE.ADMIN }),
-    Tenant.find({ services: TENANT.SERVICE.CHAT_GROUP, deletedAt: { $exists: false } }).lean(),
+    User.findSystemAccountIds(),
+    Tenant.find({
+      services: TENANT.SERVICE.CHAT_GROUP,
+      ...(codes.length && { code: { $in: codes } }),
+      deletedAt: { $exists: false },
+    }).lean(),
   ]);
-
-  if (!users.length) throw new Error('User Collection is empty');
-  if (!adminUser) throw new Error('User Collection has ADMIN user');
+  if (!adminIds.length) throw new Error('User Collection has ADMIN user');
 
   // Part 1: generate one (toAdmin) chat per activeUser
-  await Promise.all(
-    users.map(async user =>
-      messageToAdmin(
-        `msg to admin: ${faker.lorem.sentences(2)}`,
-        user._id,
-        user.locale,
-        user.roles,
-        [],
-        `USER#${user._id}`,
-        user.name,
-        true, // skipNotify
-      ),
+  const adminMessages = users.sort(shuffle).map(async user =>
+    messageToAdmin(
+      `msg to admin: ${faker.lorem.sentences(2)}`,
+      user._id,
+      user.locale,
+      user.roles,
+      [],
+      `USER#${user._id}`,
+      user.name,
+      true, // skipNotify
     ),
   );
 
@@ -66,6 +66,7 @@ const fake = async (chatGroupCount = 5, chatMax = 5, contentMax = 6): Promise<st
   const chatGroups = tenants
     .map(tenant =>
       users
+        .sort(shuffle)
         .filter(user => idsToString(user.tenants).includes(tenant._id.toString()))
         .map((user, idx) =>
           Array(Math.ceil(Math.random() * chatGroupCount))
@@ -79,39 +80,20 @@ const fake = async (chatGroupCount = 5, chatMax = 5, contentMax = 6): Promise<st
                   .filter(u => idsToString(u.tenants).includes(tenant._id.toString()))
                   .slice(0, 6);
 
-                const chatGroupId = new mongoose.Types.ObjectId();
+                const chatGroupId = mongoId();
+                const { chats: newChats, contents: newContents } = fakeChatsWithContents(
+                  'chatGroups',
+                  chatGroupId,
+                  idsToString([user, ...otherUsers]),
+                  chatMax,
+                  contentMax,
+                  true, // recallable contents
+                );
 
-                const newChats = Array(Math.ceil(Math.random() * chatMax))
-                  .fill(0)
-                  .map(_ => {
-                    const chatId = new mongoose.Types.ObjectId();
-                    const newContents = fakeContents(
-                      chatId,
-                      idsToString([user, ...otherUsers]),
-                      Math.ceil(Math.random() * contentMax),
-                      true,
-                    );
-
-                    contents.push(...newContents);
-
-                    return new Chat<Partial<ChatDocument>>({
-                      _id: chatId,
-                      ...(prob(0.5) && { title: `chat-title: ${faker.lorem.slug(10)}` }),
-                      parents: [`/chatGroups/${chatGroupId}`],
-                      members: [user, ...otherUsers]
-                        .sort(shuffle)
-                        .slice(0, 3)
-                        .map(user => ({
-                          user: user._id,
-                          flags: prob(0.3) ? [CHAT.MEMBER.FLAG.IMPORTANT] : [],
-                          lastViewedAt: faker.date.recent(3),
-                        })),
-                      contents: newContents.map(content => content._id),
-                    });
-                  });
                 chats.push(...newChats);
+                contents.push(...newContents);
 
-                return new ChatGroup<Partial<ChatGroupDocument>>({
+                return new ChatGroup<Partial<ChatGroupDocument & Id>>({
                   _id: chatGroupId,
                   tenant: tenant._id.toString(),
                   membership: prob(0.5)
@@ -119,8 +101,8 @@ const fake = async (chatGroupCount = 5, chatMax = 5, contentMax = 6): Promise<st
                     : prob(0.5)
                     ? CHAT_GROUP.MEMBERSHIP.CLOSED
                     : CHAT_GROUP.MEMBERSHIP.PUBLIC,
-                  ...(prob(0.8) && { title: `chat-title : ${faker.lorem.slug(5)}` }),
-                  ...(prob(0.5) && { description: `chat-desc : ${faker.lorem.sentences(5)}` }),
+                  ...(prob(0.8) && { title: `chatGroup-title : ${faker.lorem.slug(5)}` }),
+                  ...(prob(0.5) && { description: `chatGroup-desc : ${faker.lorem.sentences(5)}` }),
                   users: idsToString([user, ...otherUsers]),
                   admins: [user._id],
                   chats: idsToString(newChats),
@@ -134,9 +116,12 @@ const fake = async (chatGroupCount = 5, chatMax = 5, contentMax = 6): Promise<st
     )
     .flat();
 
-  await Promise.all([ChatGroup.create(chatGroups), Chat.create(chats), Content.create(contents)]);
-  const msg = `(${chalk.green(users.length)} + ${chalk.green(chatGroups.length)} chatGroups, `;
-  return `(${msg} - ${chalk.green(chats.length)} - ${chalk.green(contents.length)} created)`;
+  await Promise.all([...adminMessages, ChatGroup.create(chatGroups), Chat.create(chats), Content.create(contents)]);
+
+  const adminMsg = `${chalk.green(adminMessages.length)} adminMessages`;
+  const msg = `${chalk.green(chatGroups.length)} chatGroups created for ${chalk.green(users.length)} users`;
+  const chatMsg = `with ${chalk.green(chats.length)} chats, ${chalk.green(contents.length)} contents)`;
+  return `(${adminMsg}, ${msg} [for ${tenants.length} tenant(s)] with ${chatMsg})`;
 };
 
 export { fake };

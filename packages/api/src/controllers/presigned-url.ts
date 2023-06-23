@@ -6,7 +6,7 @@
 import { yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
 
-import type { PresignedUrl } from '../utils/storage';
+import type { PresignedUrlWithExpiry } from '../utils/storage';
 import storage from '../utils/storage';
 import common from './common';
 
@@ -16,7 +16,7 @@ const { presignedUrlSchema } = yupSchema;
 /**
  * Create Presigned URL (for upload)
  */
-const create = async (req: Request, args: unknown): Promise<PresignedUrl> => {
+const create = async (req: Request, args: unknown): Promise<PresignedUrlWithExpiry> => {
   const { userId } = auth(req);
   const { bucketType, ext } = await presignedUrlSchema.validate(args);
 

@@ -6,7 +6,6 @@
 import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
-import type { LeanDocument } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import {
@@ -26,7 +25,7 @@ import {
   testServer,
 } from '../jest';
 import Tag from '../models/tag';
-import type { UserDocument } from '../models/user';
+import type { Id, UserDocument } from '../models/user';
 import { ADD_TAG, ADD_TAG_REMARK, GET_TAG, GET_TAGS, REMOVE_TAG, UPDATE_TAG } from '../queries/tag';
 
 const { MSG_ENUM } = LOCALE;
@@ -35,9 +34,9 @@ const { DEFAULTS } = configLoader;
 // Top level of this test suite:
 describe('Tag GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: LeanDocument<UserDocument> | null;
+  let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
-  let normalUsers: LeanDocument<UserDocument>[] | null;
+  let normalUsers: (UserDocument & Id)[] | null;
 
   const expectedNormalFormat = {
     _id: expectedIdFormat,
@@ -152,7 +151,7 @@ describe('Tag GraphQL', () => {
       variables: { id: newId, remark: FAKE },
     });
     apolloExpect(addRemarkRes, 'data', {
-      addTagRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!, FAKE, true) },
+      addTagRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
     });
 
     // delete without sufficient creditability
