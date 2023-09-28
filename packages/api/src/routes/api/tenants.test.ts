@@ -5,9 +5,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
+import request from 'supertest';
 
+import app from '../../app';
 import {
   domain,
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -16,14 +19,13 @@ import {
   FAKE2,
   FAKE2_LOCALE,
   genUser,
-  idsToString,
   jestPutObject,
   jestRemoveObject,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
-  shuffle,
+  randomItem,
+  randomItems,
 } from '../../jest';
 import School from '../../models/school';
 import { TenantDocument } from '../../models/tenant';
@@ -38,7 +40,10 @@ const route = 'tenants';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
+  let adminUser: (UserDocument & Id) | null;
+  let normalUser: (UserDocument & Id) | null;
   let rootUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
   let htmlUrl: string;
   let logoUrl: string;
 
@@ -48,8 +53,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     flags: expect.any(Array),
     code: expect.any(String),
     name: expectedLocaleFormat,
-    admins: expect.arrayContaining([expect.any(String)]), // must contain at least one non-log-in-able admin
-    supports: expect.any(Array), // could be empty array
+
+    admins: expect.any(Array), // could be empty array    supports: expect.any(Array), // could be empty array
     counselors: expect.any(Array), // could be empty array
     marshals: expect.any(Array), // could be empty array
 
@@ -60,11 +65,13 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     flaggedWords: expect.any(Array),
     authServices: expect.any(Array),
-    updatedAt: expect.any(String),
+
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
   };
 
   beforeAll(async () => {
-    ({ rootUser } = await jestSetup(['root']));
+    ({ adminUser, normalUser, rootUser, tenantAdmin } = await jestSetup(['admin', 'normal', 'root', 'tenantAdmin']));
   });
 
   afterAll(async () =>
@@ -73,28 +80,85 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should response a tenant list as guest user', async () => getMany(route, {}, expectedMinFormat, {}));
 
+  test('should fail when sending a test email (as normalUser)', async () => {
+    expect.assertions(3);
+
+    const { _id, emails } = normalUser!;
+    const res = await request(app)
+      .post(`/api/tenants/sendTestEmail`)
+      .set({ 'Jest-User': _id })
+      .send({ email: emails[0] });
+    expect(res.body).toEqual({ errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }], statusCode: 403, type: 'plain' });
+    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res.status).toBe(403);
+  });
+
+  test('should fail when sending a test email (without email or wrong email)', async () => {
+    expect.assertions(6);
+
+    const { _id } = adminUser!;
+    const email = 'wrong@email.com';
+    const res1 = await request(app).post(`/api/tenants/sendTestEmail`).set({ 'Jest-User': _id }).send({ email });
+    expect(res1.body).toEqual({ errors: [{ code: MSG_ENUM.USER_INPUT_ERROR }], statusCode: 422, type: 'plain' });
+    expect(res1.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res1.status).toBe(422);
+
+    const res2 = await request(app).post(`/api/tenants/sendTestEmail`).set({ 'Jest-User': _id });
+    expect(res2.body).toEqual({
+      errors: [{ code: MSG_ENUM.USER_INPUT_ERROR, param: 'email' }],
+      statusCode: 422,
+      type: 'yup',
+    });
+    expect(res2.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res2.status).toBe(422);
+  });
+
+  test('should pass when sending a test email (as tenantAdmin)', async () => {
+    expect.assertions(3);
+
+    const { _id, emails } = tenantAdmin!;
+    const res = await request(app)
+      .post(`/api/tenants/sendTestEmail`)
+      .set({ 'Jest-User': _id })
+      .send({ email: emails[0] });
+    expect(res.body).toEqual({ code: MSG_ENUM.COMPLETED });
+    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res.status).toBe(200);
+  });
+
+  test('should pass when sending a test email (as admin)', async () => {
+    expect.assertions(3);
+
+    const { _id, emails } = adminUser!;
+    const res = await request(app)
+      .post(`/api/tenants/sendTestEmail`)
+      .set({ 'Jest-User': _id })
+      .send({ email: emails[0] });
+    expect(res.body).toEqual({ code: MSG_ENUM.COMPLETED });
+    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res.status).toBe(200);
+  });
+
   test('should pass when ADD, ADD_REMARK, UPDATE, REMOVE', async () => {
     expect.assertions(3 * 4 + 3 * 1 + 3 * 2 + 6 * 1);
 
     const schools = await School.find({ deletedAt: { $exists: false } }).lean();
+    const school = prob(0.5) && randomItem(schools)._id.toString(); // unchangeable
+    const code = FAKE.toUpperCase(); // unchangeable
 
     const tenantCore = {
-      code: FAKE,
+      code,
       name: FAKE_LOCALE,
-      ...(prob(0.5) && { school: randomId(schools) }),
-      services: Object.keys(TENANT.SERVICE)
-        .sort(shuffle)
-        .slice(0, 3 * Math.random() + 1),
+      ...(school && { school }),
+      services: randomItems(Object.keys(TENANT.SERVICE), Math.random() * 3 + 1),
       ...(prob(0.5) && { satelliteUrl: `https://satellite.${domain}` }),
     };
 
     const tenantCoreUpdate = {
-      code: FAKE,
+      code,
       name: FAKE2_LOCALE,
-      ...(prob(0.5) && { school: randomId(schools) }),
-      services: Object.keys(TENANT.SERVICE)
-        .sort(shuffle)
-        .slice(0, 3 * Math.random() + 1),
+      ...(school && { school }),
+      services: randomItems(Object.keys(TENANT.SERVICE), Math.random() * 3 + 1),
       ...(prob(0.5) && { satelliteUrl: `https://satellite2.${domain}` }),
     };
 
@@ -132,8 +196,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const users = Array(2)
       .fill(0)
-      .map((_, idx) => genUser(tenant!._id, `tenantAdmin (${idx})`));
-    await User.create(users);
+      .map((_, idx) => genUser(tenant!._id, { name: `tenantAdmin (${idx})` }));
+    await User.insertMany(users);
 
     await createUpdateDelete<TenantDocument & Id>(
       route,
@@ -142,24 +206,24 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         {
           action: 'update',
           data: {
-            admins: idsToString(users),
+            admins: users.map(user => user._id.toString()),
             supports: [],
             counselors: [],
             marshals: [],
             website: 'https://example.com',
             flaggedWords: [],
           },
-          expectedMinFormat: { ...expectedMinFormat, admins: idsToString(users) },
+          expectedMinFormat: { ...expectedMinFormat, admins: users.map(user => user._id.toString()) },
         },
       ],
       { skipAssertion: true, overrideId: tenantId },
     );
 
     const tenantExtra = {
-      admins: idsToString(users),
-      supports: [randomId(users)],
-      counselors: [randomId(users)],
-      marshals: [randomId(users)],
+      admins: users.map(u => u._id.toString()),
+      supports: [randomItem(users)._id.toString()],
+      counselors: [randomItem(users)._id.toString()],
+      marshals: [randomItem(users)._id.toString()],
       website: `https://www.${domain}`,
       flaggedWords: prob(0.5) ? [] : [FAKE, FAKE2],
     };

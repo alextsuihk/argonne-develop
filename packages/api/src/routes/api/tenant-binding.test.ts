@@ -9,9 +9,10 @@ import { LOCALE } from '@argonne/common';
 import request from 'supertest';
 
 import app from '../../app';
-import { expectedUserFormat, jestSetup, jestTeardown, prob, uniqueTestUser } from '../../jest';
+import { expectedDateFormat, genUser, jestSetup, jestTeardown, prob, randomString } from '../../jest';
 import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
+import token, { REFRESH_TOKEN } from '../../utils/token';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -76,27 +77,37 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     ]));
 
   test('should pass the full suite (createToken, bind, unbind)', async () => {
-    expect.assertions(3 * 3);
+    expect.assertions(3 * 3 + 2);
 
-    // create a new user (without tenants)
-    const { email, name, password } = uniqueTestUser();
-    const user = await User.create({ tenants: [], name: `tenant-binding-${name}`, emails: [email], password });
+    const user = genUser(null); // create a new user (without tenants)
+    const [refreshToken] = await Promise.all([
+      token.signStrings([REFRESH_TOKEN, user._id.toString(), randomString()], 10),
+      user.save(),
+    ]);
 
     // tenantAdmin creates token
     const tokenRes = await request(app)
       .post('/api/tenant-binding/createToken')
       .send({ tenantId: tenantId!, ...(prob(0.5) && { expiresIn: 10 }) })
       .set({ 'Jest-User': tenantAdmin!._id });
-    expect(tokenRes.body).toEqual({ data: { token: expect.any(String), expireAt: expect.any(String) } });
+    expect(tokenRes.body).toEqual({ data: { token: expect.any(String), expireAt: expectedDateFormat() } });
     expect(tokenRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(tokenRes.status).toBe(200);
-    const { token } = tokenRes.body.data;
+    const bindingToken = tokenRes.body.data.token;
 
     // user binds himself to tenant
-    const bindRes = await request(app).post('/api/tenant-binding').send({ token }).set({ 'Jest-User': user!._id });
-    expect(bindRes.body).toEqual({ data: expect.objectContaining({ ...expectedUserFormat, tenants: [tenantId!] }) });
+    const bindRes = await request(app)
+      .post('/api/tenant-binding')
+      .send({ bindingToken, refreshToken, ...(prob(0.5) && { studentId: randomString() }) })
+      .set({ 'Jest-User': user._id });
+
+    expect(bindRes.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(bindRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(bindRes.status).toBe(200);
+
+    // check if binding is successful
+    const updatedUser = await User.findOneActive({ _id: user._id });
+    expect(updatedUser?.tenants.some(t => t.equals(tenantId!))).toBeTrue();
 
     // tenantAdmin unbinds user
     const unBindRes = await request(app)
@@ -107,7 +118,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect(unBindRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(unBindRes.status).toBe(200);
 
-    // clean-up
-    await User.deleteOne({ _id: user });
+    // check if unbinding is successful
+    const updated2User = await User.findOneActive({ _id: user._id });
+    expect(updated2User?.tenants.some(t => t.equals(tenantId!))).toBeFalse();
+
+    // clean up
+    await User.deleteOne({ _id: user._id });
   });
 });

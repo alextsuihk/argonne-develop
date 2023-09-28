@@ -15,34 +15,34 @@ import type { ContributionDocument } from './contribution';
 export type { Id } from './common';
 
 export interface BookAssignmentDocument extends BaseDocument {
-  contribution: string | Types.ObjectId | (ContributionDocument & Id);
+  contribution: Types.ObjectId | (ContributionDocument & Id);
 
   chapter: string; // e.g 1.2#33, chapter 1.2, homework#33
-  content: string | Types.ObjectId;
+  content: Types.ObjectId;
   dynParams: string[];
   solutions: string[]; // should be small data
-  examples: (string | Types.ObjectId)[];
+  examples: Types.ObjectId[];
 }
 
 export interface BookDocument extends BaseDocument {
-  publisher: string | Types.ObjectId;
-  level: string | Types.ObjectId;
-  subjects: (string | Types.ObjectId)[];
+  publisher: Types.ObjectId;
+  level: Types.ObjectId;
+  subjects: Types.ObjectId[];
   title: string;
   subTitle?: string;
-  chatGroup: string | Types.ObjectId;
+  chatGroup: Types.ObjectId;
 
-  assignments: (string | Types.ObjectId | (BookAssignmentDocument & Id))[];
+  assignments: (Types.ObjectId | (BookAssignmentDocument & Id))[];
 
   supplements: {
-    _id: string | Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
-    contribution: string | Types.ObjectId | (ContributionDocument & Id);
+    _id: Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
+    contribution: Types.ObjectId | (ContributionDocument & Id);
     chapter: string;
     deletedAt?: Date;
   }[];
 
   revisions: {
-    _id: string | Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
+    _id: Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
     rev: string;
     isbn?: string;
     year: number;

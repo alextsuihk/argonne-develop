@@ -10,6 +10,7 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -19,7 +20,7 @@ import {
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
+  randomItem,
 } from '../jest';
 import Typography from '../models/typography';
 import type { Id, UserDocument } from '../models/user';
@@ -53,9 +54,9 @@ describe('Typography GraphQL', () => {
     content: expectedLocaleFormat,
     customs: expect.any(Array),
     remarks: null,
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedAdminFormat = {
@@ -93,8 +94,8 @@ describe('Typography GraphQL', () => {
   test('should response a single object when GET One by ID', async () => {
     expect.assertions(1);
     const typographies = await Typography.find({ deletedAt: { $exists: false } }).lean();
-    const randId = randomId(typographies);
-    const res = await guestServer!.executeOperation({ query: GET_TYPOGRAPHY, variables: { id: randId } });
+    const id = randomItem(typographies)._id.toString();
+    const res = await guestServer!.executeOperation({ query: GET_TYPOGRAPHY, variables: { id } });
     apolloExpect(res, 'data', { typography: expectedNormalFormat });
   });
 
@@ -107,8 +108,8 @@ describe('Typography GraphQL', () => {
   test('should response a single object when GET One by ID (as admin)', async () => {
     expect.assertions(1);
     const typographies = await Typography.find({ deletedAt: { $exists: false } }).lean();
-    const randId = randomId(typographies);
-    const res = await adminServer!.executeOperation({ query: GET_TYPOGRAPHY, variables: { id: randId } });
+    const id = randomItem(typographies)._id.toString();
+    const res = await adminServer!.executeOperation({ query: GET_TYPOGRAPHY, variables: { id } });
     apolloExpect(res, 'data', { typography: expectedAdminFormat });
   });
 

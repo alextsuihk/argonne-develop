@@ -14,7 +14,7 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface ReferralDocument extends BaseDocument {
-  user: string | Types.ObjectId;
+  user: Types.ObjectId;
   email: string;
 }
 

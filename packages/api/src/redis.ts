@@ -11,6 +11,7 @@ import { LOCALE } from '@argonne/common';
 import Redis from 'ioredis';
 
 import configLoader from './config/config-loader';
+import { isTestMode } from './utils/environment';
 import log from './utils/log';
 
 const { MSG_ENUM } = LOCALE;
@@ -22,15 +23,22 @@ export const redisClient = redis;
 // log error
 redis.on('error', error => log('error', 'ioredis encounters error', error));
 redis.on('connect', () => {
-  log('info', 'ioredis is connected');
+  if (isTestMode) log('info', 'ioredis is connected');
   redis.flushdb(); // in case of stale cache
 });
+
+const waitForReady = async () => {
+  if (redis.status !== 'ready') await new Promise(resolve => setTimeout(resolve, 50));
+  if (redis.status !== 'ready') await new Promise(resolve => setTimeout(resolve, 100));
+  if (redis.status !== 'ready') await new Promise(resolve => setTimeout(resolve, 200));
+  if (redis.status !== 'ready') throw { statusCode: 500, code: MSG_ENUM.REDIS_NOT_READY };
+};
 
 /**
  * delete a specific key
  */
 const deleteKey = async (key: string, prefix = DEFAULTS.REDIS.PREFIX): Promise<boolean | null> => {
-  if (redis.status !== 'ready') throw { statusCode: 500, code: MSG_ENUM.REDIS_NOT_READY };
+  await waitForReady();
 
   try {
     await redis.del(prefix + key);
@@ -46,9 +54,7 @@ const deleteKey = async (key: string, prefix = DEFAULTS.REDIS.PREFIX): Promise<b
  *
  */
 const flushDb = async (): Promise<boolean | null> => {
-  if (redis.status !== 'ready') throw { statusCode: 500, code: MSG_ENUM.REDIS_NOT_READY };
-
-  // if (redis.status !== 'ready') return null;
+  await waitForReady();
 
   try {
     await redis.flushdb();
@@ -62,14 +68,14 @@ const flushDb = async (): Promise<boolean | null> => {
 /**
  * get content from a specific key
  */
-const get = async <T>(key: string, prefix = DEFAULTS.REDIS.PREFIX): Promise<T | null> => {
-  if (redis.status !== 'ready') return null;
+const get = async <T>(key: string, prefix = DEFAULTS.REDIS.PREFIX): Promise<T | null | 'nullX'> => {
+  await waitForReady();
 
   try {
     const value = await redis.get(prefix + key);
     return value ? (JSON.parse(value) as T) : null;
   } catch (error) {
-    return null;
+    return 'nullX';
   }
 };
 
@@ -87,7 +93,7 @@ const set = async <T>(
   expiry = DEFAULTS.REDIS.EXPIRES.DEFAULT,
   prefix = DEFAULTS.REDIS.PREFIX,
 ): Promise<T> => {
-  if (redis.status !== 'ready') return value;
+  await waitForReady();
 
   try {
     await redis.set(prefix + key, JSON.stringify(value), 'EX', expiry);

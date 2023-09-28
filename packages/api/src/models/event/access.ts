@@ -16,8 +16,9 @@ export interface AccessEventDocument extends GenericDocument {
   data?: unknown;
 }
 
+type Log = (user: string | Types.ObjectId, link: string, data: unknown) => Promise<AccessEventDocument>;
 interface AccessEventModel extends Model<AccessEventDocument> {
-  log(user: string | Types.ObjectId, link: string, data: unknown): Promise<AccessEventDocument>;
+  log: Log;
 }
 
 const accessEventSchema = new Schema<AccessEventDocument>(
@@ -29,11 +30,7 @@ const accessEventSchema = new Schema<AccessEventDocument>(
   options,
 );
 
-accessEventSchema.static(
-  'log',
-  async (user: string | Types.ObjectId, link: string, data: unknown): Promise<AccessEventDocument> =>
-    AccessEvent.create({ user, link, data }),
-);
-
+const log: Log = async (user, link, data) => AccessEvent.create<Partial<AccessEventDocument>>({ user, link, data });
+accessEventSchema.static('log', log);
 const AccessEvent = Generic.discriminator<AccessEventDocument, AccessEventModel>('AccessEvent', accessEventSchema);
 export default AccessEvent;

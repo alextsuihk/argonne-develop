@@ -10,6 +10,7 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -19,7 +20,7 @@ import {
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
+  randomItem,
 } from '../jest';
 import Level from '../models/level';
 import type { Id, UserDocument } from '../models/user';
@@ -39,11 +40,11 @@ describe('Level GraphQL', () => {
     flags: expect.any(Array),
     code: expect.any(String),
     name: expectedLocaleFormat,
-    nextLevel: expect.toBeOneOf([null, expect.any(String)]),
+    nextLevel: expect.toBeOneOf([null, expectedIdFormat]),
     remarks: null,
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedAdminFormat = {
@@ -79,7 +80,8 @@ describe('Level GraphQL', () => {
     expect.assertions(1);
 
     const levels = await Level.find({ deletedAt: { $exists: false } }).lean();
-    const res = await guestServer!.executeOperation({ query: GET_LEVEL, variables: { id: randomId(levels) } });
+    const id = randomItem(levels)._id.toString();
+    const res = await guestServer!.executeOperation({ query: GET_LEVEL, variables: { id } });
     apolloExpect(res, 'data', { level: expectedNormalFormat });
   });
 
@@ -121,7 +123,9 @@ describe('Level GraphQL', () => {
       query: ADD_LEVEL,
       variables: { level: { code: FAKE, name: FAKE_LOCALE } },
     });
-    apolloExpect(createdRes, 'data', { addLevel: expectedAdminFormat });
+    apolloExpect(createdRes, 'data', {
+      addLevel: { ...expectedAdminFormat, code: FAKE.toUpperCase(), name: FAKE_LOCALE },
+    });
     const newId: string = createdRes.data!.addLevel._id;
 
     // add remark
@@ -141,7 +145,7 @@ describe('Level GraphQL', () => {
         level: { code: FAKE, name: FAKE2_LOCALE },
       },
     });
-    apolloExpect(updatedRes, 'data', { updateLevel: expectedAdminFormat });
+    apolloExpect(updatedRes, 'data', { updateLevel: { ...expectedAdminFormat, name: FAKE2_LOCALE } });
 
     // delete newly created document
     const removedRes = await adminServer!.executeOperation({

@@ -20,7 +20,7 @@
 
 // export interface TransactionDocument extends Document {
 //   group: string;
-//   user: string | Types.ObjectId;
+//   user:  Types.ObjectId;
 //   isReconciliated: boolean;
 // }
 

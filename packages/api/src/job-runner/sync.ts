@@ -1,44 +1,90 @@
-// TODO: depends on Mode
-// if satellite, of course, ONLY upload with tenantId = self.tenantId
-// for hub mode, upload with tenant.apiKey
+/**
+ * Job-Runner: Send Update satellite
+ *
+ * syncJob MUST be executed in chronological order. do not proceed to next syncJob if any failure
+ * ! note: single instance per satellite
+ */
 
-import type { Args } from '../models/job';
+import axios from 'axios';
 
-// TODO:
+import configLoader from '../config/config-loader';
+import { SyncResponse } from '../controllers/satellite';
+import SyncJob from '../models/sync-job';
+import Tenant from '../models/tenant';
+import log from '../utils/log';
 
-// const { JOB } = LOCALE.DB_ENUM;
-// const { DEFAULTS } = configLoader;
+const { config, DEFAULTS } = configLoader;
 
-const sync = async (args: Args): Promise<string> => {
-  const { url, userIds, districtIds, ...doc } = args;
+const syncInProgressTenants: string[] = [];
 
-  // /// TODO: job.args.docs.minioAddItems  signUrl()
+/**
+ * SendSync to satellite tenant
+ * ! single instance per satellite tenant
+ *  note: notify is sent ONLY in first attempt. does not make sense to send de
+ */
+export const sync = async (tenantId: string) => {
+  if (syncInProgressTenants.includes(tenantId)) return; // single instance per satellite
+  syncInProgressTenants.push(tenantId); // indicate this tenantId is now sync-in-progress
 
-  // console.log('sync args >>>>>>>>>>>>>>>>>> ', url, userIds);
+  const findNextSyncJob = async () =>
+    SyncJob.findOne({ tenant: tenantId, completedAt: { $exists: false } })
+      .sort('createdAt')
+      .lean();
 
-  // // const [announcements, books] = await Promise.all([
-  // //   doc.announcementIds && Announcement.find({ _id: { $in: doc.announcementIds } }).lean(),
-  // //   doc.bookIds && Book.find({ _id: { $in: doc.bookIds } }).lean(),
-  // // ]);
+  const tenant = await Tenant.findSatelliteById(tenantId);
 
-  // const x = Announcement.find({ _id: { $in: doc.announcementIds } }).lean();
-  // const queries: [string, Promise<(BaseDocument & Id)[]>][] = [];
+  const destination = tenant
+    ? {
+        url: config.mode === 'SATELLITE' ? DEFAULTS.ARGONNE_URL : tenant.satelliteUrl,
+        apiKey: tenant.apiKey,
+      } // satellite could ONLY send sync-data to hub
+    : null;
 
-  // if (doc.bookIds) queries.push(['books', Book.find({ _id: { $in: doc.bookIds } }).lean()]);
-  // if (doc.announcementIds)
-  //   queries.push(['announcements', Announcement.find({ _id: { $in: doc.announcementIds } }).lean()]);
+  if (destination) {
+    let syncJob = await findNextSyncJob();
 
-  // // wait until all mongoose queries complete
-  // await Promise.all([Object.values(queries)]);
+    while (syncJob) {
+      const { _id, attempt, notify, sync } = syncJob;
+      try {
+        const { data } = await axios.patch<SyncResponse>(
+          `${destination.url}/api/satellite/sync`,
+          {
+            apiKey: destination.apiKey,
+            attempt: attempt + 1,
+            syncJobId: _id.toString(),
+            stringifiedNotify: attempt < 1 ? JSON.stringify(notify) : null, // do notify() ONLY for first 2 attempts
+            stringifiedSync: JSON.stringify(sync),
+            tenantId,
+            timestamp: new Date(),
+            version: config.buildInfo,
+          },
+          { timeout: DEFAULTS.AXIOS_TIMEOUT },
+        );
 
-  // const upload = Object.fromEntries(queries);
+        await SyncJob.updateOne(
+          { _id },
+          { $inc: { attempt: 1 }, completedAt: new Date(), result: JSON.stringify(data) },
+        );
+      } catch (error) {
+        await Promise.all([
+          SyncJob.updateOne({ _id }, { $inc: { attempt: 1 }, result: `error: ${JSON.stringify(error)}` }),
 
-  // axios.patch(`${DEFAULTS.ARGONNE_URL}/api/books`, { apiKey: tenant.apiKey, ...upload });
+          !((attempt + 1) % DEFAULTS.JOB_RUNNER.SYNC.ATTEMPT_FAILURE_WRITE_LOG) && // for error, log every n attempts
+            log('error', `satellite sync error (too many attempts)`, {
+              syncJobId: _id.toString(),
+              attempt: attempt + 1,
+              error: JSON.stringify(error),
+            }),
+        ]);
+        break; // for ANY failure, break the while loop (wait for next interval)
+      }
 
-  // const urls: string[] = []; // presigned minio URL for download
-  // // TODO: convert Url to presignedUrl
+      syncJob = await findNextSyncJob();
+    }
+  }
 
-  return `TODO: feature not yet support ${args}`;
+  const index = syncInProgressTenants.indexOf(tenantId);
+  if (index >= 0) syncInProgressTenants.splice(index, 1); // just be safe, index should be greater then or equal to 0
 };
 
 export default sync;

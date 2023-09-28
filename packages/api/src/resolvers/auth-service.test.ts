@@ -1,19 +1,19 @@
 /**
- * JEST Test: check /api/auth-services/*
+ * JEST Test: check /auth-services/*
  *
+ * authServiceToken() response with redirect in REST-ful, so we are only testing in apollo mode
+ * authServiceUserInfo() only response to REST-ful
  */
-
-import { createDecipheriv, scrypt } from 'node:crypto';
 
 import { LOCALE } from '@argonne/common';
 import request from 'supertest';
 
 import app from '../app';
-import { ALGORITHM } from '../controllers/auth-service';
-import { apolloExpect, ApolloServer, jestSetup, jestTeardown, randomString } from '../jest';
+import { apolloExpect, ApolloServer, expectedDateFormat, jestSetup, jestTeardown, randomString } from '../jest';
 import Tenant from '../models/tenant';
 import type { Id, UserDocument } from '../models/user';
-import { GET_AUTHORIZATION_TOKEN } from '../queries/auth-service';
+import { AUTH_SERVICE_TOKEN } from '../queries/auth-service';
+import { dataDecipher } from '../utils/cipher';
 
 const { TENANT } = LOCALE.DB_ENUM;
 
@@ -30,6 +30,8 @@ describe('Auth-Services GraphQL', () => {
   afterAll(jestTeardown);
 
   test('should pass when generates authToken & gets user info', async () => {
+    expect.assertions(1 + 3);
+
     const clientId = randomString();
     const clientSecret = randomString();
     const redirectUri = '/jest';
@@ -43,21 +45,15 @@ describe('Auth-Services GraphQL', () => {
     );
     if (!matchedCount) return; // does not have TENANT.SERVICE.AUTH_SERVICE
 
-    expect.assertions(1 + 3);
-
     const tokenRes = await normalServer!.executeOperation({
-      query: GET_AUTHORIZATION_TOKEN,
+      query: AUTH_SERVICE_TOKEN,
       variables: { client: `${tenantId!}#${clientId}` },
     });
     apolloExpect(tokenRes, 'data', {
-      authorizationToken: { clientId, token: expect.any(String), tokenExpireAt: expect.any(Number), redirectUri },
+      authServiceToken: { clientId, token: expect.any(String), tokenExpireAt: expectedDateFormat(true), redirectUri },
     });
 
-    // decipher token
-    const [iv, encrypted] = tokenRes.data!.authorizationToken.token.split('#');
-    const key = await new Promise<Buffer>(resolve => scrypt(clientSecret, 'salt', 24, (_, key) => resolve(key)));
-    const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(iv, 'hex'));
-    const authToken = decipher.update(encrypted, 'hex', 'utf8') + decipher.final('utf8');
+    const authToken = await dataDecipher(tokenRes.data!.authServiceToken.token, clientSecret); // emulating 3rd party app to decipher data
 
     const expectedFormat = expect.objectContaining({
       _id: normalUser!._id.toString(),
@@ -68,8 +64,8 @@ describe('Auth-Services GraphQL', () => {
       ],
     });
 
-    // fetch user info using authToken
-    const userInfoRes = await request(app).post(`/api/auth-services`).send({ token: authToken });
+    // fetch user info using authToken (from a 3rd party service)
+    const userInfoRes = await request(app).get(`/api/auth/authServiceUserInfo/${authToken}`);
     expect(userInfoRes.body).toEqual({ data: expectedFormat });
     expect(userInfoRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(userInfoRes.status).toBe(200);

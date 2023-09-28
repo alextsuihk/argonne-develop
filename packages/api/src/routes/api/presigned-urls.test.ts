@@ -57,9 +57,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       .set({ 'Jest-User': normalUser!._id })
       .send({ bucketType: 'invalid', ext: 'docs' });
     expect(res1.body).toEqual({
-      errors: [{ code: MSG_ENUM.USER_INPUT_ERROR, param: 'bucketType' }],
+      errors: [{ code: MSG_ENUM.USER_INPUT_ERROR }],
       statusCode: 422,
-      type: 'yup',
+      type: 'plain',
     });
     expect(res1.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res1.status).toBe(422);

@@ -29,9 +29,7 @@ export const updateTutorRanking = async () => {
       for (const specialty of tutor.specialties) {
         const specialtyRankings = rankings.filter(
           ({ lang, level, subject }) =>
-            lang === specialty.lang &&
-            level.toString() === specialty.level.toString() &&
-            subject.toString() === specialty.subject.toString(),
+            lang === specialty.lang && specialty.level.equals(level) && specialty.subject.equals(subject),
         );
 
         // only update if there is enough statistics data

@@ -13,33 +13,37 @@ import type { TypographyDocument } from '../../models/typography';
 import Typography from '../../models/typography';
 
 const seed = async (): Promise<string> => {
-  const typographies: Partial<TypographyDocument>[] = [];
+  // const typographies: Partial<TypographyDocument>[] = [];
 
   const files = await fsPromises.readdir(path.join(__dirname, 'typography'), { withFileTypes: true });
-  await Promise.all(
+
+  const fileContents = await Promise.all(
     files
       .filter(file => !file.name.includes('.skip.'))
-      .map(async file => {
-        // const typography = JSON.parse(fs.readFileSync(path.join(__dirname, 'typography', file.name), 'utf-8'));
-        const typography = JSON.parse(
-          await fsPromises.readFile(path.join(__dirname, 'typography', file.name), 'utf-8'),
-        );
-        for (const [key, value] of Object.entries(typography)) {
-          const { title, content } = value as {
-            title: TypographyDocument['title'];
-            content: TypographyDocument['content'];
-          };
-          typographies.push({ key: `${file.name.slice(0, -5)}:${key}`, title, content });
-        }
-      }),
+      .map(async file => ({
+        file: file.name.slice(0, -5),
+        value: JSON.parse(await fsPromises.readFile(path.join(__dirname, 'typography', file.name), 'utf-8')) as Record<
+          string,
+          { title: TypographyDocument['title']; content: TypographyDocument['content'] }
+        >,
+      })),
   );
+
+  const typographies = fileContents
+    .map(({ file, value }) =>
+      Object.entries(value).map(
+        ([key, { title, content }]) =>
+          new Typography<Partial<TypographyDocument>>({ key: `${file}:${key}`, title, content }),
+      ),
+    )
+    .flat();
 
   typographies.forEach(typography => {
     if (typography.title?.zhHK) typography.title!.zhCN = convert.tw2cn(typography.title.zhHK);
     if (typography.content?.zhHK) typography.content!.zhCN = convert.tw2cn(typography.content.zhHK);
   });
 
-  await Typography.create(typographies);
+  await Typography.insertMany<Partial<TypographyDocument>>(typographies, { rawResult: true });
   return `(${chalk.green(typographies.length)} created)`;
 };
 

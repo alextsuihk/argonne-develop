@@ -17,7 +17,7 @@ import type { TutorDocument } from '../../models/tutor';
 import Tutor from '../../models/tutor';
 import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
-import { idsToString, mongoId, prob, randomId, randomString, schoolYear, shuffle } from '../../utils/helper';
+import { mongoId, prob, randomItem, randomString, schoolYear } from '../../utils/helper';
 
 const { QUESTION, USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -27,23 +27,24 @@ const { DEFAULTS } = configLoader;
  *
  */
 const fake = async (code = 'TUTOR'): Promise<string> => {
-  const [levels, subjects, tenant, rootUsers] = await Promise.all([
+  const [levels, subjects, tenant, { alexId }] = await Promise.all([
     Level.find({ deletedAt: { $exists: false } }).lean(),
     Subject.find({ deletedAt: { $exists: false } }).lean(),
     Tenant.findOne({ code }).lean(),
-    User.find({ roles: USER.ROLE.ROOT }),
+    User.findSystemAccountIds(),
   ]);
   if (!tenant) throw `Tenant ${code} is not found.`;
+  if (!alexId) throw 'alexId is not found';
 
   const specialties = (count = 5): TutorDocument['specialties'] =>
     Array(count)
       .fill(0)
-      .map(_ => ({
+      .map(() => ({
         _id: mongoId(),
         ...(prob(0.5) && { note: faker.lorem.words(5) }),
-        lang: Object.keys(QUESTION.LANG).sort(shuffle)[0]!,
-        level: randomId(levels)!,
-        subject: randomId(subjects)!,
+        lang: randomItem(Object.keys(QUESTION.LANG)),
+        level: randomItem(levels)._id,
+        subject: randomItem(subjects)._id,
         ranking: { updatedAt: new Date(), correctness: 0, punctuality: 0, explicitness: 0 },
       }));
 
@@ -91,7 +92,7 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
       password: User.genValidPassword(),
       ...(prob(0.9) && { avatarUrl: faker.internet.avatar() }),
       tenants: [tenant._id],
-      supervisors: idsToString(rootUsers),
+      supervisors: [alexId],
       identifiedAt: new Date(),
       schoolHistories:
         tenant.school && prob(0.4)
@@ -99,7 +100,7 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
               {
                 year: schoolYear(),
                 school: tenant.school,
-                level: randomId(levels)!,
+                level: randomItem(levels)._id,
                 schoolClass: '1X',
                 updatedAt: new Date(),
               },
@@ -121,11 +122,12 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
   const users = tuples.map(({ user }) => user);
   const tutors = tuples.map(({ tutor }) => tutor);
 
-  // add staffs[] to rootUsers[]
-  rootUsers.forEach(root => (root.staffs = idsToString(users)));
-
-  await Promise.all([User.create(users), Tutor.create(tutors), ...rootUsers.map(root => root.save())]);
-  return `(${chalk.green(systemTutors.length)} systemTutors to ${rootUsers.length} rootUsers) created)`;
+  await Promise.all([
+    User.insertMany<Partial<UserDocument>>(users, { rawResult: true }),
+    Tutor.insertMany<Partial<TutorDocument>>(tutors, { rawResult: true }),
+    User.updateMany({ _id: alexId }, { $addToSet: { staffs: { $each: users.map(u => u._id) } } }), // add staffs[] to rootUsers[]
+  ]);
+  return `(${chalk.green(systemTutors.length)} systemTutors) created)`;
 };
 
 export { fake };

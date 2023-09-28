@@ -4,6 +4,7 @@
  */
 
 import {
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -31,8 +32,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     flags: expect.any(Array),
     region: expectedLocaleFormat,
     name: expectedLocaleFormat,
-    createdAt: expect.any(String),
-    updatedAt: expect.any(String),
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
   };
 
   beforeAll(async () => {

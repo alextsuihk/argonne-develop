@@ -17,7 +17,7 @@ export interface TypographyDocument extends BaseDocument {
   key: string;
   title: Locale;
   content: Locale;
-  customs: { _id: string | Types.ObjectId; tenant: string | Types.ObjectId; title: Locale; content: Locale }[];
+  customs: { tenant: Types.ObjectId; title: Locale; content: Locale }[];
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -39,6 +39,7 @@ const typographySchema = new Schema<TypographyDocument>(
     content: localeDefinition,
     customs: [
       {
+        _id: false,
         tenant: { type: Schema.Types.ObjectId, ref: 'Tenant' },
         title: localeDefinition,
         content: localeDefinition,

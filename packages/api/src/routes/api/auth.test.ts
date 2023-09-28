@@ -1,4 +1,4 @@
-// TODO: auth-impersonate.test.ts: IMPERSONATE_START/STOP, LOGIN_WITH_ID,
+console.log('// TODO: auth-impersonate.test.ts: IMPERSONATE_START/STOP, LOGIN_WITH_ID,');
 // TODO: auth-oauth2.test.ts
 
 /**
@@ -11,14 +11,7 @@ import request from 'supertest';
 
 import app from '../../app';
 import configLoader from '../../config/config-loader';
-import {
-  expectedIdFormat,
-  expectedUserFormat,
-  jestSetup,
-  jestTeardown,
-  randomString,
-  uniqueTestUser,
-} from '../../jest';
+import { expectedIdFormat, expectedUserFormat, genUser, jestSetup, jestTeardown, randomString } from '../../jest';
 import Token from '../../models/token';
 import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
@@ -52,7 +45,8 @@ describe('Authentication API (token)', () => {
 
   test('should pass when register, login, 2nd login, logout-other, ..., deregister', async () => {
     expect.assertions(3 * 9);
-    const { email, name, password } = uniqueTestUser();
+    const { emails, name, password } = genUser(null);
+    const [email] = emails;
 
     // register (1st login)
     const registerRes = await request(app).post(`/api/auth/register`).send({ email, name, password });
@@ -142,16 +136,11 @@ describe('Authentication API (token)', () => {
   test('should pass when loginWithStudentId', async () => {
     expect.assertions(3 * 1);
 
-    // create a new user (with studentIds)
-    const { email, name, password } = uniqueTestUser();
+    // create a new user (with loginStudentIds)
     const studentId = randomString();
-    const user = await User.create<Partial<UserDocument>>({
-      name,
-      emails: [email],
-      password,
-      tenants: [tenantId!],
-      studentIds: [`${tenantId!}#${studentId}`],
-    });
+    const user = genUser(tenantId!, { studentIds: [`${tenantId!}#${studentId}`] });
+    const { password } = user; // destructure password before saving. once saved, password is hashed
+    await user.save();
 
     // loginWithStudentId
     const loginWithStudentIdRes = await request(app)
@@ -169,8 +158,8 @@ describe('Authentication API (token)', () => {
     expect.assertions(3 * 2);
 
     // create a new user
-    const { email, name, password } = uniqueTestUser();
-    const user = await User.create<Partial<UserDocument>>({ name, emails: [email], password, tenants: [tenantId!] });
+    const user = genUser(tenantId!);
+    await user.save();
 
     // tenantAdmin generates a loginToken
     const res = await request(app)
@@ -273,7 +262,8 @@ describe('Authentication API (token)', () => {
     expect.assertions(3);
 
     // register a new user
-    const { email, name, password } = uniqueTestUser();
+    const { emails, name, password } = genUser(null);
+    const [email] = emails;
     const registerRes = await request(app).post(`/api/auth/register`).send({ name, email, password });
     const { accessToken } = registerRes.body.data;
 
@@ -305,7 +295,8 @@ describe('Authentication API (token)', () => {
     expect.assertions(3);
 
     // register a new user
-    const { email, name, password } = uniqueTestUser();
+    const { emails, name, password } = genUser(null);
+    const [email] = emails;
     const registerRes = await request(app).post(`/api/auth/register`).send({ name, email, password });
     const { accessToken, refreshToken } = registerRes.body.data;
 

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-var-requires  */
 /* eslint-disable no-console */
 
 /**
@@ -16,6 +15,7 @@ import chalk from 'chalk';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
+import type { MigrationDocument } from '../models/migration';
 import Migration from '../models/migration';
 import User from '../models/user';
 import { isProdMode } from '../utils/environment';
@@ -38,27 +38,13 @@ const seeders = [
   'user-core',
   'tenant-tutor',
   'tenant-stem',
-  // 'tenant-cascade',
-  // 'tenant-bootcamp',
-  'activity-chat',
+  'activity-chat-stem',
 ];
 
 const jestFaker = ['tenant', 'JEST', [], ['junior']];
 const demoFakers = [
-  ['tenant', 'OXFORD', ['CHAT_GROUP', 'CLASSROOM', 'QUESTION'], ['junior']], // demo secondary school
-  ['tenant', 'A-PLUS', ['CHAT_GROUP', 'QUESTION', 'TUTOR']], // no levelGroups for tutoring school
-];
-
-// loop tenants,and fake data
-const tenantFakers = [
-  ['typography', [], 0.4],
-  ['user', [], 25, 20, 50, 10],
-  ['tutor', [], 0.2, 3],
-  ['school-course', [], 2],
-  ['chat-group', [], 5, 4, 4],
-  ['classroom', [], 3],
-  ['announcement', [], 10, 2],
-  ['question', [], 5, 5, 5],
+  ['tenant', 'HARVARD', ['CHAT_GROUP', 'CLASSROOM'], ['junior']], // demo secondary school
+  ['tenant', 'A-PLUS', ['CHAT_GROUP', 'TUTOR']], // no levelGroups for tutoring school
 ];
 
 const factory = (argv: string[]) =>
@@ -69,8 +55,15 @@ const factory = (argv: string[]) =>
         ...(argv.includes('--system-tutors') ? [['system-tutor']] : []),
         ...(argv.includes('--jest') ? [jestFaker] : []),
         ...(argv.includes('--demo') ? demoFakers : []),
-        ...tenantFakers,
-        ['book', 100, 3, 10, 5], // in postFaker because of contributions (users from any tenants),
+        ['typography', [], 0.4],
+        ['user', [], 25, 20, 50, 10],
+        ['book', 200, 3, 10, 5], // after user-factory (because of contribution), before school-course
+        ['tutor', [], 0.2, 3],
+        ['school-course', [], 2],
+        ['chat-group', [], 5, 4, 4],
+        ['classroom', [], 3, 5, 5],
+        ['announcement', [], 10, 2],
+        ['question', [], 2, 5, 5],
       ]
     : [];
 
@@ -154,7 +147,8 @@ const sync = async (argv: string[]): Promise<void> => {
       for (const seeder of seeders) {
         try {
           const start = Date.now();
-          const message = await require(`./seed/${seeder}-seed`).seed();
+          // const message = await require(`./seed/${seeder}-seed`).seed();
+          const message = await (await import(`./seed/${seeder}-seed`)).seed();
           console.log(`seed > ${seeder} complete >> [${Math.floor(Date.now() - start)} ms] ${message}`);
         } catch (error) {
           console.error(`ERROR in seeding ${seeder}: `, error);
@@ -170,7 +164,9 @@ const sync = async (argv: string[]): Promise<void> => {
     for (const [faker, ...args] of fakers) {
       try {
         const start = Date.now();
-        const message = await require(`./factory/${faker}-factory`).fake(...args);
+        // const message = await require(`./factory/${faker}-factory`).fake(...args);
+        const message = await (await import(`./factory/${faker}-factory`)).fake(...args);
+
         console.log(`factory > ${faker} complete >>[${Math.floor(Date.now() - start)} ms] ${message}`);
       } catch (error) {
         console.error(`ERROR in factory ${faker}: `, error);
@@ -191,9 +187,11 @@ const sync = async (argv: string[]): Promise<void> => {
         // migrate if it is not done so
         if (!migrated.find(m => m.file === file.name)) {
           try {
-            const message = await require(`./migration/${file.name}`).proceed();
+            // const message = await require(`./migration/${file.name}`).proceed();
+            const message = await (await import(`./migration/${file.name}`)).proceed();
+
             console.log(`migration > ${file.name} complete >> ${message}`);
-            await Migration.create({ file: file.name });
+            await Migration.create<Partial<MigrationDocument>>({ file: file.name });
             migratedFiles.push(file.name);
           } catch (error) {
             console.error(
@@ -202,7 +200,9 @@ const sync = async (argv: string[]): Promise<void> => {
             );
 
             try {
-              const message = await require(`./migration/${file.name}`).rollback();
+              // const message = await require(`./migration/${file.name}`).rollback();
+              const message = await (await import(`./migration/${file.name}`)).rollback();
+
               console.log(`migration > ${file.name} ${chalk.red('RESTORED')} >> ${message}`);
               throw `Error in Migration (rollback successful) ${file.name}`;
             } catch (error) {

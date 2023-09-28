@@ -6,6 +6,7 @@
 import { LOCALE } from '@argonne/common';
 import { Router } from 'express';
 
+import type { LogEventDocument } from '../../models/event/log';
 import LogEvent from '../../models/event/log';
 import type { Level } from '../../utils/log';
 
@@ -22,7 +23,7 @@ router.post('/', async (req, res, next) => {
 
     if (!level || !msg) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-    const { id } = await LogEvent.create({ user: req.userId, level, msg, extra, url });
+    const { id } = await LogEvent.create<Partial<LogEventDocument>>({ user: req.userId, level, msg, extra, url });
     res.status(201).json({ code: MSG_ENUM.COMPLETED, id });
   } catch (error) {
     next(error);

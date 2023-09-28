@@ -5,15 +5,17 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
+import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import DatabaseEvent from '../models/event/database';
 import type { Id, TagDocument } from '../models/tag';
 import Tag, { searchableFields } from '../models/tag';
-import { messageToAdmin } from '../utils/chat';
+import { messageToAdmins } from '../utils/chat';
 import log from '../utils/log';
-import { notifySync } from '../utils/notify-sync';
+import type { BulkWrite } from '../utils/notify-sync';
+import { syncToAllSatellites } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -21,13 +23,24 @@ type Action = 'addRemark';
 
 const { MSG_ENUM } = LOCALE;
 const { DEFAULTS } = configLoader;
-const { assertUnreachable, auth, authGetUser, DELETED_LOCALE, isAdmin, paginateSort, searchFilter, select } = common;
+const {
+  assertUnreachable,
+  auth,
+  authGetUser,
+  DELETED_LOCALE,
+  hubModeOnly,
+  isAdmin,
+  paginateSort,
+  searchFilter,
+  select,
+} = common;
 const { idSchema, querySchema, remarkSchema, removeSchema, tagSchema } = yupSchema;
 
 /**
  * Add Remark
  */
 const addRemark = async (req: Request, args: unknown): Promise<TagDocument & Id> => {
+  hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
 
@@ -38,7 +51,7 @@ const addRemark = async (req: Request, args: unknown): Promise<TagDocument & Id>
   ).lean();
   if (!tag) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await DatabaseEvent.log(userId, `/tags/${id}`, 'REMARK', { remark });
+  await DatabaseEvent.log(userId, `/tags/${id}`, 'REMARK', { args });
   return tag;
 };
 
@@ -46,15 +59,16 @@ const addRemark = async (req: Request, args: unknown): Promise<TagDocument & Id>
  * Create New Tag
  */
 const create = async (req: Request, args: unknown): Promise<TagDocument & Id> => {
+  hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const user = await authGetUser(req);
-  const { tag: fields } = await tagSchema.validate(args);
-  fields.name.enUS = fields.name.enUS.toLowerCase();
+  const { tag: inputFields } = await tagSchema.validate(args);
+  inputFields.name.enUS = inputFields.name.enUS.toLowerCase();
 
   if (!isAdmin(userRoles) && user.creditability < DEFAULTS.CREDITABILITY.CREATE_TAG)
     throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
-  const tag = new Tag(fields);
+  const tag = new Tag(inputFields);
 
   const common = `(ENG): ${tag.name.enUS}, (繁): ${tag.name.zhHK}, (简): ${tag.name.zhCN} [/tags/${tag._id}]`;
   const msg = {
@@ -65,9 +79,11 @@ const create = async (req: Request, args: unknown): Promise<TagDocument & Id> =>
 
   await Promise.all([
     tag.save(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/tags/${tag._id}`, 'CREATE', { tag: fields }),
-    notifySync('CORE', {}, { tagIds: [tag] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/tags/${tag._id}`, 'CREATE', { args }),
+    syncToAllSatellites({
+      bulkWrite: { tags: [{ insertOne: { document: tag.toObject() } }] satisfies BulkWrite<TagDocument> },
+    }),
   ]);
 
   return tag;
@@ -143,6 +159,7 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  * Delete Tag by ID
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
+  hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const user = await authGetUser(req);
   const { id, remark } = await removeSchema.validate(args);
@@ -150,12 +167,11 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   if (!isAdmin(userRoles) && user.creditability < DEFAULTS.CREDITABILITY.REMOVE_TAG)
     throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
+  const update: UpdateQuery<TagDocument> = { name: DELETED_LOCALE, description: DELETED_LOCALE, deletedAt: new Date() };
   const original = await Tag.findOneAndUpdate(
     { _id: id, deletedAt: { $exists: false } },
     {
-      name: DELETED_LOCALE,
-      description: DELETED_LOCALE,
-      deletedAt: new Date(),
+      ...update,
       ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
     },
   ).lean();
@@ -170,9 +186,11 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   };
 
   await Promise.all([
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/tags/${id}`, 'DELETE', { remark, original }),
-    notifySync('CORE', {}, { tagIds: [id] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/tags/${id}`, 'DELETE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: { tags: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TagDocument> },
+    }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -195,10 +213,10 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
  * Update Tag
  */
 const update = async (req: Request, args: unknown): Promise<TagDocument & Id> => {
+  hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const user = await authGetUser(req);
-  const { id, tag: fields } = await idSchema.concat(tagSchema).validate(args);
-  fields.name.enUS = fields.name.enUS.toLowerCase();
+  const { id, tag: updateFields } = await idSchema.concat(tagSchema).validate(args);
 
   if (!isAdmin(userRoles) && user.creditability < DEFAULTS.CREDITABILITY.UPDATE_TAG)
     throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
@@ -206,7 +224,9 @@ const update = async (req: Request, args: unknown): Promise<TagDocument & Id> =>
   const original = await Tag.findOne({ _id: id, deletedAt: { $exists: false } }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const common = `(ENG): ${fields.name.enUS}, (繁): ${fields.name.zhHK}, (简): ${fields.name.zhCN} [/tags/${id}]`;
+  const { name } = updateFields;
+  name.enUS = name.enUS.toLowerCase();
+  const common = `(ENG): ${name.enUS}, (繁): ${name.zhHK}, (简): ${name.zhCN} [/tags/${id}]`;
   const msg = {
     enUS: `A tag is updated: ${common}.`,
     zhCN: `刚更新标签：${common}。`,
@@ -214,13 +234,17 @@ const update = async (req: Request, args: unknown): Promise<TagDocument & Id> =>
   };
 
   const [tag] = await Promise.all([
-    Tag.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/tags/${id}`, 'UPDATE', { original, update: fields }),
-    notifySync('CORE', {}, { tagIds: [id] }),
+    Tag.findByIdAndUpdate(id, updateFields, { fields: select(userRoles), new: true }).lean(),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/tags/${id}`, 'UPDATE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: {
+        tags: [{ updateOne: { filter: { _id: id }, update: updateFields } }] satisfies BulkWrite<TagDocument>,
+      },
+    }),
   ]);
   if (tag) return tag;
-  log('error', `tagController:update()`, { id, ...fields }, userId);
+  log('error', `tagController:update()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 

@@ -8,7 +8,8 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
-  expectChatFormat,
+  expectedChatFormatApollo as expectedChatFormat,
+  expectedDateFormat,
   expectedIdFormat,
   expectedMember,
   expectedRemark,
@@ -19,14 +20,12 @@ import {
   genClassroomUsers,
   genClassroomWithAssignment,
   genQuestion,
-  idsToString,
   jestSetup,
   jestTeardown,
   prob,
-  shuffle,
   testServer,
 } from '../jest';
-import Book, { BookAssignment } from '../models/book';
+import Book from '../models/book';
 import Classroom from '../models/classroom';
 import Content from '../models/content';
 import Level from '../models/level';
@@ -56,17 +55,10 @@ import {
   UPDATE_CLASSROOM_STUDENTS,
   UPDATE_CLASSROOM_TEACHERS,
 } from '../queries/classroom';
-import { schoolYear } from '../utils/helper';
+import { randomItem, schoolYear } from '../utils/helper';
 
 const { MSG_ENUM } = LOCALE;
 const { CHAT } = LOCALE.DB_ENUM;
-
-const expectChatFormatEx = {
-  ...expectChatFormat,
-  title: expect.toBeOneOf([null, expect.any(String)]),
-  createdAt: expect.any(Number),
-  updatedAt: expect.any(Number),
-};
 
 // Top chat of this test suite:
 describe('Classroom GraphQL', () => {
@@ -98,9 +90,9 @@ describe('Classroom GraphQL', () => {
 
     remarks: expect.any(Array), // could be empty array for non publisherAdmin or admin
 
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
 
     contentsToken: expect.any(String),
   };
@@ -119,28 +111,31 @@ describe('Classroom GraphQL', () => {
 
     const classrooms = await Classroom.find({
       tenant: tenantId!,
-      'students.0': { $exists: true },
-      'teachers.0': { $exists: true },
+      students: { $ne: [] },
+      teachers: { $ne: [] },
       deletedAt: { $exists: false },
     }).lean();
 
-    const [classroom] = classrooms.sort(shuffle);
-    const [studentId] = classroom.students.sort(shuffle);
-    const [teacherId] = classroom.teachers.sort(shuffle);
+    const classroom = randomItem(classrooms);
+    const studentId = randomItem(classroom.students);
+    const teacherId = randomItem(classroom.teachers);
 
     const [student, teacher] = await Promise.all([
       User.findOneActive({ _id: studentId }),
       User.findOneActive({ _id: teacherId }),
     ]);
 
-    const studentServer = testServer(student!);
-    const teacherServer = testServer(teacher!);
+    if (!student || !teacher)
+      throw `no valid student or teacher for testing ${classroom._id}, ${studentId}, ${teacherId}`;
+
+    const studentServer = testServer(student);
+    const teacherServer = testServer(teacher);
 
     // student
     const studentAllRes = await studentServer.executeOperation({ query: GET_CLASSROOMS });
     apolloExpect(studentAllRes, 'data', { classrooms: expect.arrayContaining([{ ...expectedFormat, remarks: [] }]) });
 
-    const studentOneRes = await studentServer!.executeOperation({
+    const studentOneRes = await studentServer.executeOperation({
       query: GET_CLASSROOM,
       variables: { id: classroom._id.toString() },
     });
@@ -150,7 +145,7 @@ describe('Classroom GraphQL', () => {
     const teacherAllRes = await teacherServer.executeOperation({ query: GET_CLASSROOMS });
     apolloExpect(teacherAllRes, 'data', { classrooms: expect.arrayContaining([expectedFormat]) });
 
-    const teacherOneRes = await teacherServer!.executeOperation({
+    const teacherOneRes = await teacherServer.executeOperation({
       query: GET_CLASSROOM,
       variables: { id: classroom._id.toString() },
     });
@@ -203,7 +198,7 @@ describe('Classroom GraphQL', () => {
     apolloExpect(res, 'data', {
       attachChatGroupChatToClassroom: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, _id: chat._id.toString(), contents: [content._id.toString()] }],
+        chats: [{ ...expectedChatFormat, _id: chat._id.toString(), contents: [content._id.toString()] }],
       },
     });
 
@@ -229,7 +224,7 @@ describe('Classroom GraphQL', () => {
     apolloExpect(res, 'data', {
       attachClassroomChatToClassroom: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, _id: chat._id.toString(), contents: [content._id.toString()] }],
+        chats: [{ ...expectedChatFormat, _id: chat._id.toString(), contents: [content._id.toString()] }],
       },
     });
 
@@ -240,13 +235,12 @@ describe('Classroom GraphQL', () => {
     expect.assertions(1);
 
     // create a classroom with assignment + homework
-    const { assignment, book, classroom, homework, homeworkContents, assignmentIdx } = await genClassroomWithAssignment(
+    const { assignment, classroom, homework, homeworkContents } = await genClassroomWithAssignment(
       tenantId!,
       normalUser!._id,
     );
 
-    await Promise.all([classroom.save(), assignment.save(), homework.save(), Content.create(homeworkContents)]);
-    const bookAssignment = await BookAssignment.findById(book.assignments[assignmentIdx]).lean();
+    await Promise.all([classroom.save(), assignment.save(), homework.save(), Content.insertMany(homeworkContents)]);
 
     const res = await normalServer!.executeOperation({
       query: SHARE_HOMEWORK_TO_CLASSROOM,
@@ -257,7 +251,10 @@ describe('Classroom GraphQL', () => {
       shareHomeworkToClassroom: {
         ...expectedFormat,
         chats: [
-          { ...expectChatFormatEx, contents: idsToString([bookAssignment!.content, ...idsToString(homeworkContents)]) },
+          {
+            ...expectedChatFormat,
+            contents: [expect.any(String), expect.any(String), ...homeworkContents.map(c => c._id.toString())],
+          },
         ],
       },
     });
@@ -271,7 +268,6 @@ describe('Classroom GraphQL', () => {
 
     const { classroom } = await genClassroom(tenantId!, normalUser!._id); // create a classroom
     const { question, content } = genQuestion(tenantId!, normalUser!._id, classroom._id, 'tutor'); // create source question as tutor
-
     await Promise.all([classroom.save(), question.save(), content.save()]);
 
     const res = await normalServer!.executeOperation({
@@ -281,7 +277,7 @@ describe('Classroom GraphQL', () => {
     apolloExpect(res, 'data', {
       shareQuestionToClassroom: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, contents: [content._id.toString()] }],
+        chats: [{ ...expectedChatFormat, contents: [expect.any(String), ...question.contents.map(c => c.toString())] }],
       },
     });
 
@@ -296,13 +292,13 @@ describe('Classroom GraphQL', () => {
       Tenant.findById(tenantId!),
     ]);
 
-    const [{ _id: book, subjects, level }] = books.sort(shuffle);
-    const [subject] = subjects.sort(shuffle);
+    const { _id: book, subjects, level } = randomItem(books);
+    const subject = randomItem(subjects);
     const schoolClass = `${level.toString().slice(-1)}-X`;
 
     const newStudents = genClassroomUsers(tenantId!, tenant!.school!, level, schoolClass, 30);
-    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevel!._id.toString(), schoolClass, 3);
-    await User.create([...newStudents, ...newTeachers]);
+    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevel!._id, schoolClass, 3);
+    await User.insertMany([...newStudents, ...newTeachers]);
 
     const [student0, student1, ...students] = newStudents;
     const [teacher0, ...teachers] = newTeachers;
@@ -349,10 +345,10 @@ describe('Classroom GraphQL', () => {
     // tenantAdmin update students
     const updateStudentsRes = await tenantAdminServer!.executeOperation({
       query: UPDATE_CLASSROOM_STUDENTS,
-      variables: { id: newId, userIds: idsToString(students) },
+      variables: { id: newId, userIds: students.map(s => s._id.toString()) },
     });
     apolloExpect(updateStudentsRes, 'data', {
-      updateClassroomStudents: { ...expectedFormat, students: idsToString(students) },
+      updateClassroomStudents: { ...expectedFormat, students: students.map(s => s._id.toString()) },
     });
 
     // tenantAdmin addRemark
@@ -375,8 +371,8 @@ describe('Classroom GraphQL', () => {
         ...expectedFormat,
         ...expectedRemark(teacher0!._id, FAKE, true),
         remarks: [
-          { _id: expectedIdFormat, t: expect.any(Number), u: expect.any(String), m: FAKE }, // first addRemark by tenantAdmin
-          { _id: expectedIdFormat, t: expect.any(Number), u: teacher0!._id.toString(), m: FAKE }, //
+          { t: expect.any(Number), u: expect.any(String), m: FAKE }, // first addRemark by tenantAdmin
+          { t: expect.any(Number), u: teacher0!._id.toString(), m: FAKE }, //
         ],
       },
     });
@@ -384,10 +380,10 @@ describe('Classroom GraphQL', () => {
     // teacher update teachers
     const updateTeachers2Res = await teacher0Server.executeOperation({
       query: UPDATE_CLASSROOM_TEACHERS,
-      variables: { id: newId, userIds: idsToString(teachers) },
+      variables: { id: newId, userIds: teachers.map(t => t._id.toString()) },
     });
     apolloExpect(updateTeachers2Res, 'data', {
-      updateClassroomTeachers: { ...expectedFormat, teachers: [teacher0Id, ...idsToString(teachers)] },
+      updateClassroomTeachers: { ...expectedFormat, teachers: [teacher0Id, ...teachers.map(t => t._id.toString())] },
     });
 
     // teacher update students
@@ -445,7 +441,9 @@ describe('Classroom GraphQL', () => {
     apolloExpect(addContentWithNewChatRes, 'data', {
       addClassroomContentWithNewChat: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(teacher0Id, true) }],
+        chats: [
+          { ...expectedChatFormat, contents: [expect.any(String)], members: [expectedMember(teacher0Id, [], true)] },
+        ],
       },
     });
     const chatId = addContentWithNewChatRes.data!.addClassroomContentWithNewChat.chats[0]._id.toString();
@@ -458,7 +456,7 @@ describe('Classroom GraphQL', () => {
     apolloExpect(addContentRes, 'data', {
       addClassroomContent: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] }],
+        chats: [{ ...expectedChatFormat, contents: [expect.any(String), expect.any(String)] }],
       },
     });
     const contentIds = addContentRes.data?.addClassroomContent.chats[0].contents;
@@ -472,8 +470,8 @@ describe('Classroom GraphQL', () => {
       addClassroomContentWithNewChat: {
         ...expectedFormat,
         chats: [
-          { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
-          { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(student0Id, true) },
+          { ...expectedChatFormat, contents: [expect.any(String), expect.any(String)] },
+          { ...expectedChatFormat, contents: [expect.any(String)], members: [expectedMember(student0Id, [], true)] },
         ],
       },
     });
@@ -484,13 +482,7 @@ describe('Classroom GraphQL', () => {
       variables: { id: newId, chatId, contentId: contentIds[0] },
     });
     apolloExpect(recallContentRes, 'data', {
-      recallClassroomContent: {
-        ...expectedFormat,
-        chats: [
-          { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
-          { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(student0Id, true) },
-        ],
-      },
+      recallClassroomContent: expectedFormat, // recallContent() only update classroom.updatedAt
     });
 
     // (teacher) block second content of first chat (student's content)
@@ -499,13 +491,7 @@ describe('Classroom GraphQL', () => {
       variables: { id: newId, chatId, contentId: contentIds[1] },
     });
     apolloExpect(blockContentRes, 'data', {
-      blockClassroomContent: {
-        ...expectedFormat,
-        chats: [
-          { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
-          { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(student0Id, true) },
-        ],
-      },
+      blockClassroomContent: expectedFormat, // blockContent() only update classroom.updatedAt
     });
 
     // (teacher) set chat flag
@@ -514,16 +500,16 @@ describe('Classroom GraphQL', () => {
       query: SET_CLASSROOM_CHAT_FLAG,
       variables: { id: newId, chatId, flag },
     });
+
     apolloExpect(setChatFlagRes, 'data', {
       setClassroomChatFlag: {
         ...expectedFormat,
         chats: [
           {
-            ...expectChatFormatEx,
-            contents: [expect.any(String), expect.any(String)],
-            members: [{ user: teacher0Id, flags: [flag], lastViewedAt: expect.any(Number) }],
+            ...expectedChatFormat,
+            members: [expectedMember(teacher0Id, [flag], true), expectedMember(student0Id, [], true)],
           },
-          { ...expectChatFormatEx, contents: [expect.any(String)] },
+          expectedChatFormat,
         ],
       },
     });
@@ -538,11 +524,10 @@ describe('Classroom GraphQL', () => {
         ...expectedFormat,
         chats: [
           {
-            ...expectChatFormatEx,
-            contents: [expect.any(String), expect.any(String)],
-            members: [{ user: teacher0Id, flags: [], lastViewedAt: expect.any(Number) }],
+            ...expectedChatFormat,
+            members: [expectedMember(teacher0Id, [], true), expectedMember(student0Id, [], true)],
           },
-          { ...expectChatFormatEx, contents: [expect.any(String)] },
+          expectedChatFormat,
         ],
       },
     });
@@ -557,14 +542,11 @@ describe('Classroom GraphQL', () => {
         ...expectedFormat,
         chats: [
           {
-            ...expectChatFormatEx,
+            ...expectedChatFormat,
             contents: [expect.any(String), expect.any(String)],
-            members: [
-              { user: teacher0Id, flags: [], lastViewedAt: expect.any(Number) },
-              { user: student0Id, flags: [], lastViewedAt: expect.any(Number) },
-            ],
+            members: [expectedMember(teacher0Id, [], true), expectedMember(student0Id, [], true)],
           },
-          { ...expectChatFormatEx, contents: [expect.any(String)] },
+          { ...expectedChatFormat, contents: [expect.any(String)] },
         ],
       },
     });
@@ -577,7 +559,7 @@ describe('Classroom GraphQL', () => {
     apolloExpect(updateChatTitleRes, 'data', {
       updateClassroomChatTitle: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, title: FAKE }, expectChatFormatEx],
+        chats: [{ ...expectedChatFormat, title: FAKE }, expectedChatFormat],
       },
     });
 
@@ -589,7 +571,7 @@ describe('Classroom GraphQL', () => {
     apolloExpect(updateChatTitleRes2, 'data', {
       updateClassroomChatTitle: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, title: null }, expectChatFormatEx],
+        chats: [{ ...expectedChatFormat, title: null }, expectedChatFormat],
       },
     });
 

@@ -6,7 +6,8 @@
 import { faker } from '@faker-js/faker';
 import chalk from 'chalk';
 
-import Tag, { TagDocument } from '../../models/tag';
+import type { TagDocument } from '../../models/tag';
+import Tag from '../../models/tag';
 
 /**
  * Generate (factory)
@@ -17,7 +18,7 @@ const fake = async (count = 40): Promise<string> => {
   const tags = Array(count)
     .fill(0)
     .map(
-      _ =>
+      () =>
         new Tag<Partial<TagDocument>>({
           name: {
             enUS: `(ENG-Tag) ${faker.lorem.sentence(3)}`,
@@ -32,8 +33,8 @@ const fake = async (count = 40): Promise<string> => {
         }),
     );
 
-  await Tag.create(tags);
-  return `(${chalk.green(tags.length)} created)`;
+  await Tag.insertMany<Partial<TagDocument>>(tags, { rawResult: true });
+  return `(${chalk.green(tags.length)} tags created)`;
 };
 
 export { fake };

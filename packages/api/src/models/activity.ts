@@ -20,7 +20,8 @@ export type { Id } from './common';
 const { ACTIVITY } = LOCALE.DB_ENUM;
 
 export interface ActivityDocument extends BaseDocument {
-  owners?: (string | Types.ObjectId)[];
+  tenant: Types.ObjectId;
+  owners: Types.ObjectId[];
   status: (typeof LOCALE.DB_TYPE.ACTIVITY.STATUS)[number];
   title: string;
   description: string;
@@ -28,12 +29,12 @@ export interface ActivityDocument extends BaseDocument {
 
   fee: number;
   venue: string;
-  district?: string | Types.ObjectId;
+  district?: Types.ObjectId;
   location?: Point;
 
   schedule: string;
   participants: {
-    user: string | Types.ObjectId;
+    user: Types.ObjectId;
     status: (typeof LOCALE.DB_TYPE.ACTIVITY.PARTICIPANT.STATUS)[number];
     ranking?: number;
   }[];
@@ -47,6 +48,7 @@ const activitySchema = new Schema<ActivityDocument>(
   {
     ...baseDefinition,
 
+    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', index: true },
     owners: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
     status: { type: String, default: ACTIVITY.STATUS.DRAFT },
     title: String,

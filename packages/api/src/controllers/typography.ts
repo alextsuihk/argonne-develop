@@ -5,15 +5,17 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
+import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
 import type { Id, TypographyDocument } from '../models/typography';
 import Typography, { searchableFields } from '../models/typography';
-import { messageToAdmin } from '../utils/chat';
+import { messageToAdmins } from '../utils/chat';
 import log from '../utils/log';
-import { notifySync } from '../utils/notify-sync';
+import type { BulkWrite } from '../utils/notify-sync';
+import { syncToAllSatellites } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -41,7 +43,7 @@ const addRemark = async (req: Request, args: unknown): Promise<TypographyDocumen
 
   if (!typography) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await DatabaseEvent.log(userId, `/typographies/${id}`, 'REMARK', { remark });
+  await DatabaseEvent.log(userId, `/typographies/${id}`, 'REMARK', { args });
   return typography;
 };
 
@@ -50,10 +52,10 @@ const addRemark = async (req: Request, args: unknown): Promise<TypographyDocumen
  */
 const create = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
-  const { typography: fields } = await typographySchema.validate(args);
+  const { userId, userLocale } = auth(req, 'ADMIN');
+  const { typography: inputFields } = await typographySchema.validate(args);
 
-  const typography = new Typography<Partial<TypographyDocument>>(fields);
+  const typography = new Typography<Partial<TypographyDocument>>(inputFields);
   const { _id, title } = typography;
 
   const common = `(ENG): ${title.enUS}, (繁): ${title.zhHK}, (简): ${title.zhCN || title.zhHK} [/typographies/${_id}]`;
@@ -65,9 +67,13 @@ const create = async (req: Request, args: unknown): Promise<TypographyDocument &
 
   await Promise.all([
     typography.save(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'TYPOGRAPHY'),
-    DatabaseEvent.log(userId, `/typographies/${_id}`, 'CREATE', { typography: fields }),
-    notifySync('CORE', {}, { typographyIds: [_id] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/typographies/${_id}`, 'CREATE', { args }),
+    syncToAllSatellites({
+      bulkWrite: {
+        typographies: [{ insertOne: { document: typography.toObject() } }] satisfies BulkWrite<TypographyDocument>,
+      },
+    }),
   ]);
 
   return typography;
@@ -143,19 +149,19 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
+  const { userId, userLocale } = auth(req, 'ADMIN');
   const { id, remark } = await removeSchema.validate(args);
 
+  const update: UpdateQuery<TypographyDocument> = {
+    key: DELETED,
+    title: DELETED_LOCALE,
+    content: DELETED_LOCALE,
+    customs: [],
+    deletedAt: new Date(),
+  };
   const original = await Typography.findOneAndUpdate(
     { _id: id, deletedAt: { $exists: false } },
-    {
-      key: DELETED,
-      title: DELETED_LOCALE,
-      content: DELETED_LOCALE,
-      customs: [],
-      deletedAt: new Date(),
-      ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-    },
+    { ...update, ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
   ).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
@@ -166,9 +172,13 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
     zhHK: `剛刪除文本：${common}。`,
   };
   await Promise.all([
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'TYPOGRAPHY'),
-    DatabaseEvent.log(userId, `/typographies/${id}`, 'DELETE', { remark, original }),
-    notifySync('CORE', {}, { typographyIds: [id] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/typographies/${id}`, 'DELETE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: {
+        typographies: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TypographyDocument>,
+      },
+    }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -193,25 +203,31 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 const update = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
-  const { id, typography: fields } = await idSchema.concat(typographySchema).validate(args);
+  const { id, typography: updateFields } = await idSchema.concat(typographySchema).validate(args);
 
   const original = await Typography.findOne({ _id: id, deletedAt: { $exists: false } }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const common = `(ENG): ${fields.title.enUS}, (繁): ${fields.title.zhHK}, (简): ${fields.title.zhCN} [/typographies/${id}]`;
+  const common = `(ENG): ${updateFields.title.enUS}, (繁): ${updateFields.title.zhHK}, (简): ${updateFields.title.zhCN} [/typographies/${id}]`;
   const msg = {
     enUS: `A typography is updated: ${common}.`,
     zhCN: `刚更新文本：${common}。`,
     zhHK: `剛更新文本：${common}。`,
   };
   const [typography] = await Promise.all([
-    Typography.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'TYPOGRAPHY'),
-    DatabaseEvent.log(userId, `/typographies/${id}`, 'UPDATE', { original, update: fields }),
-    notifySync('CORE', {}, { typographyIds: [id] }),
+    Typography.findByIdAndUpdate(id, updateFields, { fields: select(userRoles), new: true }).lean(),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/typographies/${id}`, 'UPDATE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: {
+        typographies: [
+          { updateOne: { filter: { _id: id }, update: updateFields } },
+        ] satisfies BulkWrite<TypographyDocument>,
+      },
+    }),
   ]);
   if (typography) return typography;
-  log('error', `typography:update()`, { id, ...fields }, userId);
+  log('error', `typographyController:update()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -236,26 +252,48 @@ const addCustom = async (req: Request, args: unknown): Promise<TypographyDocumen
   };
 
   const [typography] = await Promise.all([
-    (await Typography.findOneAndUpdate(
-      { _id: id, deletedAt: { $exists: false }, 'customs.tenant': { $ne: tenantId } },
-      { $push: { customs: { tenant: tenantId, ...custom } } },
-      { fields: select(userRoles), new: true },
-    ).lean()) ||
-      Typography.findOneAndUpdate(
-        { _id: id, deletedAt: { $exists: false }, 'customs.tenant': tenantId },
-        { $set: { 'customs.$': { tenant: tenantId, ...custom } } },
-        { fields: select(userRoles), new: true },
-      ).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, tenant.admins, `TENANT#${tenantId}-TYPOGRAPHY#${id}`),
-    DatabaseEvent.log(userId, `/typographies/${id}`, 'addCustom', {
-      tenant: tenantId,
-      original,
-      update: custom,
+    original.customs.some(custom => custom.tenant.equals(tenantId))
+      ? Typography.findOneAndUpdate(
+          { _id: id, deletedAt: { $exists: false }, 'customs.tenant': tenant._id },
+          { $set: { 'customs.$': { tenant: tenant._id, ...custom } } },
+          { fields: select(userRoles), new: true },
+        ).lean()
+      : Typography.findOneAndUpdate(
+          { _id: id, deletedAt: { $exists: false }, 'customs.tenant': { $ne: tenant._id } },
+          { $push: { customs: { tenant: tenant._id, ...custom } } },
+          { fields: select(userRoles), new: true },
+        ).lean(),
+
+    messageToAdmins(
+      msg,
+      userId,
+      userLocale,
+      isAdmin(userRoles),
+      tenant.admins,
+      `TENANT#${tenant._id}-TYPOGRAPHY#${id}`,
+    ),
+    DatabaseEvent.log(userId, `/typographies/${id}`, 'addCustom', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: {
+        typographies: [
+          {
+            updateOne: {
+              filter: { _id: id, 'customs.tenant': tenantId },
+              update: { $set: { 'customs.$': { tenant: tenantId, ...custom } } },
+            },
+          },
+          {
+            updateOne: {
+              filter: { _id: id, 'customs.tenant': { $ne: tenantId } },
+              update: { $push: { customs: { tenant: tenantId, ...custom } } },
+            },
+          },
+        ] satisfies BulkWrite<TypographyDocument>,
+      },
     }),
-    notifySync('CORE', { tenantId }, { typographyIds: [id] }),
   ]);
   if (typography) return typography;
-  log('error', `typographyController:addCustom()`, { id, tenantId, custom }, userId);
+  log('error', `typographyController:addCustom()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -271,7 +309,7 @@ const removeCustom = async (req: Request, args: unknown): Promise<TypographyDocu
 
   const original = await Typography.findOne({ _id: id, deletedAt: { $exists: false } }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  if (!original.customs.some(({ tenant }) => tenant.toString() === tenantId))
+  if (!original.customs.some(({ tenant }) => tenant.equals(tenantId)))
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const common = `(tenant: ${tenantId}) (ENG): ${original.title.enUS}, (繁): ${original.title.zhHK}, (简): ${original.title.zhCN} [/typographies/${id}]`;
@@ -281,21 +319,33 @@ const removeCustom = async (req: Request, args: unknown): Promise<TypographyDocu
     zhHK: `剛刪除文本：${tenant.name.zhHK} (${common})。`,
   };
 
+  const update: UpdateQuery<TypographyDocument> = { $pull: { customs: { tenant: tenant._id } } };
+
   const [typography] = await Promise.all([
-    Typography.findOneAndUpdate(
-      { _id: id, deletedAt: { $exists: false } },
-      { $pull: { customs: { tenant: tenantId } } },
-      { fields: select(userRoles), new: true },
-    ).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, tenant.admins, `TENANT#${tenantId}-TYPOGRAPHY#${id}`),
+    Typography.findOneAndUpdate({ _id: id, deletedAt: { $exists: false } }, update, {
+      fields: select(userRoles),
+      new: true,
+    }).lean(),
+    messageToAdmins(
+      msg,
+      userId,
+      userLocale,
+      isAdmin(userRoles),
+      tenant.admins,
+      `TENANT#${tenant._id}-TYPOGRAPHY#${id}`,
+    ),
     DatabaseEvent.log(userId, `/typographies/${id}`, 'removeCustom', {
-      tenant: tenantId,
-      originalCustom: original.customs.find(({ tenant }) => tenant.toString() === tenantId),
+      args,
+      originalCustom: original.customs.find(({ tenant }) => tenant.equals(tenantId)),
     }),
-    notifySync('CORE', { tenantId }, { typographyIds: [id] }),
+    syncToAllSatellites({
+      bulkWrite: {
+        typographies: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TypographyDocument>,
+      },
+    }),
   ]);
   if (typography) return typography;
-  log('error', `typography:removeCustom()`, { id, tenantId }, userId);
+  log('error', `typographyController:removeCustom()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 

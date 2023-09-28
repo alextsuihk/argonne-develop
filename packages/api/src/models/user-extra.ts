@@ -17,13 +17,13 @@ export interface UserExtra {
 
   schoolHistories: {
     year: string;
-    school: string | Types.ObjectId;
-    level: string | Types.ObjectId;
+    school: Types.ObjectId;
+    level: Types.ObjectId;
     schoolClass?: string; // e.g. 3F, 4B, no format rule, (teacher might NOT have a schoolClass)
     updatedAt: Date;
   }[];
 
-  favoriteTutors: (string | Types.ObjectId)[];
+  favoriteTutors: Types.ObjectId[];
 }
 
 export const userExtraDefinition = {
@@ -31,6 +31,7 @@ export const userExtraDefinition = {
 
   schoolHistories: [
     {
+      _id: false,
       year: String,
       school: { type: Schema.Types.ObjectId, ref: 'School' },
       level: { type: Schema.Types.ObjectId, ref: 'Level' },

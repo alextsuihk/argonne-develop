@@ -17,9 +17,9 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface GiftCardDocument extends BaseDocument {
-  createdBy: string | Types.ObjectId;
+  createdBy: Types.ObjectId;
   value: number;
-  recipient: string | Types.ObjectId;
+  recipient: Types.ObjectId;
   givenAt: Date;
   redeemedAt: Date;
 }

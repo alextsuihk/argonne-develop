@@ -33,6 +33,7 @@
 // when unregister serviceWorker, clear the associated vapid record in backend server
 
 import webpush from 'web-push';
+
 import configLoader from '../../config/config-loader';
 import { WebpushDocument } from '../../models/schema/webpush';
 

@@ -10,18 +10,18 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
   FAKE,
   FAKE_LOCALE,
   FAKE2_LOCALE,
-  idsToString,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
-  shuffle,
+  randomItem,
+  randomItems,
 } from '../jest';
 import Level from '../models/level';
 import Subject from '../models/subject';
@@ -47,12 +47,12 @@ describe('Subject GraphQL', () => {
   const expectedNormalFormat = {
     _id: expectedIdFormat,
     flags: expect.any(Array),
-    levels: expect.arrayContaining([expect.any(String)]),
+    levels: expect.arrayContaining([expectedIdFormat]),
     name: expectedLocaleFormat,
     remarks: null,
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedAdminFormat = {
@@ -88,7 +88,9 @@ describe('Subject GraphQL', () => {
     expect.assertions(1);
 
     const subjects = await Subject.find({ deletedAt: { $exists: false } }).lean();
-    const res = await guestServer!.executeOperation({ query: GET_SUBJECT, variables: { id: randomId(subjects) } });
+    const id = randomItem(subjects)._id.toString();
+
+    const res = await guestServer!.executeOperation({ query: GET_SUBJECT, variables: { id } });
     apolloExpect(res, 'data', { subject: expectedNormalFormat });
   });
 
@@ -126,18 +128,12 @@ describe('Subject GraphQL', () => {
     expect.assertions(4);
 
     const levels = await Level.find({ deletedAt: { $exists: false } }).lean();
+    const levelIds = levels.map(level => level._id.toString());
 
     // add a document
-    const createdRes = await adminServer!.executeOperation({
-      query: ADD_SUBJECT,
-      variables: {
-        subject: {
-          name: FAKE_LOCALE,
-          levels: idsToString(levels.sort(shuffle).slice(0, 3)),
-        },
-      },
-    });
-    apolloExpect(createdRes, 'data', { addSubject: expectedAdminFormat });
+    const create = { name: FAKE_LOCALE, levels: randomItems(levelIds, 3).sort() };
+    const createdRes = await adminServer!.executeOperation({ query: ADD_SUBJECT, variables: { subject: create } });
+    apolloExpect(createdRes, 'data', { addSubject: { ...expectedAdminFormat, ...create } });
     const newId: string = createdRes.data!.addSubject._id;
 
     // add remark
@@ -150,17 +146,12 @@ describe('Subject GraphQL', () => {
     });
 
     // update newly created document
+    const update = { name: FAKE2_LOCALE, levels: randomItems(levelIds, 3).sort() };
     const updatedRes = await adminServer!.executeOperation({
       query: UPDATE_SUBJECT,
-      variables: {
-        id: newId,
-        subject: {
-          name: FAKE2_LOCALE,
-          levels: idsToString(levels.sort(shuffle).slice(0, 3)),
-        },
-      },
+      variables: { id: newId, subject: update },
     });
-    apolloExpect(updatedRes, 'data', { updateSubject: expectedAdminFormat });
+    apolloExpect(updatedRes, 'data', { updateSubject: { ...expectedAdminFormat, ...update } });
 
     // delete newly created document
     const removedRes = await adminServer!.executeOperation({

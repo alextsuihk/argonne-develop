@@ -2,9 +2,12 @@
  * Remove-Stale
  *
  * remove inter-linked stale documents (assignment, chatGroup, classroom, question, and associated chats & contents etc)
+ *
+ * ! TODO: also add a few demo chatGroups, questions & assignments+homework (with realistic contents)
  */
 
 import { subDays } from 'date-fns';
+import type { Types } from 'mongoose';
 
 import configLoader from '../../config/config-loader';
 import Assignment from '../../models/assignment';
@@ -15,7 +18,6 @@ import type { ContentDocument, Id } from '../../models/content';
 import Content from '../../models/content';
 import Homework from '../../models/homework';
 import Question from '../../models/question';
-import { idsToString } from '../helper';
 import storage from '../storage';
 
 const { DEFAULTS } = configLoader;
@@ -30,22 +32,15 @@ export const removeStale = async (): Promise<void> => {
     Question.find({ updatedAt: { $lt: subDays(Date.now(), DEFAULTS.BYGONE_DAYS) } }).lean(),
   ]);
 
-  const chatIds = idsToString([...chatGroups.map(c => c.chats), ...classrooms.map(c => c.chats)].flat());
+  const chatIds = [...chatGroups.map(c => c.chats), ...classrooms.map(c => c.chats)].flat() as Types.ObjectId[];
   const [assignments, chats] = await Promise.all([
     Assignment.find({ _id: { $in: classrooms.map(c => c.assignments).flat() } }).lean(),
     Chat.find({ _id: { $in: chatIds } }).lean(),
   ]);
 
-  // const [chatContents, homeworks] = await Promise.all([
-  //   Content.find({ _id: { $in: chats.map(c => c.contents).flat() } }).lean(),
-  //   Homework.find({ _id: { $in: assignments.map(a => a.homeworks).flat() } }).lean(),
-  // ]);
-
-  const homeworks = await Homework.find({ _id: { $in: assignments.map(a => a.homeworks).flat() } }).lean();
-  // const [homeworkContents, questionContents] = await Promise.all([
-  //   Content.find({ _id: { $in: homeworks.map(h => h.contents).flat() } }).lean(),
-  //   Content.find({ _id: { $in: questions.map(q => [q.content, ...q.contents]).flat() } }),
-  // ]);
+  const [homeworks] = await Promise.all([
+    Homework.find({ _id: { $in: assignments.map(a => a.homeworks).flat() } }).lean(),
+  ]);
 
   // remove parents belong to chatGroups & classrooms (some chats are attached to other non-bygone chatGroups, classrooms)
   const parentsTrimmedChats: (Pick<ChatDocument, 'parents' | 'contents'> & Id)[] = chats.map(
@@ -54,8 +49,8 @@ export const removeStale = async (): Promise<void> => {
       contents,
       parents: parents.filter(
         p =>
-          !idsToString(chatGroups).includes(p.replace('/chatGroups/', '')) &&
-          !idsToString(classrooms).includes(p.replace('/classrooms/', '')),
+          !chatGroups.some(c => c._id.equals(p.replace('/chatGroups/', ''))) &&
+          !classrooms.some(c => c._id.equals(p.replace('/classrooms/', ''))),
       ),
     }),
   );
@@ -67,7 +62,7 @@ export const removeStale = async (): Promise<void> => {
         $in: [
           ...chats.map(chat => chat.contents).flat(),
           ...homeworks.map(h => h.contents).flat(),
-          ...questions.map(q => [...q.contents, ...q.bidContents]).flat(),
+          ...questions.map(q => [...q.contents, ...q.bids.map(b => b.contents).flat()]).flat(),
         ],
       },
     },
@@ -80,9 +75,9 @@ export const removeStale = async (): Promise<void> => {
     parents: parents.filter(
       p =>
         !(
-          chatIds.includes(p.replace('/chats/', '')) ||
-          idsToString(homeworks).includes(p.replace('/homeworks/', '')) ||
-          idsToString(questions).includes(p.replace('/questions/', ''))
+          chatIds.some(x => x.equals(p.replace('/chats/', ''))) ||
+          homeworks.some(x => x._id.equals(p.replace('/homeworks/', ''))) ||
+          questions.some(x => x._id.equals(p.replace('/questions/', '')))
         ),
     ),
   }));

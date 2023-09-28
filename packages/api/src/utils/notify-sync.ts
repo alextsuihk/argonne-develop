@@ -1,81 +1,102 @@
 /**
  * Notify Users (socket.io / webpush) & Sync Satellite
  *
- * send webpush ONLY if socket connection is not available
  */
 
-import { DocumentSync, LOCALE, NOTIFY_EVENTS } from '@argonne/common';
+import { LOCALE } from '@argonne/common';
+import { subSeconds } from 'date-fns';
 import type { Types } from 'mongoose';
+import webpush from 'web-push';
 
 import configLoader from '../config/config-loader';
-import Job from '../models/job';
+import type { Id, SyncJobDocument } from '../models/sync-job';
+import SyncJob, { SYNC_JOB_CHANNEL } from '../models/sync-job';
 import Tenant from '../models/tenant';
-import type { Id } from '../models/user';
+import type { UserDocument } from '../models/user';
 import User from '../models/user';
+import { redisClient } from '../redis';
 import socketServer from '../socket-server';
-import { idsToString } from './helper';
+import { isTestMode } from './environment';
+
+export type { SyncBulkWrite as BulkWrite } from '../models/sync-job';
 
 const { USER } = LOCALE.DB_ENUM;
-const { config, DEFAULTS } = configLoader;
+const { config } = configLoader;
+const { mailTo, publicKey, privateKey } = config.messenger.webpush;
 
-const TODO_ENABLE_LATER = false;
-console.log('Enable notify-sync.ts webpush() later');
+const webpushEnabled = !!mailTo && !!publicKey && !!privateKey;
+if (webpushEnabled) webpush.setVapidDetails(`mailto:${mailTo}`, publicKey, privateKey);
+
+// Setup options  // TODO: to be implemented
+const webpushOptions = {
+  // TTL: 60,
+};
 
 /**
- * Notify (users' devices) & Sync satellite/hub
+ * (helper) queueSyncJob
+ */
+const queueSyncJob = async (
+  tenant: Types.ObjectId,
+  notify: SyncJobDocument['notify'],
+  sync: SyncJobDocument['sync'],
+) => {
+  await SyncJob.create<Partial<SyncJobDocument>>({
+    tenant,
+    notify,
+    sync,
+    attempt: 0,
+    ...(isTestMode && { completedAt: new Date(), result: 'No Sync in Test Mode' }),
+  });
+  if (!isTestMode) await redisClient.publish(SYNC_JOB_CHANNEL, tenant.toString()); // redis publish, trigger job-runner to proceed
+};
+
+/**
+ * Notify (users' devices) & queue SyncJob
+ *  notification is sent immediately via socket.io (within local cluster)
+ *  for valid satellite, notify & sync is queued into SyncJob
  */
 export const notifySync = async (
-  event: (typeof NOTIFY_EVENTS)[number],
-  { tenantId, userIds: uIds }: { tenantId?: string | Types.ObjectId; userIds?: (string | Types.ObjectId | Id)[] },
-  { jobIds: _, ...docSync }: DocumentSync,
-  opt?: { adjPriority?: number; msg?: string },
+  tenant: Types.ObjectId | null, // null = notify only, sync to no satellite
+  notify: SyncJobDocument['notify'],
+  sync: SyncJobDocument['sync'],
 ) => {
-  const adjPriority = opt?.adjPriority || 0;
-  const msg = opt?.msg;
-  const doc = Object.fromEntries(Object.entries(docSync).map(([k, v]) => [k, idsToString(v)])); // convert ObjectId[] to string[]
+  // send notification (to client connected to local cluster)
+  if (notify) {
+    const { event, msg, userIds } = notify;
 
-  const [users, satelliteTenants] = await Promise.all([
-    User.find(
-      { _id: { $in: uIds }, status: USER.STATUS.ACTIVE, deletedAt: { $exists: false } },
-      '_id subscriptions tenants',
-    ).lean(),
-    Tenant.findSatellites(),
-  ]);
+    // pull subscriptions (webpush info) info from active users
+    const users: (Pick<UserDocument, 'subscriptions'> & Id)[] = await User.find(
+      { _id: { $in: userIds }, status: USER.STATUS.ACTIVE, deletedAt: { $exists: false } },
+      '_id subscriptions',
+    ).lean();
 
-  // determine destination(s) of sync
-  const userTenantIds = Array.from(new Set(idsToString(users.map(user => user.tenants).flat())));
-  const urls =
-    config.mode === 'SATELLITE'
-      ? [DEFAULTS.ARGONNE_URL] // satellite only allows to sync back to Hub
-      : event === 'CORE'
-      ? satelliteTenants.map(t => t.satelliteUrl) // hub sync to ALL satellites
-      : tenantId
-      ? satelliteTenants.filter(t => t._id.toString() === tenantId.toString()).map(t => t.satelliteUrl) // hub syncs to a specific satellite tenant
-      : satelliteTenants.filter(t => userTenantIds.includes(t._id.toString())).map(t => t.satelliteUrl); // use cases: adminChat, contact, oauth, password, role, user-profile, etc
+    // (webpush might not be sent immediately) roll back 5 seconds, webpush notification will not re-trigger fetch
+    const payload = `${event}#${subSeconds(Date.now(), 5).getTime()}`;
 
-  const userIds = idsToString(users);
+    // send socket.io, webpush notification
+    await Promise.all([
+      socketServer.emit({ userIds: users.map(user => user._id), event, msg }), // send socket message
+      webpushEnabled && // send webpush
+        Promise.all(
+          users
+            .map(user => user.subscriptions.map(s => s.subscription))
+            .flat()
+            .map(async sub => webpush.sendNotification(sub, payload, webpushOptions)),
+        ),
+    ]);
+  }
 
-  // send socket.io, webpush notification & queue sync
-  await Promise.all([
-    socketServer.emit(userIds, event, msg), // send socket message
+  // push notify+sync into SyncJob
+  const validSatellite = tenant && (await Tenant.findSatelliteById(tenant)); // check if valid satellite
+  if (validSatellite) await queueSyncJob(validSatellite._id, notify, sync);
+};
 
-    ...(TODO_ENABLE_LATER
-      ? userIds.map(async userId => {
-          const userSocketIds = await socketServer.listSockets(userId);
-          const userSubscriptions =
-            users
-              .find(user => user._id.toString() === userId)
-              ?.subscriptions.filter(({ socketId }) => !userSocketIds.includes(socketId)) ?? [];
-
-          console.log(`TODO: need to send FCM or WebPush ${userId} ---- ${userSubscriptions?.length}`);
-          // TODO: send FCM to subscriptions...... (if subscriptions.length)
-        })
-      : []),
-
-    ...(Object.entries(doc).length
-      ? urls.map(
-          async url => url && Job.queue({ task: 'sync', args: { url, userIds, ...doc }, priority: 10 + adjPriority }),
-        )
-      : []),
-  ]);
+/**
+ * Sync To all Satellites
+ */
+export const syncToAllSatellites = async (sync: SyncJobDocument['sync']) => {
+  if (config.mode === 'HUB') {
+    const satelliteTenants = await Tenant.findSatellites();
+    await Promise.all(satelliteTenants.map(async ({ _id }) => queueSyncJob(_id, null, sync)));
+  }
 };

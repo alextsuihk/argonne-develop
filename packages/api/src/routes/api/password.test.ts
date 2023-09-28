@@ -7,9 +7,9 @@ import request from 'supertest';
 
 import app from '../../app';
 import configLoader from '../../config/config-loader';
-import { PASSWORD_TOKEN_PREFIX } from '../../controllers/password';
-import { jestSetup, jestTeardown, uniqueTestUser } from '../../jest';
+import { genUser, jestSetup, jestTeardown } from '../../jest';
 import User from '../../models/user';
+import { PASSWORD_TOKEN_PREFIX } from '../../utils/sendmail';
 import token from '../../utils/token';
 
 const { MSG_ENUM } = LOCALE;
@@ -19,27 +19,22 @@ const { DEFAULTS } = configLoader;
 describe('Password API Routes', () => {
   let accessToken: string;
   let refreshToken: string;
-  let userId: string;
 
-  const { email, name, password: oldPassword } = uniqueTestUser();
+  const user = genUser(null);
+  const { _id, emails, password: oldPassword } = user; // destructure before saving. user.password is hashed once save()
   const newPassword = User.genValidPassword();
 
-  // create (register) a new user for testing
   beforeAll(async () => {
     await jestSetup([]);
 
-    const res = await request(app).post(`/api/auth/register`).send({ name, email, password: oldPassword });
-    ({ accessToken, refreshToken } = res.body.data);
-    userId = res.body.data.user._id;
+    [{ accessToken, refreshToken }] = await Promise.all([
+      token.createTokens(user, { ip: '0.0.0.0', ua: 'jest' }),
+      user.save(),
+    ]);
   });
 
-  // delete (deregister) the newly created user
   afterAll(async () => {
-    await request(app)
-      .delete(`/api/auth/register`)
-      .set({ Authorization: `Bearer ${accessToken}` })
-      .send({ password: newPassword });
-
+    await User.deleteOne({ _id }); // delete test user
     await jestTeardown();
   });
 
@@ -70,7 +65,7 @@ describe('Password API Routes', () => {
   test('should response "completed" when request password reset', async () => {
     expect.assertions(3);
 
-    const res = await request(app).post('/api/password/reset-request').send({ email });
+    const res = await request(app).post('/api/password/reset-request').send({ email: emails[0] });
     expect(res.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(200);
@@ -91,7 +86,7 @@ describe('Password API Routes', () => {
     expect.assertions(3);
 
     const resetToken = await token.signStrings(
-      [PASSWORD_TOKEN_PREFIX, userId],
+      [PASSWORD_TOKEN_PREFIX, _id.toString()],
       DEFAULTS.AUTH.PASSWORD_RESET_EXPIRES_IN,
     );
 

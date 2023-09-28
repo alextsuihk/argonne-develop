@@ -5,18 +5,21 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
+import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import type { AnnouncementDocument, Id } from '../models/announcement';
 import Announcement, { searchableFields } from '../models/announcement';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
-import { messageToAdmin } from '../utils/chat';
-import { notifySync } from '../utils/notify-sync';
+import { messageToAdmins, startChatGroup } from '../utils/chat';
+import type { BulkWrite } from '../utils/notify-sync';
+import { notifySync, syncToAllSatellites } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
 const { MSG_ENUM } = LOCALE;
+
 const { auth, DELETED, hubModeOnly, isAdmin, paginateSort, searchFilter, select } = common;
 const { announcementSchema, idSchema, querySchema } = yupSchema;
 
@@ -26,14 +29,19 @@ const { announcementSchema, idSchema, querySchema } = yupSchema;
 const create = async (req: Request, args: unknown): Promise<AnnouncementDocument & Id> => {
   const { userId, userLocale, userRoles } = auth(req);
   const {
-    announcement: { tenantId, ...fields },
+    announcement: { tenantId, ...inputFields },
   } = await announcementSchema.validate(args);
 
-  if (!tenantId) hubModeOnly();
-  if (tenantId) await Tenant.findByTenantId(tenantId, userId, isAdmin(userRoles));
-  if (!isAdmin(userRoles) && !tenantId) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
+  if (!tenantId) {
+    hubModeOnly();
+    if (!isAdmin(userRoles)) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
+  }
+  const tenant = tenantId ? await Tenant.findByTenantId(tenantId, userId) : null; // only tenantAdmin could create tenanted-announcement
 
-  const announcement = new Announcement<Partial<AnnouncementDocument>>({ tenant: tenantId, ...fields });
+  const announcement = new Announcement<Partial<AnnouncementDocument>>({
+    ...(tenant && { tenant: tenant._id }),
+    ...inputFields,
+  });
   const { _id, title, message } = announcement;
 
   const common = `${title} - ${message} [/announcements/${_id}]`;
@@ -43,13 +51,26 @@ const create = async (req: Request, args: unknown): Promise<AnnouncementDocument
     zhHK: `剛新增通告：${common}。`,
   };
 
+  const sync = {
+    bulkWrite: {
+      announcements: [{ insertOne: { document: announcement.toObject() } }] satisfies BulkWrite<AnnouncementDocument>,
+    },
+  };
   await Promise.all([
     announcement.save(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], tenantId ? `TENANT#${tenantId}` : 'ANNOUNCEMENT'),
-    DatabaseEvent.log(userId, `/announcements/${_id}`, 'CREATE', { tenant: tenantId, announcement: fields }),
-    tenantId
-      ? notifySync('CORE', {}, { announcementIds: [_id] })
-      : notifySync('ANNOUNCEMENT', { tenantId }, { announcementIds: [_id] }),
+    DatabaseEvent.log(userId, `/announcements/${_id}`, 'CREATE', { args }),
+    tenant
+      ? startChatGroup(
+          tenant._id,
+          `Announcement ${announcement._id} is created (${message})`,
+          tenant.admins,
+          userLocale,
+          `TENANT#${tenant._id} Announcement`,
+        )
+      : messageToAdmins(msg, userId, userLocale, true),
+    tenant
+      ? notifySync(tenant._id, { userIds: tenant.admins, event: 'ANNOUNCEMENT' }, sync) // for tenantAdmins to sync immediately, regular users could pull periodically
+      : syncToAllSatellites(sync),
   ]);
 
   return announcement;
@@ -143,44 +164,53 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  */
 
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId, userLocale, userRoles, userTenants } = auth(req);
+  const { userId, userLocale, userRoles } = auth(req);
   const { id } = await idSchema.validate(args);
 
-  // for non-admin, check if userId is tenantAdmin
-  if (!isAdmin(userRoles)) {
-    const original = await Announcement.findOne({
-      _id: id,
-      tenant: { $in: userTenants },
-      deletedAt: { $exists: false },
-    }).lean();
+  const original = await Announcement.findOne({ _id: id, deletedAt: { $exists: false } }).lean();
+  if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (!original.tenant) hubModeOnly(); // global announcement must be removed in hub-mode
 
-    if (!original?.tenant) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // only admin could remove "announcement for all"
-    await Tenant.findByTenantId(original.tenant, userId);
-  }
+  if (!original.tenant && !isAdmin(userRoles)) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION }; // only admin could remove "global announcement"
 
-  const now = new Date();
-  const announcement = await Announcement.findOneAndUpdate(
-    isAdmin(userRoles)
-      ? { _id: id, deletedAt: { $exists: false } }
-      : { _id: id, tenant: { $in: userTenants }, deletedAt: { $exists: false } },
-    { $unset: { tenant: 1 }, title: DELETED, message: DELETED, beginAt: now, endAt: now, deletedAt: now },
-  ).lean();
-  if (!announcement) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  const tenant = original.tenant ? await Tenant.findByTenantId(original.tenant, userId) : null; // for tenant-specific announcement, check userId is tenantAdmin
 
-  const common = `${announcement.title} - ${announcement.message} [/announcements/${id}]`;
+  const common = `${original.title} - ${original.message} [/announcements/${id}]`;
   const msg = {
     enUS: `An announcement is removed: ${common}.`,
     zhCN: `刚删除通告：${common}。`,
     zhHK: `剛刪除通告：${common}。`,
   };
 
-  const tenantId = announcement.tenant;
+  const update: UpdateQuery<AnnouncementDocument> = {
+    $unset: { tenant: 1 },
+    title: DELETED,
+    message: DELETED,
+    beginAt: new Date(),
+    endAt: new Date(),
+    deletedAt: new Date(),
+  };
+
+  const sync = {
+    bulkWrite: {
+      announcements: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<AnnouncementDocument>,
+    },
+  };
   await Promise.all([
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'ANNOUNCEMENT'),
-    DatabaseEvent.log(userId, `/announcements/${id}`, 'DELETE', { announcement }),
-    tenantId
-      ? notifySync('CORE', {}, { announcementIds: [id] })
-      : notifySync('ANNOUNCEMENT', { tenantId }, { announcementIds: [id] }),
+    Announcement.updateOne({ _id: id }, update),
+    DatabaseEvent.log(userId, `/announcements/${id}`, 'DELETE', { original }),
+    tenant
+      ? startChatGroup(
+          tenant._id,
+          `Announcement ${id} is removed (${original.message})`,
+          tenant.admins,
+          userLocale,
+          `TENANT#${tenant._id} Announcement`,
+        )
+      : messageToAdmins(msg, userId, userLocale, true),
+    tenant
+      ? notifySync(tenant._id, { userIds: tenant.admins, event: 'ANNOUNCEMENT' }, sync) // for tenantAdmins to sync immediately, regular users could pull periodically
+      : syncToAllSatellites(sync),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };

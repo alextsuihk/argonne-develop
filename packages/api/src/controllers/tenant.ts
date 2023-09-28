@@ -1,34 +1,43 @@
 /**
  * Controller: Tenants
  *
+ * ! note: Only support hubMode (as a single source of truth)
+ *
  */
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
+import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
+import School from '../models/school';
 import type { Id, TenantDocument } from '../models/tenant';
 import Tenant, { searchableFields } from '../models/tenant';
-import type { UserDocument } from '../models/user';
 import User from '../models/user';
-import { messageToAdmin } from '../utils/chat';
-import { idsToString, randomString } from '../utils/helper';
+import { messageToAdmins } from '../utils/chat';
+import { randomString } from '../utils/helper';
 import log from '../utils/log';
+import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
+import mail from '../utils/sendmail';
 import storage from '../utils/storage';
 import type { StatusResponse } from './common';
 import common from './common';
 
 type Action = 'addRemark' | 'updateCore';
+type PostAction = 'sendTestEmail';
 
 const { MSG_ENUM } = LOCALE;
-const { USER } = LOCALE.DB_ENUM;
+const { TENANT } = LOCALE.DB_ENUM;
 
-const { assertUnreachable, auth, hubModeOnly, DELETED, DELETED_LOCALE, isRoot, paginateSort, searchFilter } = common;
-const { idSchema, querySchema, remarkSchema, removeSchema, tenantCoreSchema, tenantExtraSchema } = yupSchema;
+const { assertUnreachable, auth, hubModeOnly, DELETED, DELETED_LOCALE, isAdmin, isRoot, paginateSort, searchFilter } =
+  common;
+const { emailSchema, idSchema, querySchema, remarkSchema, removeSchema, tenantCoreSchema, tenantExtraSchema } =
+  yupSchema;
 
-export const select = (userRoles?: string[]) => `${common.select(userRoles)} -apiKey -meta`;
+export const select = (userRoles?: string[]) =>
+  `${common.select(userRoles)} -apiKey -satelliteIp -satelliteVersion -seedings -meta`;
 
 /**
  * (helper) transform
@@ -58,38 +67,33 @@ const addRemark = async (req: Request, args: unknown): Promise<TenantDocument & 
   ).lean();
   if (!tenant) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await DatabaseEvent.log(userId, `/tenants/${id}`, 'REMARK', { remark });
+  await DatabaseEvent.log(userId, `/tenants/${id}`, 'REMARK', { args });
 
   return transform(tenant, true);
 };
 
 /**
  * Create New Tenant (core)
- * first tenantAdmin is also created, for system-generated data
  */
 const create = async (req: Request, args: unknown): Promise<TenantDocument & Id> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ROOT');
-  const { tenant: fields } = await tenantCoreSchema.validate(args);
+  const { userId, userLocale } = auth(req, 'ROOT');
+  const { tenant: inputFields } = await tenantCoreSchema.validate(args);
 
-  if (await Tenant.exists({ code: fields.code.toUpperCase() }))
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // duplicated code
+  const [school, tenantCodeTaken] = await Promise.all([
+    inputFields.school ? School.exists({ _id: inputFields.school }) : null,
+    Tenant.exists({ code: inputFields.code.toUpperCase() }),
+  ]);
+  if (tenantCodeTaken || (inputFields.school && !school)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // duplicated code
 
   const tenant = new Tenant<Partial<TenantDocument>>({
-    ...(fields.satelliteUrl && { apiKey: randomString() }),
-    ...fields,
+    ...inputFields,
+    code: inputFields.code.toUpperCase(),
+    school: school?._id,
+    services: inputFields.services.map(s => s.toUpperCase()).filter(x => Object.keys(TENANT.SERVICE).includes(x)), // accept only intersected services
+    ...(inputFields.satelliteUrl && school && { apiKey: randomString() }), // never expires
   });
   const { _id, name } = tenant;
-
-  // create a system tenantAdmin (non-log-in-able)
-  const admin = new User<Partial<UserDocument>>({
-    status: USER.STATUS.SYSTEM,
-    name: `Admin (${tenant._id})`,
-    emails: [`admin-${randomString().slice(-10)}@@${tenant._id}.net`], // @@ for non-valid email (non-log-in-able)
-    password: User.genValidPassword(),
-    tenants: [tenant._id],
-  });
-  tenant.admins.push(admin._id);
 
   const common = `(ENG):${name.enUS}, (繁):${name.zhHK}, (简):${name.zhCN} [/tenants/${_id}]`;
   const msg = {
@@ -101,25 +105,24 @@ const create = async (req: Request, args: unknown): Promise<TenantDocument & Id>
   // as a fresh tenant, it will not have a satellite, and no need to sync
   await Promise.all([
     tenant.save(),
-    admin.save(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], `TENANT#$_id}`),
-    DatabaseEvent.log(userId, `/tenants/${_id}`, 'CREATE', { tenant: fields }),
+    messageToAdmins(msg, userId, userLocale, true, tenant.admins, `TENANT#${tenant._id}`),
+    DatabaseEvent.log(userId, `/tenants/${_id}`, 'CREATE', { args }),
   ]);
 
   if (tenant.apiKey) delete tenant.apiKey; // hide apiKey if exists
   return transform(tenant.toObject(), true);
 };
 
-/**
- * Create New Tenant (RESTful)
- */
-const createNew: RequestHandler = async (req, res, next) => {
-  try {
-    res.status(201).json({ data: await create(req, { tenant: req.body }) });
-  } catch (error) {
-    next(error);
-  }
-};
+// /**
+//  * Create New Tenant (RESTful)
+//  */
+// const createNew: RequestHandler = async (req, res, next) => {
+//   try {
+//     res.status(201).json({ data: await create(req, { tenant: req.body }) });
+//   } catch (error) {
+//     next(error);
+//   }
+// };
 
 /**
  * Find Multiple Tenants (Apollo)
@@ -130,7 +133,7 @@ const find = async (req: Request, args: unknown): Promise<(TenantDocument & Id)[
   const filter = searchFilter<TenantDocument>(searchableFields, { query });
   const tenants = await Tenant.find(filter, select(req.userRoles)).lean();
   return tenants.map(tenant =>
-    transform(tenant, isRoot(req.userRoles) || (!!req.userId && idsToString(tenant.admins).includes(req.userId))),
+    transform(tenant, isRoot(req.userRoles) || tenant.admins.some(a => req.userId && a.equals(req.userId))),
   );
 };
 
@@ -152,7 +155,7 @@ const findMany: RequestHandler = async (req, res, next) => {
     res.status(200).json({
       meta: { total, ...options },
       data: tenants.map(tenant =>
-        transform(tenant, isRoot(req.userRoles) || (!!req.userId && idsToString(tenant.admins).includes(req.userId))),
+        transform(tenant, isRoot(req.userRoles) || tenant.admins.some(a => req.userId && a.equals(req.userId))),
       ),
     });
   } catch (error) {
@@ -162,16 +165,19 @@ const findMany: RequestHandler = async (req, res, next) => {
 
 /**
  * Delete Tenant by ID
+ *
+ * (no need to push sync to satellite, satellite will be disconnected from now on)
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ROOT');
+  const { userId, userLocale } = auth(req, 'ROOT');
   const { id, remark } = await removeSchema.validate(args);
 
   const original = await Tenant.findByIdAndUpdate(id, {
     $unset: {
       apiKey: 1,
       school: 1,
+      system: 1,
       theme: 1,
       htmlUrl: 1,
       logoUrl: 1,
@@ -203,13 +209,15 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   };
 
   const users = await User.find({ tenants: id }, '_id').lean();
+  const tenantUserIds = users.map(u => u._id.toString());
 
   await Promise.all([
     User.updateMany({ tenants: id }, { $pull: { tenants: id } }),
     original.logoUrl && storage.removeObject(original.logoUrl), // delete file in Minio if exists
-    messageToAdmin(msg, userId, userLocale, userRoles, [], `TENANT#${id}`),
-    DatabaseEvent.log(userId, `/tenants/${id}`, 'DELETE', { remark, original, users: idsToString(users) }),
-    notifySync('_SYNC-ONLY', { tenantId: id }, { tenantIds: [id] }),
+    messageToAdmins(msg, userId, userLocale, true, original.admins, `TENANT#${id}`),
+
+    DatabaseEvent.log(userId, `/tenants/${id}`, 'DELETE', { args, original, tenantUserIds }),
+    notifySync(original._id, { userIds: [userId, ...original.admins.map(u => u._id)], event: 'TENANT' }, null), // just notify, no db sync
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -229,6 +237,26 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 };
 
 /**
+ * Send Test Email
+ * only admin or any tenantAdmin could test email
+ */
+const sendTestEmail = async (req: Request, args: unknown): Promise<StatusResponse> => {
+  const { userId, userLocale, userName, userRoles } = auth(req);
+  const { email } = await emailSchema.validate(args);
+
+  const [user, isTenantAdmin] = await Promise.all([
+    User.findOneActive({ _id: userId, emails: { $in: [email, email.toUpperCase()] } }),
+    isAdmin(userRoles) || Tenant.exists({ admins: userId }),
+  ]);
+  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (!isTenantAdmin) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
+
+  if (await mail.testEmail(userName, userLocale, email)) return { code: MSG_ENUM.COMPLETED };
+
+  throw { statusCode: 400, code: MSG_ENUM.SENDMAIL_ERROR };
+};
+
+/**
  * Update Tenant (core)
  * !note: ONLY root could update
  */
@@ -237,27 +265,38 @@ const updateCore = async (req: Request, args: unknown): Promise<TenantDocument &
   const { userId, userLocale, userRoles } = auth(req, 'ROOT');
   const {
     id,
-    tenant: { code, ...fields },
+    tenant: { code, school, ...inputFields }, // not allow to change school
   } = await idSchema.concat(tenantCoreSchema).validate(args);
 
   const original = await Tenant.findByTenantId(id);
-  if (original.code !== code.toUpperCase()) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // cannot change code
+  if (original.code !== code.toUpperCase() || (school && !original.school?.equals(school)))
+    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // cannot change code or school
 
-  const common = `(ENG): ${fields.name.enUS}, (繁): ${fields.name.zhHK}, (简): ${fields.name.zhCN} [/tenants/${id}]`;
+  const common = `(ENG): ${inputFields.name.enUS}, (繁): ${inputFields.name.zhHK}, (简): ${inputFields.name.zhCN} [/tenants/${id}]`;
   const msg = {
     enUS: `A tenant is updated (core): ${common}.`,
-    zhCN: `刚更新组织  (core)：${common}。`,
-    zhHK: `剛更新組織  (core)：${common}。`,
+    zhCN: `刚更新学校资料 (core)：${common}。`,
+    zhHK: `剛更新學校資料 (core)：${common}。`,
+  };
+
+  const update: UpdateQuery<TenantDocument> = {
+    ...inputFields,
+    services: inputFields.services.map(s => s.toUpperCase()).filter(x => Object.keys(TENANT.SERVICE).includes(x)), // accept only intersected services
   };
 
   const [tenant] = await Promise.all([
-    Tenant.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, original.admins, `TENANT#${id}`),
-    DatabaseEvent.log(userId, `/tenants/${id}`, 'UPDATE-CORE', { original, update: fields }),
-    notifySync('_SYNC-ONLY', { tenantId: id }, { tenantIds: [id] }),
+    Tenant.findByIdAndUpdate(id, update, { fields: select(userRoles), new: true }).lean(),
+    messageToAdmins(msg, userId, userLocale, true, original.admins, `TENANT#${id}`),
+
+    DatabaseEvent.log(userId, `/tenants/${id}`, 'UPDATE-CORE', { args, original }),
+    notifySync(
+      original._id,
+      { userIds: [userId, ...original.admins], event: 'TENANT' },
+      { bulkWrite: { tenants: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TenantDocument> } },
+    ),
   ]);
   if (tenant) return transform(tenant, true);
-  log('error', `tenantController:updateCore()`, { id, code, ...fields }, userId);
+  log('error', `tenantController:updateCore()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -270,22 +309,22 @@ const updateExtra = async (req: Request, args: unknown): Promise<TenantDocument 
   const { userId, userLocale, userRoles } = auth(req);
   const {
     id,
-    tenant: { htmlUrl, logoUrl, ...fields },
+    tenant: { htmlUrl, logoUrl, ...inputFields },
   } = await idSchema.concat(tenantExtraSchema).validate(args);
 
-  const [original, adminCount, supportCount, counselorCount, marshalCount] = await Promise.all([
+  const [original, admins, supports, counselors, marshals] = await Promise.all([
     Tenant.findByTenantId(id, userId, isRoot(userRoles)), // only tenantAdmins or root can update
-    User.countDocuments({ _id: { $in: fields.admins }, tenants: id }),
-    User.countDocuments({ _id: { $in: fields.supports }, tenants: id }),
-    User.countDocuments({ _id: { $in: fields.counselors }, tenants: id }),
-    User.countDocuments({ _id: { $in: fields.marshals }, tenants: id }),
+    User.find({ _id: { $in: inputFields.admins }, tenants: id }).lean(),
+    User.find({ _id: { $in: inputFields.supports }, tenants: id }).lean(),
+    User.find({ _id: { $in: inputFields.counselors }, tenants: id }).lean(),
+    User.find({ _id: { $in: inputFields.marshals }, tenants: id }).lean(),
   ]);
 
   if (
-    fields.admins.length !== adminCount ||
-    fields.supports.length !== supportCount ||
-    fields.counselors.length !== counselorCount ||
-    fields.marshals.length !== marshalCount
+    inputFields.admins.length !== admins.length ||
+    inputFields.supports.length !== supports.length ||
+    inputFields.counselors.length !== counselors.length ||
+    inputFields.marshals.length !== marshals.length
   )
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
@@ -307,39 +346,58 @@ const updateExtra = async (req: Request, args: unknown): Promise<TenantDocument 
     ...(!logoUrl && { logoUrl: 1 }),
     ...(!htmlUrl && { htmlUrl: 1 }),
   };
-  const update = {
-    ...fields,
+  const update: UpdateQuery<TenantDocument> = {
+    ...inputFields,
+    admins: admins.map(u => u._id),
+    supports: supports.map(u => u._id),
+    counselors: counselors.map(u => u._id),
+    marshals: marshals.map(u => u._id),
     ...(logoUrl && { logoUrl }),
     ...(htmlUrl && { htmlUrl }),
     ...(Object.keys(unset).length && { $unset: unset }),
   };
 
-  const minioAddItems: string[] = [];
-  if (htmlUrl && original.htmlUrl !== htmlUrl) minioAddItems.push(htmlUrl);
-  if (logoUrl && original.logoUrl !== logoUrl) minioAddItems.push(logoUrl);
+  const addFiles: string[] = []; // add files to minio
+  if (htmlUrl && original.htmlUrl !== htmlUrl) addFiles.push(htmlUrl);
+  if (logoUrl && original.logoUrl !== logoUrl) addFiles.push(logoUrl);
 
-  const minioRemoveItems: string[] = [];
-  if (original.htmlUrl && original.htmlUrl !== htmlUrl) minioRemoveItems.push(original.htmlUrl);
-  if (original.logoUrl && original.logoUrl !== logoUrl) minioRemoveItems.push(original.logoUrl);
+  const removeFiles: string[] = []; // remove files from minio
+  if (original.htmlUrl && original.htmlUrl !== htmlUrl) removeFiles.push(original.htmlUrl);
+  if (original.logoUrl && original.logoUrl !== logoUrl) removeFiles.push(original.logoUrl);
 
   const [tenant] = await Promise.all([
     Tenant.findByIdAndUpdate(id, update, { fields: select(userRoles), new: true }).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [...original.admins, ...fields.admins], `TENANT#${id}`),
-    DatabaseEvent.log(userId, `/tenants/${id}`, 'UPDATE-EXTRA', { original, update: fields }),
-
+    messageToAdmins(msg, userId, userLocale, isRoot(userRoles), inputFields.admins, `TENANT#${id}`),
+    DatabaseEvent.log(userId, `/tenants/${id}`, 'UPDATE-EXTRA', { args, original }),
     notifySync(
-      '_SYNC-ONLY',
-      { tenantId: id },
-      {
-        tenantIds: [id],
-        ...(minioAddItems.length && { minioAddItems }),
-        ...(minioRemoveItems.length && { minioRemoveItems }),
-      },
+      original._id,
+      { userIds: [userId, ...admins.map(u => u._id)], event: 'TENANT' },
+      { bulkWrite: { tenants: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TenantDocument> } },
     ),
   ]);
-  if (tenant) return transform(tenant, isRoot(userRoles) || idsToString(tenant.admins).includes(userId));
-  log('error', `tenantController:updateExtra()`, { id, htmlUrl, logoUrl, ...fields }, userId);
+
+  if (tenant) return transform(tenant, isRoot(userRoles) || tenant.admins.some(a => a.equals(userId)));
+  log('error', `tenantController:updateExtra()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
+ * Post Action (RESTful)
+ */
+const postHandler: RequestHandler<{ action?: PostAction }> = async (req, res, next) => {
+  const { action } = req.params;
+  try {
+    switch (action) {
+      case undefined:
+        return res.status(201).json({ data: await create(req, { tenant: req.body }) });
+      case 'sendTestEmail':
+        return res.status(200).json(await sendTestEmail(req, req.body));
+      default:
+        assertUnreachable(action);
+    }
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**
@@ -368,11 +426,12 @@ const updateById: RequestHandler<{ id: string; action?: Action }> = async (req, 
 export default {
   addRemark,
   create,
-  createNew,
   find,
   findMany,
+  postHandler,
   remove,
   removeById,
+  sendTestEmail,
   updateById,
   updateCore,
   updateExtra,

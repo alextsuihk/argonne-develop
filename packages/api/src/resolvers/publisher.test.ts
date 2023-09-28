@@ -10,6 +10,7 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -22,7 +23,7 @@ import {
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
+  randomItem,
 } from '../jest';
 import Publisher from '../models/publisher';
 import type { Id, UserDocument } from '../models/user';
@@ -44,8 +45,8 @@ describe('Publisher GraphQL', () => {
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let normalUser: (UserDocument & Id) | null;
-  let url: string;
-  let url2: string;
+  let url: string | undefined;
+  let url2: string | undefined;
 
   const expectedNormalFormat = {
     _id: expectedIdFormat,
@@ -56,9 +57,9 @@ describe('Publisher GraphQL', () => {
     logoUrl: expect.toBeOneOf([null, expect.any(String)]),
     website: expect.toBeOneOf([null, expect.any(String)]),
     remarks: null,
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedAdminFormat = {
@@ -71,7 +72,7 @@ describe('Publisher GraphQL', () => {
       apollo: true,
     }));
   });
-  afterAll(async () => Promise.all([jestRemoveObject(url), jestRemoveObject(url2), jestTeardown()]));
+  afterAll(async () => Promise.all([url && jestRemoveObject(url), url2 && jestRemoveObject(url2), jestTeardown()]));
 
   test('should response an array of data when GET all', async () => {
     expect.assertions(1);
@@ -94,7 +95,8 @@ describe('Publisher GraphQL', () => {
     expect.assertions(1);
 
     const publishers = await Publisher.find({ deletedAt: { $exists: false } }).lean();
-    const res = await guestServer!.executeOperation({ query: GET_PUBLISHER, variables: { id: randomId(publishers) } });
+    const id = randomItem(publishers)._id.toString();
+    const res = await guestServer!.executeOperation({ query: GET_PUBLISHER, variables: { id } });
     apolloExpect(res, 'data', { publisher: expectedNormalFormat });
   });
 

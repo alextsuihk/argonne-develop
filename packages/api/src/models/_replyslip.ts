@@ -13,12 +13,13 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface ReplySlipDocument extends BaseDocument {
+  classrooms: Types.ObjectId[];
   title: string;
   body: string;
   choices: string[];
   replies: {
-    student: string | Types.ObjectId;
-    parent: string | Types.ObjectId;
+    student: Types.ObjectId;
+    parent: Types.ObjectId;
     repliedAt?: Date;
     reply?: number;
   }[];
@@ -28,6 +29,8 @@ const { DEFAULTS } = configLoader;
 const replySlipSchema = new Schema<ReplySlipDocument>(
   {
     ...baseDefinition,
+
+    classrooms: [{ type: Schema.Types.ObjectId, ref: 'Classroom', index: true }],
 
     title: String,
     body: String,
@@ -40,7 +43,7 @@ const replySlipSchema = new Schema<ReplySlipDocument>(
         reply: Number,
       },
     ],
-    createdAt: { type: Date, default: Date.now, expires: DEFAULTS.MONGOOSE.EXPIRES.REPLYSLIP },
+    createdAt: { type: Date, default: Date.now, expires: DEFAULTS.MONGOOSE.EXPIRES.REPLY_SLIP },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );

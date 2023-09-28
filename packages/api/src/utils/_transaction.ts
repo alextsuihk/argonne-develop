@@ -20,7 +20,7 @@
 //   const session = await Transaction.startSession();
 
 //   await session.withTransaction(() => {
-//     return Transaction.create([{ name: 'Test' }], { session: session });
+//     return Transaction.create<Partial<>>([{ name: 'Test' }], { session: session });
 //   });
 // };
 

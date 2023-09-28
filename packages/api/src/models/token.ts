@@ -13,7 +13,7 @@ import { model, Schema } from 'mongoose';
 import configLoader from '../config/config-loader';
 
 export interface TokenDocument extends Document {
-  user: string | Types.ObjectId;
+  user: Types.ObjectId;
   token: string;
   expireAt: Date;
   authUser: string | Types.ObjectId;

@@ -17,17 +17,17 @@ import type { HomeworkDocument } from './homework';
 export type { Id } from './common';
 
 export interface AssignmentDocument extends BaseDocument {
-  classroom: string | Types.ObjectId;
+  classroom: Types.ObjectId;
   chapter?: string;
   title?: string;
   deadline: Date;
 
-  bookAssignments: (string | Types.ObjectId | (BookAssignmentDocument & Id))[];
+  bookAssignments: (Types.ObjectId | (BookAssignmentDocument & Id))[];
   manualAssignments: string[]; // e.g. Chapter# 1, question# 2B
   maxScores: number[];
 
-  job?: string | Types.ObjectId; // grading job
-  homeworks: (string | Types.ObjectId | (HomeworkDocument & Id))[];
+  job?: Types.ObjectId; // grading job
+  homeworks: (Types.ObjectId | (HomeworkDocument & Id))[];
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;

@@ -43,7 +43,7 @@ describe('PresignedUrl GraphQL', () => {
       query: ADD_PRESIGNED_URL,
       variables: { bucketType: 'invalid', ext: 'docs' },
     });
-    apolloExpect(res1, 'error', 'bucketType must be one of the following values: private, public');
+    apolloExpect(res1, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
 
     // without bucketType
     const res2 = await normalServer!.executeOperation({ query: ADD_PRESIGNED_URL, variables: { ext: 'jpg' } });

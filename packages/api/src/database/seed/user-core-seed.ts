@@ -8,7 +8,6 @@ import os from 'node:os';
 
 import { LOCALE } from '@argonne/common';
 import chalk from 'chalk';
-import type { Types } from 'mongoose';
 
 import configLoader from '../../config/config-loader';
 import type { UserDocument } from '../../models/user';
@@ -26,11 +25,11 @@ const seed = async (): Promise<string> => {
   const adminPassword = User.genValidPassword(`${os.hostname}_`);
 
   const users: Partial<UserDocument>[] = [
-    // {
-    //   status: USER.STATUS.SYSTEM,
-    //   name: 'System',
-    //   emails: [`system@@${DEFAULTS.DOMAIN}`], // invalid email format, non-login-able
-    // },
+    {
+      status: USER.STATUS.SYSTEM,
+      name: 'System',
+      emails: [`system@@${DEFAULTS.DOMAIN}`], // invalid email format, non-login-able
+    },
     // {
     //   status: USER.STATUS.SYSTEM,
     //   name: 'OCR',
@@ -43,13 +42,13 @@ const seed = async (): Promise<string> => {
     // },
     {
       status: USER.STATUS.ACCOUNT,
-      name: 'Withheld Account',
-      emails: [`withheld@@${DEFAULTS.DOMAIN}`], // invalid email format, non-login-able
+      name: 'Account',
+      emails: [`account@@${DEFAULTS.DOMAIN}`], // invalid email format, non-login-able
     },
     {
       status: USER.STATUS.ACCOUNT,
-      name: 'Account',
-      emails: [`account@@${DEFAULTS.DOMAIN}`], // invalid email format, non-login-able
+      name: 'Withheld Account',
+      emails: [`withheld@@${DEFAULTS.DOMAIN}`], // invalid email format, non-login-able
     },
     {
       status: USER.STATUS.CHARITY,
@@ -89,7 +88,7 @@ const seed = async (): Promise<string> => {
       new User<Partial<UserDocument>>({ password: user.password ?? User.genValidPassword(), tenants: [], ...user }),
   );
 
-  await User.create(newUsers); // must use create() to execute pre-save hook for password-hashing
+  await User.insertMany<Partial<UserDocument>>(newUsers, { rawResult: true }); // must use create() to execute pre-save hook for password-hashing
   return `(${chalk.green(users.length)} created) [${chalk.bgCyan('adminPassword: ', adminPassword)}]`;
 };
 

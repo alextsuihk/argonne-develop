@@ -8,7 +8,7 @@ import chalk from 'chalk';
 
 import Tenant from '../../models/tenant';
 import Typography from '../../models/typography';
-import { mongoId, shuffle } from '../../utils/helper';
+import { randomItems, shuffle } from '../../utils/helper';
 
 /**
  * Generate (factory)
@@ -25,12 +25,11 @@ const fake = async (codes: string[], probability: 0.5): Promise<string> => {
   ]);
 
   tenants.sort(shuffle).forEach(tenant => {
-    const selectedTypographies = typographies.sort(shuffle).slice(0, Math.floor(typographies.length * probability));
+    const selectedTypographies = randomItems(typographies, Math.floor(typographies.length * probability));
 
     selectedTypographies.forEach(typography => {
       total++;
       typography.customs.push({
-        _id: mongoId(),
         tenant: tenant._id,
         title: {
           enUS: `(ENG-Tenant) ${faker.lorem.sentence(3)}`,
@@ -47,7 +46,7 @@ const fake = async (codes: string[], probability: 0.5): Promise<string> => {
   });
 
   await Promise.all(typographies.filter(t => t.customs.length).map(async t => t.save()));
-  return `(${chalk.green(total)} custom typographies created for ${tenants.length} tenants)`;
+  return `(${chalk.green(total)} custom typographies created for ${chalk.green(tenants.length)} tenants)`;
 };
 
 export { fake };

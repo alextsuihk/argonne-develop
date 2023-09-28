@@ -80,6 +80,15 @@ export const REMOVE_TENANT = gql`
   }
 `;
 
+export const SEND_TEST_EMAIL = gql`
+  ${STATUS_RESPONSE}
+  mutation SendTestEmail($email: String!) {
+    sendTestEmail(email: $email) {
+      ...StatusResponse
+    }
+  }
+`;
+
 export const UPDATE_TENANT_CORE = gql`
   ${TENANT_FIELDS}
   mutation UpdateTenantCore($id: ID!, $tenant: TenantCoreInput!) {

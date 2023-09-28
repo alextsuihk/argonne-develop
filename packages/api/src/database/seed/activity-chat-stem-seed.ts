@@ -1,5 +1,5 @@
 /**
- * Seeder: Activity & Chat
+ * Seeder: Activity & ChatGroups (for STEM)
  *
  */
 
@@ -21,12 +21,13 @@ const { ACTIVITY, CHAT_GROUP } = LOCALE.DB_ENUM;
 
 const seed = async (): Promise<string> => {
   const [{ alexId }, stemTenant] = await Promise.all([User.findSystemAccountIds(), Tenant.exists({ code: 'STEM' })]);
+  if (!alexId) throw 'alexId is not available';
+  if (!stemTenant) throw 'stemTenant is not properly initialized';
 
   // activities
   const activities: Partial<ActivityDocument>[] = [
     {
       status: ACTIVITY.STATUS.DRAFT,
-      owners: [alexId],
       title: 'Python For Everything',
       description: 'Learn Python Programming for non-STEM',
       fee: 0,
@@ -35,7 +36,6 @@ const seed = async (): Promise<string> => {
     },
     {
       status: ACTIVITY.STATUS.PENDING,
-      owners: [alexId],
       title: '國際象棋研習班 (七月－黃)',
       description: 'TODO',
       fee: 100,
@@ -43,7 +43,6 @@ const seed = async (): Promise<string> => {
     },
     {
       status: ACTIVITY.STATUS.OPEN,
-      owners: [alexId],
       title: 'Javascript for Beginner',
       description: 'TODO',
     },
@@ -115,17 +114,13 @@ const seed = async (): Promise<string> => {
     },
   ];
 
-  // const chatGroups: Partial<ChatGroupDocument>[] = [];
-  // const chats: Partial<ChatDocument>[] = [];
-  // const contents: Partial<ContentDocument>[] = [];
-
   const groups = seedingChatGroups.map(seedingChatGroup => {
     const content = new Content<Partial<ContentDocument>>({ creator: alexId, data: `Welcome` });
     const chat = new Chat<Partial<ChatDocument>>({ members: [], contents: [content._id] });
     const chatGroup = new ChatGroup<Partial<ChatGroupDocument>>({
       ...seedingChatGroup,
       membership: CHAT_GROUP.MEMBERSHIP.NORMAL,
-      tenant: stemTenant!._id,
+      tenant: stemTenant._id,
       users: [alexId],
       admins: [alexId],
       chats: [chat._id],
@@ -138,10 +133,22 @@ const seed = async (): Promise<string> => {
   });
 
   await Promise.all([
-    Activity.create(activities),
-    ChatGroup.create(groups.map(group => group.chatGroup)),
-    Chat.create(groups.map(group => group.chat)),
-    Content.create(groups.map(group => group.content)),
+    Activity.insertMany<Partial<ActivityDocument>>(
+      activities.map(a => ({ ...a, tenant: stemTenant._id, owners: [alexId] })),
+      { rawResult: true },
+    ),
+    ChatGroup.insertMany<Partial<ChatGroupDocument>>(
+      groups.map(group => group.chatGroup),
+      { rawResult: true },
+    ),
+    Chat.insertMany<Partial<ChatDocument>>(
+      groups.map(group => group.chat),
+      { rawResult: true },
+    ),
+    Content.insertMany<Partial<ContentDocument>>(
+      groups.map(group => group.content),
+      { rawResult: true },
+    ),
   ]);
   return `(${chalk.green(activities.length)} activities - ${chalk.green(groups.length)} chatGroups created)`;
 };

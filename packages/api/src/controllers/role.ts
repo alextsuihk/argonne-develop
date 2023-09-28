@@ -9,8 +9,10 @@ import mongoose from 'mongoose';
 
 import AccessEvent from '../models/event/access';
 import DatabaseEvent from '../models/event/database';
+import type { UserDocument } from '../models/user';
 import User from '../models/user';
-import { messageToAdmin } from '../utils/chat';
+import { messageToAdmins } from '../utils/chat';
+import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 import common from './common';
 
@@ -20,8 +22,6 @@ const { MSG_ENUM } = LOCALE;
 const { USER } = LOCALE.DB_ENUM;
 const { auth } = common;
 const { idSchema, roleSchema } = yupSchema;
-
-// const find ==
 
 /**
  * Find User's Roles
@@ -52,9 +52,10 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  * Update User Role (add / remove)
  */
 const updateRole = async (req: Request, args: unknown, action: Action): Promise<string[]> => {
-  const { userId: adminId, userLocale, userRoles } = auth(req, 'ADMIN');
+  const { userId: adminId, userLocale, userName } = auth(req, 'ADMIN');
   const { id: userId, role } = await idSchema.concat(roleSchema).validate(args);
 
+  if (!Object.keys(USER.ROLE).includes(role)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
   if (role === USER.ROLE.ROOT) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
   const user =
@@ -62,12 +63,12 @@ const updateRole = async (req: Request, args: unknown, action: Action): Promise<
       ? await User.findOneAndUpdate(
           { _id: userId, roles: { $ne: role } },
           { $push: { roles: role } },
-          { fields: 'roles', new: true },
+          { fields: 'roles tenants', new: true },
         ).lean()
       : await User.findOneAndUpdate(
           { _id: userId, roles: role },
           { $pull: { roles: role } },
-          { fields: 'roles', new: true },
+          { fields: 'roles tenants', new: true },
         ).lean();
 
   if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
@@ -85,11 +86,32 @@ const updateRole = async (req: Request, args: unknown, action: Action): Promise<
           zhHK: `剛刪除角色 (${role}) [/users/${userId}]。`,
         };
 
+  const title = {
+    enUS: `Admin Message (${userName})`,
+    zhCN: `管理员留言 (${userName})`,
+    zhHK: `管理員留言 (${userName})`,
+  };
+
   await Promise.all([
-    messageToAdmin(msg, adminId, userLocale, userRoles, [userId], `USER#${userId}`),
+    messageToAdmins(msg, adminId, userLocale, true, [userId], `USER#${userId}`, title),
     AccessEvent.log(adminId, `/roles/${userId}`, { role }),
-    DatabaseEvent.log(adminId, `/roles/${userId}`, action, role),
-    notifySync('RENEW-TOKEN', { userIds: [userId] }, { userIds: [userId] }),
+    DatabaseEvent.log(adminId, `/roles/${userId}`, action, { args }),
+    notifySync(
+      user.tenants[0] || null,
+      { userIds: [userId], event: 'AUTH-RENEW-TOKEN' },
+      {
+        bulkWrite: {
+          users: [
+            {
+              updateOne: {
+                filter: { _id: userId },
+                update: action === 'addRole' ? { $addToSet: { roles: role } } : { $pull: { roles: role } },
+              },
+            },
+          ] satisfies BulkWrite<UserDocument>,
+        },
+      },
+    ),
   ]);
 
   return user.roles;

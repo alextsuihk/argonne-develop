@@ -9,10 +9,18 @@ import type { Types } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
-import { FAKE, FAKE_ID, prob, randomId } from '../../jest';
+import { FAKE, FAKE_ID, prob } from '../../jest';
 import type { BaseDocument } from '../../models/common/base';
 
 type LooseAutocomplete<T extends string> = T | Omit<string, T>;
+
+type ConvertObjectIdToString<T extends object> = {
+  [K in keyof T]: T[K] extends Types.ObjectId | undefined
+    ? string | undefined
+    : T[K] extends Types.ObjectId[]
+    ? string[]
+    : T[K];
+};
 
 const { MSG_ENUM } = LOCALE;
 
@@ -33,7 +41,7 @@ const createUpdateDelete = async <T extends BaseDocument>(
     headers?: Record<string, unknown>;
     data: Record<string, unknown>;
   } & (
-    | { expectedMinFormat: Partial<T> }
+    | { expectedMinFormat: Partial<ConvertObjectIdToString<T>> }
     | { expectedResponse: { statusCode: number; data: Record<string, unknown> } }
     | { never?: never }
   ))[],
@@ -70,7 +78,7 @@ const createUpdateDelete = async <T extends BaseDocument>(
           .send(data)
           .set(task.headers ?? headers);
 
-    console.log('restful debug [action, extra] >>> ', action, extra);
+    // console.log('restful debug [action, extra] >>> ', action, extra);
 
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
 
@@ -187,10 +195,10 @@ const getMany = async <T>(
 
   if (testGetById) {
     if (!allDocs.length) throw `rest-api-test.ts:${route} getMany() return empty array`;
-    const randomItemId = randomId(allDocs);
+    const _id = allDocs[Math.floor(Math.random() * allDocs.length)]._id as string;
 
-    const getByIdRes = await request(app).get(`/api/${route}/${randomItemId}`).set(headers);
-    expect(getByIdRes.body).toEqual({ data: expect.objectContaining(expectedMinFormat) });
+    const getByIdRes = await request(app).get(`/api/${route}/${_id}`).set(headers);
+    expect(getByIdRes.body).toEqual({ data: expect.objectContaining({ ...expectedMinFormat, _id }) });
     expect(getByIdRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(getByIdRes.status).toBe(200);
   }

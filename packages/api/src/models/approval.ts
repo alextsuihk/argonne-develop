@@ -15,9 +15,9 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface ApprovalDocument extends BaseDocument {
-  requestor: string | Types.ObjectId;
-  approvers: (string | Types.ObjectId)[]; // list of allowed approvers
-  approvedBy?: string | Types.ObjectId;
+  requestor: Types.ObjectId;
+  approvers: Types.ObjectId[]; // list of allowed approvers
+  approvedBy?: Types.ObjectId;
   approvedAt?: Date;
 
   task: string; // `/questions/{$qid}`

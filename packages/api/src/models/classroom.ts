@@ -18,22 +18,22 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface ClassroomDocument extends BaseDocument {
-  tenant: string | Types.ObjectId;
-  level: string | Types.ObjectId;
-  subject: string | Types.ObjectId;
+  tenant: Types.ObjectId;
+  level: Types.ObjectId;
+  subject: Types.ObjectId;
   year: string;
   schoolClass: string; // e.g. 1-A
   title?: string;
   room?: string;
   schedule?: string;
 
-  books: (string | Types.ObjectId)[];
+  books: Types.ObjectId[];
 
-  teachers: (string | Types.ObjectId)[];
-  students: (string | Types.ObjectId)[];
+  teachers: Types.ObjectId[];
+  students: Types.ObjectId[];
 
-  chats: (string | Types.ObjectId | (ChatDocument & Id))[];
-  assignments: (string | Types.ObjectId)[];
+  chats: (Types.ObjectId | (ChatDocument & Id))[];
+  assignments: Types.ObjectId[];
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;

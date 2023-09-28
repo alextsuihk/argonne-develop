@@ -12,6 +12,7 @@ import {
   apolloExpect,
   ApolloServer,
   domain,
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -20,14 +21,13 @@ import {
   FAKE2,
   FAKE2_LOCALE,
   genUser,
-  idsToString,
   jestPutObject,
   jestRemoveObject,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
-  shuffle,
+  randomItem,
+  randomItems,
   testServer,
 } from '../jest';
 import School from '../models/school';
@@ -38,6 +38,7 @@ import {
   ADD_TENANT_REMARK,
   GET_TENANTS,
   REMOVE_TENANT,
+  SEND_TEST_EMAIL,
   UPDATE_TENANT_CORE,
   UPDATE_TENANT_EXTRA,
 } from '../queries/tenant';
@@ -47,10 +48,15 @@ const { TENANT } = LOCALE.DB_ENUM;
 
 // Top tenant of this test suite:
 describe('Tenant GraphQL', () => {
+  let adminServer: ApolloServer | null;
+  let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let rootServer: ApolloServer | null;
   let rootUser: (UserDocument & Id) | null;
+  let tenantAdmin: (UserDocument & Id) | null;
+  let tenantAdminServer: ApolloServer | null;
+
   let htmlUrl: string;
   let htmlUrl2: string;
   let logoUrl: string;
@@ -61,9 +67,9 @@ describe('Tenant GraphQL', () => {
     flags: expect.any(Array),
     code: expect.any(String),
     name: expectedLocaleFormat,
-    school: expect.toBeOneOf([null, expect.any(String)]),
+    school: expect.toBeOneOf([null, expectedIdFormat]),
 
-    admins: expect.any(Array),
+    admins: expect.any(Array), // could be empty array
     supports: expect.any(Array), // could be empty array
     counselors: expect.any(Array), // could be empty array
     marshals: expect.any(Array), // could be empty array
@@ -81,9 +87,9 @@ describe('Tenant GraphQL', () => {
 
     remarks: null,
 
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedRootFormat = {
@@ -92,9 +98,8 @@ describe('Tenant GraphQL', () => {
   };
 
   beforeAll(async () => {
-    ({ guestServer, normalServer, rootServer, rootUser } = await jestSetup(['guest', 'normal', 'root'], {
-      apollo: true,
-    }));
+    ({ adminServer, adminUser, guestServer, normalServer, rootServer, rootUser, tenantAdmin, tenantAdminServer } =
+      await jestSetup(['admin', 'guest', 'normal', 'root', 'tenantAdmin'], { apollo: true }));
   });
   afterAll(async () =>
     Promise.all([
@@ -112,18 +117,47 @@ describe('Tenant GraphQL', () => {
     apolloExpect(res, 'data', { tenants: expect.arrayContaining([expectedNormalFormat]) });
   });
 
+  test('should fail when sending a test email (without email or wrong email)', async () => {
+    expect.assertions(2);
+
+    // without email
+    const res1 = await normalServer!.executeOperation({ query: SEND_TEST_EMAIL });
+    apolloExpect(res1, 'errorContaining', 'Variable "$email" of required type "String!" was not provided');
+
+    // with wrong email
+    const email = 'wrong@email.com';
+    const res2 = await normalServer!.executeOperation({ query: SEND_TEST_EMAIL, variables: { email } });
+    apolloExpect(res2, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
+  });
+
+  test('should pass when sending a test email (as tenantAdmin)', async () => {
+    expect.assertions(1);
+
+    const [email] = tenantAdmin!.emails;
+    const res = await tenantAdminServer!.executeOperation({ query: SEND_TEST_EMAIL, variables: { email } });
+    apolloExpect(res, 'data', { sendTestEmail: { code: MSG_ENUM.COMPLETED } });
+  });
+
+  test('should pass when sending a test email (as admin)', async () => {
+    expect.assertions(1);
+
+    const [email] = adminUser!.emails;
+    const res = await adminServer!.executeOperation({ query: SEND_TEST_EMAIL, variables: { email } });
+    apolloExpect(res, 'data', { sendTestEmail: { code: MSG_ENUM.COMPLETED } });
+  });
+
   test('should pass when ADD, ADD_REMARK, ....,  UPDATE, REMOVE', async () => {
     expect.assertions(9);
 
     const schools = await School.find({ deletedAt: { $exists: false } }).lean();
+    const school = prob(0.5) && randomItem(schools)._id.toString(); // unchangeable
+    const code = FAKE.toUpperCase(); // unchangeable
 
     const tenantCore = {
-      code: FAKE.toUpperCase(),
+      code,
       name: FAKE_LOCALE,
-      ...(prob(0.5) && { school: randomId(schools) }),
-      services: Object.keys(TENANT.SERVICE)
-        .sort(shuffle)
-        .slice(0, 3 * Math.random() + 1),
+      ...(school && { school }),
+      services: randomItems(Object.keys(TENANT.SERVICE), 3 * Math.random() + 1),
       ...(prob(0.5) && { satelliteUrl: `https://satellite.${domain}` }),
     };
 
@@ -153,12 +187,10 @@ describe('Tenant GraphQL', () => {
 
     // update core (as root)
     const tenantCoreUpdate = {
-      code: FAKE.toUpperCase(),
+      code,
       name: FAKE2_LOCALE,
-      ...(prob(0.5) && { school: randomId(schools) }),
-      services: Object.keys(TENANT.SERVICE)
-        .sort(shuffle)
-        .slice(0, 3 * Math.random() + 1),
+      ...(school && { school }),
+      services: randomItems(Object.keys(TENANT.SERVICE), 3 * Math.random() + 1),
       ...(prob(0.5) && { satelliteUrl: `https://satellite2.${domain}` }),
     };
     const updateCoreRes = await rootServer!.executeOperation({
@@ -170,14 +202,14 @@ describe('Tenant GraphQL', () => {
     // create two fake users
     const users = Array(2)
       .fill(0)
-      .map((_, idx) => genUser(newId, `tenantAdmin (${idx})`));
-    await User.create(users);
+      .map((_, idx) => genUser(newId, { name: `tenantAdmin (${idx})` }));
+    await User.insertMany(users);
 
     // add one admin; and update website, htmlUrl, logoUrl
     [htmlUrl, logoUrl] = await Promise.all([jestPutObject(rootUser!._id), jestPutObject(rootUser!._id)]);
 
     const tenantExtra = {
-      admins: idsToString(users),
+      admins: users.map(user => user._id.toString()),
       supports: [],
       counselors: [],
       marshals: [],
@@ -193,10 +225,10 @@ describe('Tenant GraphQL', () => {
     apolloExpect(addAdminRes, 'data', { updateTenantExtra: { ...expectedRootFormat, ...tenantExtra } });
 
     const tenantExtra2 = {
-      admins: idsToString(users),
-      supports: [randomId(users)],
-      counselors: [randomId(users)],
-      marshals: [randomId(users)],
+      admins: users.map(u => u._id.toString()),
+      supports: [randomItem(users)._id.toString()],
+      counselors: [randomItem(users)._id.toString()],
+      marshals: [randomItem(users)._id.toString()],
       website: `https://www2.${domain}`,
       flaggedWords: [FAKE, FAKE2],
     };

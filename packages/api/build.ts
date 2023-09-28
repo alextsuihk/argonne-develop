@@ -18,7 +18,8 @@ import { randomString } from './src/utils/helper';
  */
 const { version }: { version: string } = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
 const [major, minor, patch, rest] = version.split('.');
-if (!Number(major) || !Number(minor) || !Number(patch) || rest) throw 'Incorrect Version Schema';
+if (isNaN(Number(major)) || isNaN(Number(minor)) || !patch || rest)
+  throw `build.ts: Incorrect Version Schema ${version}`;
 
 const now = new Date();
 const buildInfo = {

@@ -15,14 +15,14 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface ChatGroupDocument extends BaseDocument {
-  tenant?: string | Types.ObjectId;
+  tenant?: Types.ObjectId;
   title?: string;
   description?: string;
   membership: string;
-  users: (string | Types.ObjectId)[];
-  admins: (string | Types.ObjectId)[];
-  marshals: (string | Types.ObjectId)[];
-  chats: (string | Types.ObjectId | (ChatDocument & Id))[];
+  users: Types.ObjectId[];
+  admins: Types.ObjectId[];
+  marshals: Types.ObjectId[];
+  chats: (Types.ObjectId | (ChatDocument & Id))[];
 
   key?: string;
   url?: string;

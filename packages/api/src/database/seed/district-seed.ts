@@ -6,7 +6,8 @@
 import type { Locale } from '@argonne/common';
 import chalk from 'chalk';
 
-import District, { DistrictDocument } from '../../models/district';
+import type { DistrictDocument } from '../../models/district';
+import District from '../../models/district';
 
 const regionDistricts: { region: Locale; districts: Locale[] }[] = [
   {
@@ -54,7 +55,7 @@ const districts = regionDistricts
   .flat();
 
 const seed = async (): Promise<string> => {
-  await District.create(districts);
+  await District.insertMany<Partial<DistrictDocument>>(districts, { rawResult: true });
   return `(${chalk.green(districts.length)} created)`;
 };
 

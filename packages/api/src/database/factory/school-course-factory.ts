@@ -1,16 +1,17 @@
-// TODO: TODO: to bulky, SchoolCourseDocument should occur onces at new()
-
 /**
  * Factory: School-Course
  *
  * (for tenanted schools)
  * add valid subjects into model school's subject
  *
+ *
+ * ! ISSUE: book-factory is executed later, therefore courses.subjects.books would be empty []
  */
 
 import { LOCALE } from '@argonne/common';
 import { faker } from '@faker-js/faker';
 import chalk from 'chalk';
+import type { Types } from 'mongoose';
 
 import Book from '../../models/book';
 import School from '../../models/school';
@@ -18,7 +19,7 @@ import type { SchoolCourseDocument } from '../../models/school-course';
 import SchoolCourse from '../../models/school-course';
 import Subject from '../../models/subject';
 import Tenant from '../../models/tenant';
-import { idsToString, prob, randomId, schoolYear, shuffle } from '../../utils/helper';
+import { prob, randomItem, randomItems, schoolYear } from '../../utils/helper';
 
 const { SCHOOL_COURSE, TENANT } = LOCALE.DB_ENUM;
 
@@ -45,8 +46,8 @@ const fake = async (codes: string[], revCount = 2): Promise<string> => {
     status: (typeof LOCALE.DB_TYPE.SCHOOL_COURSE.STATUS)[number],
     year: string,
     rev: number,
-    tenantAdmins: string[],
-    school: string,
+    tenantAdmins: Types.ObjectId[],
+    school: Types.ObjectId,
   ) =>
     new SchoolCourse<Partial<SchoolCourseDocument>>({
       status,
@@ -55,41 +56,30 @@ const fake = async (codes: string[], revCount = 2): Promise<string> => {
       rev,
 
       createdAt: faker.date.recent(90),
-      createdBy: randomId(tenantAdmins),
+      createdBy: randomItem(tenantAdmins),
       courses: schools
-        .find(s => s._id.toString() === school)!
+        .find(s => s._id.equals(school))!
         .levels.map(level => ({
           level,
-          subjects: subjects
-            .filter(s => idsToString(s.levels).includes(level.toString()))
-            .sort(shuffle)
-            .slice(-5)
-            .map(subject => ({
-              subject: subject._id,
-              ...(prob(0.3) && { alias: faker.lorem.slug(5) }),
-              books: idsToString(
-                books
-                  .filter(
-                    b =>
-                      idsToString(b.subjects).includes(subject._id.toString()) &&
-                      b.level.toString() === level.toString(),
-                  )
-                  .slice(0, 2),
-              ),
-            })),
+          subjects: randomItems(
+            subjects.filter(s => s.levels.some(l => l.equals(level))),
+            5,
+          ).map(subject => ({
+            _id: subject._id,
+            ...(prob(0.3) && { alias: faker.lorem.slug(5) }),
+            books: randomItems(
+              books.filter(b => b.subjects.some(s => s.equals(subject._id)) && b.level.equals(level)),
+              2,
+            ).map(b => b._id),
+          })),
         })),
     });
 
   const schoolCourses = tenants
     .map(tenant => [
       // fake last year publisher data
-      fakeSchoolCourse(
-        SCHOOL_COURSE.STATUS.PUBLISHED,
-        schoolYear(-1),
-        1,
-        idsToString(tenant.admins),
-        tenant.school!.toString(),
-      ),
+      fakeSchoolCourse(SCHOOL_COURSE.STATUS.PUBLISHED, schoolYear(-1), 1, tenant.admins, tenant.school!), // TODO
+
       // fake this year (multiple)
       ...Array(revCount)
         .fill(0)
@@ -98,14 +88,14 @@ const fake = async (codes: string[], revCount = 2): Promise<string> => {
             idx + 1 === revCount ? SCHOOL_COURSE.STATUS.PUBLISHED : SCHOOL_COURSE.STATUS.DRAFT,
             schoolYear(),
             idx + 1,
-            idsToString(tenant.admins),
-            tenant.school!.toString(),
+            tenant.admins,
+            tenant.school!,
           ),
         ),
     ])
     .flat();
 
-  await SchoolCourse.create(schoolCourses);
+  await SchoolCourse.insertMany<Partial<SchoolCourseDocument>>(schoolCourses, { rawResult: true });
   return `(${chalk.green(schoolCourses.length)} schoolCourses created for ${chalk.green(tenants.length)} tenants)`;
 };
 

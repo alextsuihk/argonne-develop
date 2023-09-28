@@ -96,14 +96,14 @@ describe('Role GraphQL', () => {
       query: ADD_ROLE,
       variables: { id: userId.toString(), role: `INVALID-ROLE` },
     });
-    apolloExpect(res1, 'errorContaining', 'role must be one of the following values');
+    apolloExpect(res1, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
 
     // delete invalid role
     const res2 = await adminServer!.executeOperation({
       query: REMOVE_ROLE,
       variables: { id: userId.toString(), role: `INVALID-ROLE` },
     });
-    apolloExpect(res2, 'errorContaining', 'role must be one of the following values');
+    apolloExpect(res2, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
   });
 
   test('should fail when mutating without required fields', async () => {

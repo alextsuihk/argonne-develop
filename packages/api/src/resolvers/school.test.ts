@@ -10,21 +10,21 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
   FAKE,
+  FAKE_ID,
   FAKE_LOCALE,
-  FAKE2,
   FAKE2_LOCALE,
-  idsToString,
   jestPutObject,
   jestRemoveObject,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
-  shuffle,
+  randomItem,
+  randomItems,
 } from '../jest';
 import District from '../models/district';
 import Level from '../models/level';
@@ -48,8 +48,8 @@ describe('School GraphQL', () => {
   let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let url: string;
-  let url2: string;
+  let url: string | undefined;
+  let url2: string | undefined;
 
   const expectedNormalFormat = {
     _id: expectedIdFormat,
@@ -57,22 +57,22 @@ describe('School GraphQL', () => {
     code: expect.any(String),
     name: expectedLocaleFormat,
     address: expect.toBeOneOf([null, expectedLocaleFormat]),
-    district: expect.toBeOneOf([null, expect.any(String)]),
+    district: expectedIdFormat,
     location: expect.toBeOneOf([null, { coordinates: [expect.any(String), expect.any(String)] }]),
     phones: expect.arrayContaining([expect.any(String)]),
     emi: expect.toBeOneOf([null, expect.any(Boolean)]),
-    band: expect.toBeOneOf([null, expect.any(String)]),
+    band: expect.toBeOneOf(Object.keys(SCHOOL.BAND)),
     logoUrl: expect.toBeOneOf([null, expect.any(String)]),
     website: expect.toBeOneOf([null, expect.any(String)]),
-    funding: expect.toBeOneOf([null, expect.any(String)]),
-    gender: expect.toBeOneOf([null, expect.any(String)]),
-    religion: expect.toBeOneOf([null, expect.any(String)]),
+    funding: expect.toBeOneOf(Object.keys(SCHOOL.FUNDING)),
+    gender: expect.toBeOneOf(Object.keys(SCHOOL.GENDER)),
+    religion: expect.toBeOneOf(Object.keys(SCHOOL.RELIGION)),
 
-    levels: expect.arrayContaining([expect.any(String)]),
+    levels: expect.arrayContaining([expectedIdFormat]),
     remarks: null,
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedAdminFormat = {
@@ -85,7 +85,7 @@ describe('School GraphQL', () => {
       apollo: true,
     }));
   });
-  afterAll(async () => Promise.all([jestRemoveObject(url), jestRemoveObject(url2), jestTeardown()]));
+  afterAll(async () => Promise.all([url && jestRemoveObject(url), url2 && jestRemoveObject(url2), jestTeardown()]));
 
   test('should response an array of data when GET all', async () => {
     expect.assertions(1);
@@ -108,7 +108,8 @@ describe('School GraphQL', () => {
     expect.assertions(1);
 
     const schools = await School.find({ deletedAt: { $exists: false } }).lean();
-    const res = await guestServer!.executeOperation({ query: GET_SCHOOL, variables: { id: randomId(schools) } });
+    const id = randomItem(schools)._id.toString();
+    const res = await guestServer!.executeOperation({ query: GET_SCHOOL, variables: { id } });
     apolloExpect(res, 'data', { school: expectedNormalFormat });
   });
 
@@ -134,7 +135,7 @@ describe('School GraphQL', () => {
         school: {
           code: FAKE,
           name: FAKE_LOCALE,
-          district: FAKE,
+          district: FAKE_ID,
           phones: ['+852 88888888'],
           emi: true,
           website: 'http://jest.com',
@@ -162,58 +163,46 @@ describe('School GraphQL', () => {
 
     [url, url2] = await Promise.all([jestPutObject(adminUser!._id), jestPutObject(adminUser!._id)]);
 
-    // add a document
-    const create = {
+    const fake = (type: 'create' | 'update') => ({
       code: FAKE.toUpperCase(),
-      name: FAKE_LOCALE,
-      phones: ['+852 12345678'],
+      name: type === 'create' ? FAKE_LOCALE : FAKE2_LOCALE,
+      address: type === 'create' ? FAKE_LOCALE : FAKE2_LOCALE,
+      district: randomItem(districts)._id.toString(),
+      phones: type === 'create' ? ['+852 12345678'] : ['+852 98765432', '+852 88887777'],
       ...(prob(0.5) && { emi: prob(0.5) }),
-      ...(prob(0.5) && { band: FAKE }),
-      ...(prob(0.5) && { logoUrl: url }),
-      ...(prob(0.5) && { website: 'http://jest.com' }),
-      ...(prob(0.5) && { funding: Object.keys(SCHOOL.FUNDING).sort(shuffle)[0] }),
-      ...(prob(0.5) && { gender: Object.keys(SCHOOL.GENDER).sort(shuffle)[0] }),
-      ...(prob(0.5) && { religion: FAKE }),
-      levels: idsToString(levels.sort(shuffle).slice(0, 3)),
-    };
-    const createdRes = await adminServer!.executeOperation({
-      query: ADD_SCHOOL,
-      variables: { school: { ...create, address: FAKE_LOCALE, district: randomId(districts) } },
+      band: randomItem(Object.keys(SCHOOL.BAND)),
+      logoUrl: type === 'create' ? url : url2,
+      website: type === 'create' ? 'http://jest.com' : 'http://jest2.com',
+      funding: randomItem(Object.keys(SCHOOL.FUNDING)),
+      gender: randomItem(Object.keys(SCHOOL.GENDER)),
+      religion: randomItem(Object.keys(SCHOOL.RELIGION)),
+      levels: randomItems(levels, 3)
+        .map(level => level._id.toString())
+        .sort(), // sort in alphanumeric order
     });
+
+    // add a document
+    const create = fake('create');
+    const createdRes = await adminServer!.executeOperation({ query: ADD_SCHOOL, variables: { school: create } });
     apolloExpect(createdRes, 'data', { addSchool: { ...expectedAdminFormat, ...create } });
     const newId = createdRes.data!.addSchool._id.toString();
 
-    // update newly created document (remove logoUrl)
-    const update = {
-      code: FAKE.toUpperCase(),
-      name: FAKE2_LOCALE,
-      phones: ['+852 88887777'],
-      emi: prob(0.5),
-      ...(prob(0.5) && { band: FAKE2 }),
-      website: 'http://jest2.com',
-      ...(prob(0.5) && { funding: Object.keys(SCHOOL.FUNDING).sort(shuffle)[0] }),
-      ...(prob(0.5) && { gender: Object.keys(SCHOOL.GENDER).sort(shuffle)[0] }),
-      ...(prob(0.5) && { religion: FAKE2 }),
-      levels: idsToString(levels.sort(shuffle).slice(0, 3)),
-    };
+    // update newly created document (remove logoUrl & website)
+    const update = fake('update');
     const updatedRes = await adminServer!.executeOperation({
       query: UPDATE_SCHOOL,
-      variables: {
-        id: newId,
-        school: { ...update, address: FAKE2_LOCALE, district: randomId(districts), logoUrl: '' },
-      },
+      variables: { id: newId, school: { ...update, logoUrl: '', website: '' } },
     });
-    apolloExpect(updatedRes, 'data', { updateSchool: { ...expectedAdminFormat, ...update, logoUrl: null } });
+    apolloExpect(updatedRes, 'data', {
+      updateSchool: { ...expectedAdminFormat, ...update, logoUrl: null, website: null },
+    });
 
     // add logoUrl back
     const updated2Res = await adminServer!.executeOperation({
       query: UPDATE_SCHOOL,
-      variables: {
-        id: newId,
-        school: { ...update, address: FAKE2_LOCALE, district: randomId(districts), logoUrl: url2 },
-      },
+      variables: { id: newId, school: update },
     });
-    apolloExpect(updated2Res, 'data', { updateSchool: { ...expectedAdminFormat, ...update, logoUrl: url2 } });
+    apolloExpect(updated2Res, 'data', { updateSchool: { ...expectedAdminFormat, ...update } });
 
     // add remark
     const addRemarkRes = await adminServer!.executeOperation({
@@ -245,14 +234,16 @@ describe('School GraphQL', () => {
       name: FAKE_LOCALE,
       address: FAKE_LOCALE,
       phones: ['+852 12345678'],
-      district: randomId(districts),
+      district: randomItem(districts)._id.toString(),
       emi: prob(0.5),
       band: FAKE,
       website: 'http://jest.com',
-      funding: Object.keys(SCHOOL.FUNDING).sort(shuffle)[0],
-      gender: Object.keys(SCHOOL.GENDER).sort(shuffle)[0],
+      funding: randomItem(Object.keys(SCHOOL.FUNDING)),
+      gender: randomItem(Object.keys(SCHOOL.GENDER)),
       religion: FAKE,
-      levels: idsToString(levels.sort(shuffle).slice(0, 3)),
+      levels: randomItems(levels, 3)
+        .map(level => level._id.toString())
+        .sort(), // sort in alphanumeric order
     };
 
     // add without code

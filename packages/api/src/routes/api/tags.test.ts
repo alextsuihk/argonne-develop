@@ -8,6 +8,7 @@ import request from 'supertest';
 import app from '../../app';
 import configLoader from '../../config/config-loader';
 import {
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -16,7 +17,6 @@ import {
   FAKE2_LOCALE,
   jestSetup,
   jestTeardown,
-  shuffle,
 } from '../../jest';
 import type { TagDocument } from '../../models/tag';
 import type { Id, UserDocument } from '../../models/user';
@@ -38,6 +38,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     flags: expect.any(Array),
     name: expectedLocaleFormat,
     description: expectedLocaleFormat,
+
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
   };
 
   beforeAll(async () => {
@@ -84,7 +87,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect.assertions(3 + 3 + 3);
 
     // create without sufficient creditability
-    let user = normalUsers!.sort(shuffle).find(user => user.creditability < DEFAULTS.CREDITABILITY.CREATE_TAG);
+    let user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.CREATE_TAG);
     if (!user) throw 'User with sufficient creditability is required';
     let res = await request(app)
       .post('/api/tags')
@@ -102,7 +105,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const newId = res.body.data._id;
 
     // update without sufficient creditability
-    user = normalUsers!.sort(shuffle).find(user => user.creditability < DEFAULTS.CREDITABILITY.UPDATE_TAG);
+    user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.UPDATE_TAG);
     if (!user) throw 'User with sufficient creditability is required';
     res = await request(app)
       .patch(`/api/tags/${newId}`)
@@ -113,7 +116,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect(res.status).toBe(403);
 
     // remove without sufficient creditability
-    user = normalUsers!.sort(shuffle).find(user => user.creditability < DEFAULTS.CREDITABILITY.REMOVE_TAG);
+    user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.REMOVE_TAG);
     if (!user) throw 'User with sufficient creditability is required';
     res = await request(app).delete(`/api/tags/${newId}`).set({ 'Jest-User': user._id });
     expect(res.body).toEqual({ errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }], statusCode: 403, type: 'plain' });

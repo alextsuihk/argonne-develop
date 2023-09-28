@@ -6,30 +6,31 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import { addSeconds } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import type { Types } from 'mongoose';
+import type { Types, UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import Classroom from '../models/classroom';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
-import { Id, UserDocument, userNormalSelect } from '../models/user';
-import User from '../models/user';
-import { startChatGroup } from '../utils/chat';
-import { idsToString, schoolYear, uniqueIds } from '../utils/helper';
+import type { Id, UserDocument } from '../models/user';
+import User, { userNormalSelect } from '../models/user';
+import { schoolYear } from '../utils/helper';
+import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 import token from '../utils/token';
 import type { StatusResponse } from './common';
 import common from './common';
 
 type ContactWithAvatarUrl = {
-  _id: Types.ObjectId;
+  _id: Types.ObjectId; // this is userId
   flags: string[];
   avatarUrl?: string;
   name: string;
   identifiedAt?: Date;
-  status: string;
+  availability: string;
   tenants: string[];
+  updatedAt: Date;
 };
 
 const { MSG_ENUM } = LOCALE;
@@ -48,15 +49,16 @@ const transform = (
   friend: UserDocument & Id,
   userContacts: UserDocument['contacts'],
 ): ContactWithAvatarUrl => {
-  const myContact = userContacts.find(c => c.user.toString() === friend._id.toString());
+  const myContact = userContacts.find(c => c.user.equals(friend._id));
   return {
     _id: friend._id,
     flags: myContact ? [CONTACT.FLAG.FRIEND] : [],
     avatarUrl: friend.avatarUrl,
     name: myContact?.name ?? friend.name,
     identifiedAt: friend.identifiedAt,
-    status: friend.networkStatus ?? friend.isOnline ? USER.NETWORK_STATUS.ONLINE : USER.NETWORK_STATUS.OFFLINE,
-    tenants: userTenants.filter(x => idsToString(friend.tenants).includes(x)), // only show intersected tenant
+    availability: friend.availability ?? friend.isOnline ? USER.AVAILABILITY.ONLINE : USER.AVAILABILITY.OFFLINE,
+    tenants: userTenants.filter(x => friend.tenants.some(t => t.equals(x))), // only show intersected tenant
+    updatedAt: myContact?.updatedAt || new Date(),
   };
 };
 
@@ -77,7 +79,7 @@ const createToken = async (req: Request, args: unknown): Promise<{ token: string
  * Create New User Contact (bi-directional)
  */
 const create = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl> => {
-  const { userId, userLocale, userTenants } = auth(req);
+  const { userId, userTenants } = auth(req);
   const { token: contactToken } = await tokenSchema.validate(args);
 
   const [prefix, friendId] = await token.verifyStrings(contactToken);
@@ -90,25 +92,32 @@ const create = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl
   ]);
   if (!friend || userId === friendId) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const msg = {
-    enUS: `friend linked ${user.name} & ${friend.name}`,
-    zhCN: `${user.name} & ${friend.name} 成为朋友。`,
-    zhHK: `${user.name} & ${friend.name} 成為朋友。`,
-  };
+  const isFriendInUserContacts = user.contacts.some(c => c.user.equals(friendId));
+  const isUserInFriendContacts = friend.contacts.some(c => c.user.equals(userId));
 
-  const [updatedFriend] = await Promise.all([
-    User.findOneAndUpdate(
-      { _id: friendId, 'contacts.user': { $ne: userId } },
-      { $push: { contacts: { user: userId } } },
-      { new: true },
-    ).lean(),
-    User.updateOne({ _id: userId, 'contacts.user': { $ne: friendId } }, { $push: { contacts: { user: friendId } } }),
-    startChatGroup(null, msg, [userId, friendId], userLocale, `FRIEND#${[userId, friendId].sort().join('-')}`),
+  const updatedAt = new Date();
+  const friendUpdate: UpdateQuery<UserDocument> = { $push: { contacts: { user: user._id, updatedAt } } };
+  const userUpdate: UpdateQuery<UserDocument> = { $push: { contacts: { user: friend._id, updatedAt } } };
+  const [transformed] = await Promise.all([
+    transform(userTenants, friend, [{ user: friend._id, updatedAt }]), // friend in user.contacts
+    !isFriendInUserContacts && User.updateOne({ _id: user._id }, userUpdate),
+    !isUserInFriendContacts && User.updateOne({ _id: friend._id }, friendUpdate, { new: true }),
     DatabaseEvent.log(userId, `/contacts/${userId}`, 'CREATE', { user: userId, friend: friendId }),
-    notifySync('CONTACT', { userIds: [userId, friendId] }, { userIds: [userId, friendId] }),
+    notifySync(
+      user.tenants[0] && friend.tenants[0]?.equals(user.tenants[0]) ? user.tenants[0] : null,
+      { userIds: [userId, friendId], event: 'CONTACT' },
+      {
+        bulkWrite: {
+          users: [
+            ...(isFriendInUserContacts ? [] : [{ updateOne: { filter: { _id: user._id }, update: userUpdate } }]),
+            ...(isUserInFriendContacts ? [] : [{ updateOne: { filter: { _id: friend._id }, update: friendUpdate } }]),
+          ] satisfies BulkWrite<UserDocument>,
+        },
+      },
+    ),
   ]);
 
-  return transform(userTenants, updatedFriend || friend, [{ user: friendId }]);
+  return transformed;
 };
 
 /**
@@ -132,7 +141,7 @@ const createNew: RequestHandler<{ action?: 'createToken' }> = async (req, res, n
 
 // (helper) to get all contactIds (contacts, platform admin, tenantAdmins, classroom teachers & classmates)
 const myContactIds = async (userId: string, userTenants: string[]) => {
-  const [user, classrooms, { adminIds, accountId, accountWithheldId, robotIds, alexId }, tenants] = await Promise.all([
+  const [user, classrooms, systemAccountIds, tenants] = await Promise.all([
     User.findOneActive({ _id: userId }),
     Classroom.find({
       tenant: { $in: userTenants },
@@ -140,24 +149,26 @@ const myContactIds = async (userId: string, userTenants: string[]) => {
       year: { $in: [schoolYear(-1), schoolYear(0), schoolYear(1)] },
     }).lean(),
     User.findSystemAccountIds(),
-    Tenant.find({ _id: { $in: userTenants } }).lean(),
+    Tenant.findAdminTenants(userId, userTenants),
   ]);
 
   if (!user) throw { statusCode: 401, code: MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR };
 
+  //  { systemId,  adminIds, accountId, accountWithheldId, robotIds, alexId }
   return {
     user,
-    contactIds: uniqueIds([
+    contactIds: [
       ...user.contacts.map(c => c.user), // user's contacts
-      ...adminIds, // system admins
-      accountId,
-      accountWithheldId,
-      ...robotIds,
-      alexId,
+      systemAccountIds.systemId,
+      ...systemAccountIds.adminIds, // system admins
+      ...(systemAccountIds.accountId ? [systemAccountIds.accountId] : []),
+      ...(systemAccountIds.accountWithheldId ? [systemAccountIds.accountWithheldId] : []),
+      ...systemAccountIds.robotIds,
+      ...(systemAccountIds.alexId ? [systemAccountIds.alexId] : []),
       ...tenants.map(t => [...t.admins, ...t.supports, ...t.marshals, ...t.counselors]).flat(), // admins of tenant(s)
       ...classrooms.map(c => [...c.teachers, ...c.students]).flat(), // teachers & classmates
       ...user.favoriteTutors,
-    ]),
+    ],
   };
 };
 /**
@@ -204,7 +215,7 @@ const findOne = async (req: Request, args: unknown): Promise<ContactWithAvatarUr
     idSchema.validate(args),
   ]);
 
-  if (userId === friendId || !idsToString(contactIds).includes(friendId)) return null;
+  if (userId === friendId || !contactIds.some(c => c.equals(friendId))) return null;
   const friend = await User.findOneActive({ _id: friendId });
   return friend && transform(userTenants, friend, user.contacts);
 };
@@ -225,29 +236,26 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
 
 /**
  * Delete contact by friend User ID
+ * only updating contact
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId, userLocale, userName } = auth(req);
+  const { userId } = auth(req);
   const { id: friendId } = await idSchema.validate(args);
 
-  const [friend] = await Promise.all([
-    User.findByIdAndUpdate(friendId, { $pull: { contacts: { user: userId } } }, { new: true }).lean(),
-    User.updateOne({ _id: userId }, { $pull: { contacts: { user: friendId } } }, { new: true }),
-  ]);
+  const update: UpdateQuery<UserDocument> = { $pull: { contacts: { user: friendId } } };
+  const user = await User.findByIdAndUpdate(userId, update).lean();
 
-  if (!friend) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const msg = {
-    enUS: `friend unlinked: ${userName} & ${friend.name}.`,
-    zhCN: `取消朋关系友：${userName} & ${friend.name}。`,
-    zhHK: `取消朋友關係：${userName} & ${friend.name}。`,
-  };
-
-  await Promise.all([
-    startChatGroup(null, msg, [userId, friendId], userLocale, `FRIEND#${[userId, friendId].sort().join('-')}`),
-    DatabaseEvent.log(userId, `/contacts/${userId}`, 'DELETE', { user: userId, friend: friendId }),
-    notifySync('CONTACT', { userIds: [userId, friendId] }, { userIds: [userId, friendId] }),
-  ]);
+  if (user)
+    await Promise.all([
+      DatabaseEvent.log(userId, `/contacts/${userId}`, 'DELETE', { user: userId, friend: friendId }),
+      notifySync(
+        user.tenants[0] || null,
+        { userIds: [userId], event: 'CONTACT' },
+        {
+          bulkWrite: { users: [{ updateOne: { filter: { _id: userId }, update } }] satisfies BulkWrite<UserDocument> },
+        },
+      ),
+    ]);
 
   return { code: MSG_ENUM.COMPLETED };
 };
@@ -276,13 +284,17 @@ const update = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl
   const friend = await User.findOneActive({ _id: friendId });
   if (!friend) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
+  const now = new Date();
   const { modifiedCount } = await User.updateOne(
     { _id: userId, 'contacts.user': friendId },
-    name ? { $set: { 'contacts.$.name': name } } : { $unset: { 'contacts.$.name': 1 } },
+
+    name
+      ? { $set: { 'contacts.$.name': name, 'contacts.$.updatedAt': now } }
+      : { $set: { 'contacts.$.updatedAt': now }, $unset: { 'contacts.$.name': 1 } },
   );
   if (!modifiedCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  return transform(userTenants, friend, [{ user: friendId, name }]);
+  return transform(userTenants, friend, [{ user: friend._id, name, updatedAt: now }]);
 };
 
 /**

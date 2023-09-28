@@ -1,4 +1,4 @@
-// TODO: IMPERSONATE_START, IMPERSONATE_STOP, LOGIN_WITH_STUDENT_ID, OAUTH2, OAUTH2_CONNECT, OAUTH2_DISCONNECT,
+// TODO: IMPERSONATE_START, IMPERSONATE_STOP, OAUTH2, OAUTH2_CONNECT, OAUTH2_DISCONNECT,
 
 /**
  * Jest: /resolvers/user
@@ -10,19 +10,23 @@ import configLoader from '../config/config-loader';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
-  expectedUserFormatApollo,
+  expectedUserFormatApollo as expectedUserFormat,
+  genUser,
   jestSetup,
   jestTeardown,
   randomString,
   testServer,
-  uniqueTestUser,
 } from '../jest';
 import Token from '../models/token';
 import type { Id, UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   DEREGISTER,
+  // OAUTH2,
+  IMPERSONATE_START,
+  IMPERSONATE_STOP,
   LIST_TOKENS,
   LOGIN,
   LOGIN_TOKEN,
@@ -46,11 +50,13 @@ const INVALID_PASSWORD_MSG = 'at least 6 characters with one lowercase letter, o
 
 const expectedAuthResponse = {
   accessToken: expect.any(String),
-  accessTokenExpireAt: expect.any(Number),
+  accessTokenExpireAt: expectedDateFormat(true),
   refreshToken: expect.any(String),
-  refreshTokenExpireAt: expect.any(Number),
-  user: expect.objectContaining(expectedUserFormatApollo),
+  refreshTokenExpireAt: expectedDateFormat(true),
+  user: expect.objectContaining(expectedUserFormat),
 };
+
+console.log('auth.test IMPERSONATE_START, IMPERSONATE_STOP, OAUTH2, OAUTH2_CONNECT, OAUTH2_DISCONNECT,');
 
 describe('Authentication GraphQL (token)', () => {
   let guestServer: ApolloServer | null;
@@ -67,7 +73,8 @@ describe('Authentication GraphQL (token)', () => {
 
   test('should pass when register, login, 2nd login, logout-other, ..., deregister', async () => {
     expect.assertions(10);
-    const { email, name, password } = uniqueTestUser();
+    const { emails, name, password } = genUser(null);
+    const [email] = emails;
 
     // register (1st login)
     const registerRes = await guestServer!.executeOperation({ query: REGISTER, variables: { email, name, password } });
@@ -103,7 +110,7 @@ describe('Authentication GraphQL (token)', () => {
           _id: expectedIdFormat,
           ip: expect.any(String),
           ua: expect.any(String),
-          updatedAt: expect.any(Number),
+          updatedAt: expectedDateFormat(true),
         }),
       ]),
     });
@@ -136,15 +143,10 @@ describe('Authentication GraphQL (token)', () => {
     expect.assertions(1);
 
     // create a new user (with loginStudentIds)
-    const { email, name, password } = uniqueTestUser();
     const studentId = randomString();
-    const user = await User.create<Partial<UserDocument>>({
-      name,
-      emails: [email],
-      password,
-      tenants: [tenantId!],
-      studentIds: [`${tenantId!}#${studentId}`],
-    });
+    const user = genUser(tenantId!, { studentIds: [`${tenantId!}#${studentId}`] });
+    const { password } = user; // destructure password before saving. once saved, password is hashed
+    await user.save();
 
     // LoginWithStudentId
     const LoginWithStudentIdRes = await guestServer!.executeOperation({
@@ -161,8 +163,8 @@ describe('Authentication GraphQL (token)', () => {
     expect.assertions(2);
 
     // create a new user
-    const { email, name, password } = uniqueTestUser();
-    const user = await User.create<Partial<UserDocument>>({ name, emails: [email], password, tenants: [tenantId!] });
+    const user = genUser(tenantId!);
+    await user.save();
     const userId = user._id.toString();
 
     // tenantAdmin generates a loginToken
@@ -239,7 +241,8 @@ describe('Authentication GraphQL (token)', () => {
     expect.assertions(1);
 
     // register a new user
-    const { email, name, password } = uniqueTestUser();
+    const { emails, name, password } = genUser(null);
+    const [email] = emails;
     const registerRes = await guestServer!.executeOperation({ query: REGISTER, variables: { name, email, password } });
 
     for (let i = 0; i < DEFAULTS.AUTH.MAX_LOGIN - 1; i++) {
@@ -254,7 +257,7 @@ describe('Authentication GraphQL (token)', () => {
         accessTokenExpireAt: null,
         refreshToken: null,
         refreshTokenExpireAt: null,
-        user: expect.objectContaining(expectedUserFormatApollo),
+        user: expect.objectContaining(expectedUserFormat),
       },
     });
 
@@ -266,7 +269,8 @@ describe('Authentication GraphQL (token)', () => {
     expect.assertions(1);
 
     // register a new user
-    const { email, name, password } = uniqueTestUser();
+    const { emails, name, password } = genUser(null);
+    const [email] = emails;
     const registerRes = await guestServer!.executeOperation({ query: REGISTER, variables: { name, email, password } });
     const { refreshToken } = registerRes.data!.register;
 
@@ -280,7 +284,7 @@ describe('Authentication GraphQL (token)', () => {
         accessTokenExpireAt: null,
         refreshToken: null,
         refreshTokenExpireAt: null,
-        user: expect.objectContaining(expectedUserFormatApollo),
+        user: expect.objectContaining(expectedUserFormat),
       },
     });
 

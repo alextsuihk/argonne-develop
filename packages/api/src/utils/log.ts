@@ -9,6 +9,7 @@ import type { Types } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
+import type { LogEventDocument } from '../models/event/log';
 import LogEvent from '../models/event/log';
 import { isDevMode, isTestMode } from './environment';
 
@@ -34,9 +35,10 @@ const log = async (
         axios.post(
           `${DEFAULTS.LOGGER_URL}/api/logs`,
           { level, instance, pm2, msg, user, extra, url: url },
-          { headers: { 'x-api-key': config.loggerApiKey }, timeout: 1000 },
+          { headers: { 'x-api-key': config.loggerApiKey }, timeout: DEFAULTS.AXIOS_TIMEOUT },
         ),
-      mongoose.connection.readyState === 1 && LogEvent.create({ user, level, msg, extra, url }), // mongoose might have closed in shutdown mode
+      mongoose.connection.readyState === 1 &&
+        LogEvent.create<Partial<LogEventDocument>>({ user, level, msg, extra, url }), // mongoose might have closed in shutdown mode
     ]);
 
     if (isDevMode) {

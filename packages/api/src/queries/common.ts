@@ -5,6 +5,14 @@
 
 import { gql } from 'apollo-server-express';
 
+export const BID = gql`
+  fragment BidFields on Bid {
+    bidder
+    price
+    contents
+  }
+`;
+
 export const LOCALE = gql`
   fragment LocaleFields on Locale {
     enUS
@@ -15,7 +23,6 @@ export const LOCALE = gql`
 
 export const REMARK = gql`
   fragment RemarkFields on Remark {
-    _id
     u
     t
     m

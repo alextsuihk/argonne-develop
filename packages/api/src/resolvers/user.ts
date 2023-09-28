@@ -1,5 +1,5 @@
 /**
- * Resolver: User
+ * Resolver: UserAdmin
  *
  */
 
@@ -9,17 +9,7 @@ import { tryCatch } from './root';
 
 type unk = unknown;
 
-const {
-  addSchoolHistory,
-  changePassword,
-  create,
-  find,
-  findOne,
-  suspend,
-  updateFeature,
-  updateFlag,
-  updateIdentifiedAt,
-} = userController;
+const { changePassword, create, find, findOne, update } = userController;
 
 export default {
   Query: {
@@ -29,14 +19,16 @@ export default {
 
   Mutation: {
     addUser: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
-    addUserFeature: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateFeature(req, args, 'addFeature')),
-    addUserSchoolHistory: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addSchoolHistory(req, args)),
+    addUserFeature: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args, 'addFeature')),
+    addUserRemark: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args, 'addRemark')),
+    addUserSchoolHistory: async (_: unk, args: unk, { req }: Ctx) =>
+      tryCatch(() => update(req, args, 'addSchoolHistory')),
     changeUserPassword: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => changePassword(req, args)),
-    clearUserFlag: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateFlag(req, args, 'clearFlag')),
-    removeUserFeature: async (_: unk, args: unk, { req }: Ctx) =>
-      tryCatch(() => updateFeature(req, args, 'removeFeature')),
-    setUserFlag: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateFlag(req, args, 'setFlag')),
-    suspendUser: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => suspend(req, args)),
-    updateIdentifiedAt: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateIdentifiedAt(req, args)),
+    clearUserFlag: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args, 'clearFlag')),
+    removeUserFeature: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args, 'removeFeature')),
+    setUserFlag: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args, 'setFlag')),
+    suspendUser: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args, 'suspend')),
+    updateUserIdentifiedAt: async (_: unk, args: unk, { req }: Ctx) =>
+      tryCatch(() => update(req, args, 'updateIdentifiedAt')),
   },
 };

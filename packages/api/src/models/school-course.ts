@@ -16,15 +16,15 @@ export type { Id } from './common';
 export interface SchoolCourseDocument extends BaseDocument {
   status: (typeof LOCALE.DB_TYPE.SCHOOL_COURSE.STATUS)[number];
 
-  school: string | Types.ObjectId;
+  school: Types.ObjectId;
   year: string;
 
   rev: number;
   createdAt: Date;
-  createdBy: string | Types.ObjectId;
+  createdBy: Types.ObjectId;
   courses: {
-    level: string | Types.ObjectId;
-    subjects: { subject: string | Types.ObjectId; alias?: string; books: (string | Types.ObjectId)[] }[];
+    level: Types.ObjectId;
+    subjects: { _id: Types.ObjectId; alias?: string; books: Types.ObjectId[] }[];
   }[];
 }
 
@@ -51,10 +51,11 @@ const schoolSchema = new Schema<SchoolCourseDocument>(
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     courses: [
       {
+        _id: false,
         level: { type: Schema.Types.ObjectId, ref: 'Level' },
         subjects: [
           {
-            subject: { type: Schema.Types.ObjectId, ref: 'Subject' },
+            _id: { type: Schema.Types.ObjectId, ref: 'Subject' },
             alias: String,
             books: [{ type: Schema.Types.ObjectId, ref: 'Book' }],
           },

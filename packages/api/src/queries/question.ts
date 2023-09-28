@@ -5,9 +5,10 @@
 
 import { gql } from 'apollo-server-core';
 
-import { MEMBER, STATUS_RESPONSE } from './common';
+import { BID, MEMBER, STATUS_RESPONSE } from './common';
 
 const QUESTION_FIELDS = gql`
+  ${BID}
   ${MEMBER}
   fragment QuestionFields on Question {
     _id
@@ -45,7 +46,9 @@ const QUESTION_FIELDS = gql`
 
     price
     bidders
-    bidContents
+    bids {
+      ...BidFields
+    }
     paidAt
 
     correctness
@@ -115,28 +118,10 @@ export const ADD_QUESTION_BIDDERS = gql`
   }
 `;
 
-export const ADD_QUESTION_CONTENT_BY_STUDENT = gql`
+export const ADD_QUESTION_CONTENT = gql`
   ${QUESTION_FIELDS}
-  mutation AddQuestionContentByStudent($id: ID!, $content: String!, $visibleAfter: DateInput) {
-    addQuestionContentByStudent(id: $id, content: $content, visibleAfter: $visibleAfter) {
-      ...QuestionFields
-    }
-  }
-`;
-
-export const ADD_QUESTION_CONTENT_BY_TUTOR = gql`
-  ${QUESTION_FIELDS}
-  mutation AddQuestionContentByTutor($id: ID!, $content: String!, $visibleAfter: DateInput, $timeSpent: Int) {
-    addQuestionContentByTutor(id: $id, content: $content, visibleAfter: $visibleAfter, timeSpent: $time) {
-      ...QuestionFields
-    }
-  }
-`;
-
-export const ADD_QUESTION_CONTENT_WITH_DISPUTE = gql`
-  ${QUESTION_FIELDS}
-  mutation AddQuestionContentWithDispute($id: ID!, $content: String!, $visibleAfter: DateInput) {
-    addQuestionContentWithDispute(id: $id, content: $content, visibleAfter: $visibleAfter) {
+  mutation AddQuestionContent($id: ID!, $content: String!, $visibleAfter: DateInput, $timeSpent: Int, $flag: String) {
+    addQuestionContent(id: $id, content: $content, visibleAfter: $visibleAfter, timeSpent: $timeSpent, flag: $flag) {
       ...QuestionFields
     }
   }
@@ -151,10 +136,10 @@ export const ASSIGN_QUESTION_TUTOR = gql`
   }
 `;
 
-export const CLEAR_QUESTION_CHAT_FLAG = gql`
+export const CLEAR_QUESTION_FLAG = gql`
   ${QUESTION_FIELDS}
-  mutation ClearQuestionChatFlag($id: ID!, $flag: String!) {
-    clearQuestionChatFlag(id: $id, flag: $flag) {
+  mutation ClearQuestionFlag($id: ID!, $flag: String!) {
+    clearQuestionFlag(id: $id, flag: $flag) {
       ...QuestionFields
     }
   }
@@ -162,8 +147,8 @@ export const CLEAR_QUESTION_CHAT_FLAG = gql`
 
 export const CLOSE_QUESTION = gql`
   ${QUESTION_FIELDS}
-  mutation CloseQuestionChatFlag($id: ID!) {
-    closeQuestionChatFlag(id: $id) {
+  mutation CloseQuestion($id: ID!) {
+    closeQuestion(id: $id) {
       ...QuestionFields
     }
   }
@@ -171,8 +156,8 @@ export const CLOSE_QUESTION = gql`
 
 export const CLONE_QUESTION = gql`
   ${QUESTION_FIELDS}
-  mutation CloneQuestionChatFlag($id: ID!, $userIds: [String!]!) {
-    cloneQuestionChatFlag(id: $id, userIds: $userIds) {
+  mutation CloneQuestion($id: ID!, $userIds: [String!]!) {
+    cloneQuestion(id: $id, userIds: $userIds) {
       ...QuestionFields
     }
   }
@@ -205,10 +190,10 @@ export const REMOVE_QUESTION = gql`
   }
 `;
 
-export const SET_QUESTION_CHAT_FLAG = gql`
+export const SET_QUESTION_FLAG = gql`
   ${QUESTION_FIELDS}
-  mutation SETQuestionChatFlag($id: ID!, $flag: String!) {
-    setQuestionChatFlag(id: $id, flag: $flag) {
+  mutation SetQuestionFlag($id: ID!, $flag: String!) {
+    setQuestionFlag(id: $id, flag: $flag) {
       ...QuestionFields
     }
   }
@@ -218,7 +203,7 @@ export const UPDATE_QUESTION_LAST_VIEWED_AT = gql`
   ${QUESTION_FIELDS}
   mutation UpdateQuestionLastViewedAt($id: ID!, $timestamp: DateInput) {
     updateQuestionLastViewedAt(id: $id, timestamp: $timestamp) {
-      ...ChatGroupFields
+      ...QuestionFields
     }
   }
 `;

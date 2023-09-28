@@ -16,7 +16,7 @@ export type { Id } from './common';
 export interface LevelDocument extends BaseDocument {
   code: string;
   name: Locale;
-  nextLevel?: string | Types.ObjectId;
+  nextLevel?: Types.ObjectId;
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;

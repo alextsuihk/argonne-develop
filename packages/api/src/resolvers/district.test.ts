@@ -10,6 +10,7 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -19,7 +20,7 @@ import {
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
+  randomItem,
 } from '../jest';
 import District from '../models/district';
 import type { Id, UserDocument } from '../models/user';
@@ -47,9 +48,9 @@ describe('District GraphQL', () => {
     name: expectedLocaleFormat,
     region: expectedLocaleFormat,
     remarks: null,
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedAdminFormat = {
@@ -75,7 +76,8 @@ describe('District GraphQL', () => {
     expect.assertions(1);
 
     const districts = await District.find({ deletedAt: { $exists: false } }).lean();
-    const res = await guestServer!.executeOperation({ query: GET_DISTRICT, variables: { id: randomId(districts) } });
+    const id = randomItem(districts)._id.toString();
+    const res = await guestServer!.executeOperation({ query: GET_DISTRICT, variables: { id } });
     apolloExpect(res, 'data', { district: expectedNormalFormat });
   });
 

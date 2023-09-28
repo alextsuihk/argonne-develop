@@ -10,7 +10,6 @@ export default gql`
   type ServerInfo {
     mode: String!
     primaryTenantId: String
-    status: String!
     minio: String!
     timestamp: Float!
     version: String!

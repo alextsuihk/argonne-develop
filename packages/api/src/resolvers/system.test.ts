@@ -24,7 +24,6 @@ describe('System GraphQL', () => {
       serverInfo: {
         mode: expect.toBeOneOf(['HUB', 'SATELLITE']),
         primaryTenantId: expect.toBeOneOf([null, expect.any(String)]),
-        status: expect.toBeOneOf(['ready', 'uninitialized', 'initializing']),
         minio: expect.any(String),
         timestamp: expect.any(Number),
         version: expect.any(String),

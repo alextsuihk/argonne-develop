@@ -34,18 +34,19 @@ export interface AuthEventDocument extends GenericDocument {
   ua: string;
   ip: string;
   location: Point;
-  // active: { fullscreen: boolean; ua: string; token: string };
+  remark?: string;
 }
 
+type Log = (
+  userId: string | Types.ObjectId,
+  event: AuthEventType,
+  ua: string,
+  ip: string,
+  coord: { lat: number; lng: number } | null,
+  remark?: string,
+) => Promise<AuthEventDocument>;
 interface AuthEventModel extends Model<AuthEventDocument> {
-  log(
-    userId: string | Types.ObjectId,
-    event: AuthEventType,
-    ua: string,
-    ip: string,
-    coord: { lat: number; lng: number } | null,
-    remark?: string,
-  ): Promise<AuthEventDocument>;
+  log: Log;
 }
 
 const authEventSchema = new Schema<AuthEventDocument>(
@@ -55,29 +56,21 @@ const authEventSchema = new Schema<AuthEventDocument>(
     ua: String,
     ip: String,
     location: pointSchema,
+    remark: String,
   },
   options,
 );
 
-authEventSchema.static(
-  'log',
-  async (
-    user: string | Types.ObjectId,
-    event: AuthEventType,
-    ua: string,
-    ip: string,
-    coordinates: { lat: number; lng: number } | null,
-    remark?: string,
-  ): Promise<AuthEventDocument> =>
-    AuthEvent.create({
-      user,
-      event,
-      ua,
-      ip,
-      remark,
-      ...(coordinates && { type: 'Point', location: { coordinates: [coordinates.lng, coordinates.lat] } }),
-    }),
-);
+const log: Log = async (user, event, ua, ip, coordinates, remark) =>
+  AuthEvent.create<Partial<AuthEventDocument>>({
+    user,
+    event,
+    ua,
+    ip,
+    ...(remark && { remark }),
+    ...(coordinates && { type: 'Point', coordinates: [coordinates.lng, coordinates.lat] }),
+  });
+authEventSchema.static('log', log);
 
 const AuthEvent = Generic.discriminator<AuthEventDocument, AuthEventModel>('AuthEvent', authEventSchema);
 export default AuthEvent;

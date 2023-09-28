@@ -36,7 +36,7 @@ export default gql`
   }
 
   type HomeworkAssignment {
-    _id: ID!
+    # _id: ID! # one-to-one relationship, no need to normalize, just nest it
     flags: [String!]!
     classroom: String!
     chapter: String

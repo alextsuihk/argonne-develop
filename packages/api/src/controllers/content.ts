@@ -5,34 +5,49 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
+import type { Types } from 'mongoose';
 
 import type { ContentDocument, Id } from '../models/content';
 import Content from '../models/content';
+import type { CensorTask } from '../models/job';
+import Job from '../models/job';
 import token from '../utils/token';
 import common from './common';
 
 const { MSG_ENUM } = LOCALE;
 
-const { auth, paginateSort, searchFilter, select } = common;
-const { querySchema, tokenSchema } = yupSchema;
+const { paginateSort, searchFilter, select } = common;
+const { querySchema, optionalIdsSchema, tokenSchema } = yupSchema;
 
 const CONTENT_IDS_TOKEN_PREFIX = 'CONTENT_IDS';
-export const PUBLIC = 'PUBLIC';
+const PUBLIC = 'PUBLIC';
+
+/**
+ * Queue Task for censoring content
+ */
+export const censorContent = async (
+  tenantId: CensorTask['tenantId'],
+  userId: CensorTask['userId'],
+  userLocale: CensorTask['userLocale'],
+  model: CensorTask['model'],
+  parentId: CensorTask['parentId'],
+  contentId: CensorTask['contentId'],
+) => Job.queue({ type: 'censor', tenantId, userId, userLocale, model, parentId, contentId });
 
 const findCommon = async (req: Request, args: unknown) => {
-  const { userId } = auth(req);
-  const { query, token: tok } = await querySchema.concat(tokenSchema).validate(args);
+  const { ids, query, token: tok } = await querySchema.concat(optionalIdsSchema).concat(tokenSchema).validate(args);
 
   const [prefix, decodedUserId, ...contentIds] = await token.verifyStrings(tok);
   if (
     prefix !== CONTENT_IDS_TOKEN_PREFIX ||
     !contentIds.length ||
     !decodedUserId ||
-    ![PUBLIC, userId].includes(decodedUserId)
+    ![PUBLIC, req.userId].includes(decodedUserId)
   )
     throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 
-  return searchFilter<ContentDocument>([], { query }, { _id: { $in: contentIds } });
+  const getIds = ids ? ids.filter(x => contentIds.includes(x)) : contentIds; // if ids are provided, get intersected contents
+  return searchFilter<ContentDocument>([], { query }, { _id: { $in: getIds } });
 };
 
 /**
@@ -49,7 +64,7 @@ const find = async (req: Request, args: unknown): Promise<(ContentDocument & Id)
 const findMany: RequestHandler<{ token: string }> = async (req, res, next) => {
   try {
     const filter = await findCommon(req, { query: req.query, token: req.params.token });
-    const options = paginateSort(req.query, { updatedAt: 1 });
+    const options = paginateSort(req.query, { updatedAt: -1 });
 
     const [total, contents] = await Promise.all([
       Content.countDocuments(filter),
@@ -65,7 +80,7 @@ const findMany: RequestHandler<{ token: string }> = async (req, res, next) => {
 /**
  * Sign ContentIds
  */
-export const signContentIds = async (userId: string, contentIds: string[]) =>
-  token.signStrings([CONTENT_IDS_TOKEN_PREFIX, userId, ...contentIds]);
+export const signContentIds = async (userId: string | null, contents: Types.ObjectId[]) =>
+  token.signStrings([CONTENT_IDS_TOKEN_PREFIX, userId || PUBLIC, ...contents.map(c => c.toString())], 0);
 
 export default { find, findMany };

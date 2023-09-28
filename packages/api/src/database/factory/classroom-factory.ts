@@ -23,7 +23,7 @@ import SchoolCourse from '../../models/school-course';
 import Tenant from '../../models/tenant';
 import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
-import { idsToString, mongoId, prob, schoolYear, shuffle } from '../../utils/helper';
+import { mongoId, prob, randomItem, randomItems, schoolYear } from '../../utils/helper';
 import { fakeChatsWithContents, fakeContents } from '../helper';
 import { findLevels } from '../seed/level-seed';
 
@@ -32,27 +32,26 @@ const { ASSIGNMENT, SCHOOL_COURSE, TENANT, USER } = LOCALE.DB_ENUM;
 /**
  * (helper) filter user based on school & level
  */
-const selectUsers = (users: (UserDocument & Id)[], school: string | Types.ObjectId, level: string | Types.ObjectId) =>
+const selectUsers = (users: (UserDocument & Id)[], school: Types.ObjectId, level: Types.ObjectId) =>
   users.filter(
     ({ schoolHistories }) =>
       schoolHistories[0] &&
       schoolHistories[0].year === schoolYear() &&
-      schoolHistories[0].school.toString() === school.toString() &&
-      schoolHistories[0].level.toString() === level.toString(),
+      schoolHistories[0].school.equals(school) &&
+      schoolHistories[0].level.equals(level),
   );
 
 /**
  * Generate (factory)
  *
  * @param codes: tenantCodes
- * @param count: per level per tenant
  * @param chatMax: max chats (per classroom)
  * @param contentMax: max contents(per chat)
  * @param assignmentCount: max contents(per classroom)
  *
  */
 
-const fake = async (codes: string[], count: 2, chatMax = 3, contentMax = 5, assignmentCount = 5): Promise<string> => {
+const fake = async (codes: string[], chatMax = 3, contentMax = 5, assignmentCount = 5): Promise<string> => {
   const tenants = await Tenant.find({
     school: { $exists: true },
     services: TENANT.SERVICE.CLASSROOM,
@@ -69,8 +68,12 @@ const fake = async (codes: string[], count: 2, chatMax = 3, contentMax = 5, assi
       year: schoolYear(),
       deletedAt: { $exists: false },
     }).lean(),
-
-    User.find({ status: USER.STATUS.ACTIVE, schoolHistories: { $ne: [] }, deletedAt: { $exists: false } }).lean(),
+    User.find({
+      status: USER.STATUS.ACTIVE,
+      tenants: { $in: tenants.map(t => t._id) },
+      schoolHistories: { $ne: [] },
+      deletedAt: { $exists: false },
+    }).lean(),
   ]);
 
   const assignments: (AssignmentDocument & Id)[] = [];
@@ -80,56 +83,64 @@ const fake = async (codes: string[], count: 2, chatMax = 3, contentMax = 5, assi
 
   // helper function
   const fakeAssignmentsWithHomeworksAndContents = (
-    classroomId: string | Types.ObjectId,
-    bookIds: (string | Types.ObjectId)[],
+    classroomId: Types.ObjectId,
+    bookIds: Types.ObjectId[],
     teachers: (UserDocument & Id)[],
     students: (UserDocument & Id)[],
   ) => {
     const homeworks: (HomeworkDocument & Id)[] = [];
-    const aContents: (ContentDocument & Id)[] = [];
+    const assignmentAndHomeworkContents: (ContentDocument & Id)[] = [];
 
     const assignments = Array(assignmentCount)
       .fill(0)
-      .map(_ => {
+      .map(() => {
         const assignmentId = mongoId();
+        const isGraded = prob(0.5);
         const newHomeworks = students.map(student => {
           const homeworkId = mongoId();
           const homeworkContents = fakeContents(
             'homeworks',
             homeworkId,
             [student._id],
-            Math.floor(Math.random() * 5), // range from 0 - 5
+            Math.floor(Math.random() * 5 + (isGraded ? 1 : 0)), // range from 0 - 5 for not-graded, 1-6 for graded homework
             false,
           );
-          aContents.push(...homeworkContents);
+          assignmentAndHomeworkContents.push(...homeworkContents);
+
+          const homeworkGradingContent = isGraded
+            ? fakeContents('homeworks', homeworkId, [randomItem(teachers)._id], 1, false)
+            : [];
+          assignmentAndHomeworkContents.push(...homeworkGradingContent);
 
           return new Homework<Partial<HomeworkDocument & Id>>({
             _id: homeworkId,
             user: student._id,
             assignmentIdx: faker.datatype.number(assignmentCount),
             dynParamIdx: faker.datatype.number(5),
-            contents: idsToString(homeworkContents),
+            contents: [...homeworkContents, ...homeworkGradingContent].map(c => c._id),
             ...(homeworkContents.length && { answer: faker.lorem.sentence(), answeredAt: faker.date.recent(2) }),
             ...(homeworkContents.length && prob(0.5) && { timeSpent: faker.datatype.number(100) }),
             ...(prob(0.3) && { viewedExamples: [0, 2] }),
-            ...(homeworkContents.length && prob(0.5) && { score: faker.datatype.number({ min: 50, max: 100 }) }),
+            ...(isGraded && { score: faker.datatype.number({ min: 50, max: 100 }) }),
           });
         });
         homeworks.push(...newHomeworks);
 
         const bookAssignmentIds = prob(0.5)
-          ? books
-              .filter(x => idsToString(bookIds).includes(x._id.toString()))
-              .map(b => idsToString(b.assignments))
-              .flat()
-              .sort(shuffle)
-              .slice(0, 5)
+          ? randomItems(
+              books
+                .filter(b => bookIds.some(bookId => bookId.equals(b._id)))
+                .map(book => book.assignments.map(a => mongoId(a)))
+                .flat(),
+              5,
+            )
           : [];
 
-        const newManualAssignments = bookAssignmentIds.length
+        const manualAssignments = bookAssignmentIds.length
           ? []
-          : fakeContents('assignments', assignmentId, [teachers[0]!._id], Math.ceil(Math.random() * 5));
-        aContents.push(...newManualAssignments);
+          : Array(5)
+              .fill(0)
+              .map(() => faker.lorem.sentence());
 
         return new Assignment<Partial<AssignmentDocument & Id>>({
           _id: assignmentId,
@@ -140,18 +151,18 @@ const fake = async (codes: string[], count: 2, chatMax = 3, contentMax = 5, assi
 
           deadline: faker.date.soon(15),
           bookAssignments: bookAssignmentIds,
-          manualAssignments: idsToString(newManualAssignments),
+          manualAssignments,
 
-          homeworks: idsToString(newHomeworks),
+          homeworks: newHomeworks.map(h => h._id),
         });
       });
 
-    return { assignments, homeworks, contents: aContents };
+    return { assignments, homeworks, contents: assignmentAndHomeworkContents };
   };
 
   const classrooms = schoolCourses
     .map(({ school, year, courses }) => {
-      const tenant = tenants.find(tenant => tenant.school!.toString() === school.toString())!;
+      const tenant = tenants.find(tenant => tenant.school!.equals(school))!;
       const teachers = selectUsers(users, school, teacherLevel._id);
 
       return courses
@@ -162,64 +173,55 @@ const fake = async (codes: string[], count: 2, chatMax = 3, contentMax = 5, assi
           return schoolClasses
             .map(schoolClass =>
               subjects
-                .map(({ subject, books, alias }) =>
-                  Array(count)
-                    .fill(0)
-                    .map(() => {
-                      const classroomId = mongoId();
+                .map(({ _id: subject, books, alias }) => {
+                  const classroomId = mongoId();
 
-                      const selectedStudents = students.filter(s => s.schoolHistories[0]!.schoolClass === schoolClass);
-                      const selectedTeachers = teachers.sort(shuffle).slice(0, prob(0.6) ? 1 : 2);
+                  const selectedStudents = students.filter(s => s.schoolHistories[0]!.schoolClass === schoolClass);
+                  const selectedTeachers = randomItems(teachers, prob(0.6) ? 1 : 2);
 
-                      const { chats: newChats, contents: newChatContents } = fakeChatsWithContents(
-                        'classrooms',
-                        classroomId,
-                        idsToString([...selectedStudents, ...selectedTeachers]),
-                        chatMax,
-                        contentMax,
-                        true, // recallable contents
-                      );
-                      chats.push(...newChats);
-                      contents.push(...newChatContents);
+                  const { chats: newChats, contents: newChatContents } = fakeChatsWithContents(
+                    'classrooms',
+                    classroomId,
+                    [...selectedStudents, ...selectedTeachers].map(u => u._id),
+                    chatMax,
+                    contentMax,
+                    true, // recallable contents
+                  );
 
-                      const {
-                        assignments: newAssignments,
-                        homeworks: newHomeworks,
-                        contents: newAssignmentHomeworkContents,
-                      } = fakeAssignmentsWithHomeworksAndContents(
-                        classroomId,
-                        books,
-                        selectedTeachers,
-                        selectedStudents,
-                      );
+                  chats.push(...newChats);
+                  contents.push(...newChatContents);
 
-                      assignments.push(...newAssignments);
-                      homeworks.push(...newHomeworks);
-                      contents.push(...newAssignmentHomeworkContents);
+                  const {
+                    assignments: newAssignments,
+                    homeworks: newHomeworks,
+                    contents: newAssignmentHomeworkContents,
+                  } = fakeAssignmentsWithHomeworksAndContents(classroomId, books, selectedTeachers, selectedStudents);
 
-                      return new Classroom<Partial<ClassroomDocument & Id>>({
-                        _id: classroomId,
-                        tenant: tenant._id,
-                        level,
-                        subject,
-                        year,
-                        schoolClass,
-                        ...(prob(0.9) && {
-                          title: alias ?? `${schoolClass} (${subject})`,
-                        }),
-                        ...(prob(0.5) && { room: faker.lorem.words(5) }),
-                        ...(prob(0.5) && { schedule: faker.lorem.words(5) }),
+                  assignments.push(...newAssignments);
+                  homeworks.push(...newHomeworks);
+                  contents.push(...newAssignmentHomeworkContents);
 
-                        books,
-                        teachers: idsToString(selectedTeachers),
-                        students: idsToString(selectedStudents),
+                  return new Classroom<Partial<ClassroomDocument & Id>>({
+                    _id: classroomId,
+                    tenant: tenant._id,
+                    level,
+                    subject,
+                    year,
+                    schoolClass,
+                    ...(prob(0.9) && {
+                      title: alias ?? `${schoolClass} (${subject})`,
+                    }),
+                    ...(prob(0.5) && { room: faker.lorem.words(5) }),
+                    ...(prob(0.5) && { schedule: faker.lorem.words(5) }),
 
-                        chats: idsToString(newChats),
-                        assignments: idsToString(newAssignments),
-                      });
-                    })
-                    .flat(),
-                )
+                    books,
+                    teachers: selectedTeachers.map(t => t._id),
+                    students: selectedStudents.map(s => s._id),
+
+                    chats: newChats.map(c => c._id),
+                    assignments: newAssignments.map(a => a._id),
+                  });
+                })
                 .flat(),
             )
             .flat();
@@ -229,19 +231,19 @@ const fake = async (codes: string[], count: 2, chatMax = 3, contentMax = 5, assi
     .flat();
 
   await Promise.all([
-    Classroom.create(classrooms),
-    Assignment.create(assignments),
-    Chat.create(chats),
-    Content.create(contents),
-    Homework.create(homeworks),
+    Classroom.insertMany<Partial<ClassroomDocument>>(classrooms, { rawResult: true }),
+    Assignment.insertMany<Partial<AssignmentDocument>>(assignments, { rawResult: true }),
+    Chat.insertMany<Partial<ChatDocument>>(chats, { rawResult: true }),
+    Content.insertMany<Partial<ContentDocument>>(contents, { rawResult: true }),
+    Homework.insertMany<Partial<HomeworkDocument>>(homeworks, { rawResult: true }),
   ]);
 
-  const msg = `${chalk.green(classrooms.length)} classrooms [for ${schoolCourses.length} school(s)] created`;
-  const chatMsg = `with ${chalk.green(chats.length)} chats`;
-  const assignmentMsg = `${chalk.green(assignments.length)} assignments`;
+  const msg = `${chalk.green(classrooms.length)} classrooms for ${chalk.green(schoolCourses.length)} school(s) created`;
+  const assignmentMsg = `with ${chalk.green(assignments.length)} assignments`;
   const homeworkMsg = `with ${chalk.green(homeworks.length)} homeworks`;
-  const contentMSg = `chats, ${chalk.green(contents.length)} contents)`;
-  return `(${msg}, ${chatMsg}, ${assignmentMsg}, ${homeworkMsg}, ${contentMSg})`;
+  const chatMsg = `with ${chalk.green(chats.length)} chats`;
+  const contentMsg = `with ${chalk.green(contents.length)} contents)`;
+  return `(${msg}, ${chatMsg}, ${assignmentMsg}, ${homeworkMsg}, ${contentMsg})`;
 };
 
 export { fake };

@@ -6,6 +6,7 @@
 import { LOCALE } from '@argonne/common';
 
 import {
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -33,6 +34,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     flags: expect.any(Array),
     code: expect.any(String),
     name: expectedLocaleFormat,
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
   };
 
   beforeAll(async () => {

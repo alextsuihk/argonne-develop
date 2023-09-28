@@ -8,13 +8,12 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
   FAKE,
-  idsToString,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
   shuffle,
   testServer,
 } from '../jest';
@@ -43,9 +42,10 @@ describe('Contact GraphQL', () => {
     flags: expect.any(Array),
     avatarUrl: expect.toBeOneOf([null, expect.any(String)]),
     name: expect.any(String),
-    identifiedAt: expect.toBeOneOf([null, expect.any(Number)]),
-    status: expect.any(String),
-    tenants: expect.arrayContaining([expect.any(String)]),
+    identifiedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
+    availability: expect.any(String),
+    tenants: expect.any(Array),
+    updatedAt: expectedDateFormat(true),
   };
 
   beforeAll(async () => {
@@ -55,20 +55,22 @@ describe('Contact GraphQL', () => {
   });
   afterAll(jestTeardown);
 
-  test('should response a contact list from user.contacts', async () => {
-    expect.assertions(1);
-    const res = await normalServer!.executeOperation({ query: GET_CONTACTS });
-    apolloExpect(res, 'data', { contacts: expect.arrayContaining([expectedFormat]) });
-  });
+  test('should response a contact list and single contact', async () => {
+    expect.assertions(2);
 
-  test('should response a single contact from user.contacts', async () => {
-    expect.assertions(1);
+    const user = normalUsers!.find(u => u.contacts.length);
+    if (!user) throw 'No valid users (with contacts)';
 
-    // pick a random contact (who is ACTIVE)
-    const myContactIds = normalUser!.contacts.map(c => c.user.toString());
-    const friendId = myContactIds.sort(shuffle).find(uid => idsToString(normalUsers!).includes(uid));
-    const res = await normalServer!.executeOperation({ query: GET_CONTACT, variables: { id: friendId } });
-    apolloExpect(res, 'data', { contact: expectedFormat });
+    const userServer = testServer(user);
+
+    // getMany()
+    const res1 = await userServer.executeOperation({ query: GET_CONTACTS });
+    apolloExpect(res1, 'data', { contacts: expect.arrayContaining([expectedFormat]) });
+
+    // getOne()
+    const friendId = user.contacts.sort(shuffle)[0].user.toString();
+    const res2 = await userServer.executeOperation({ query: GET_CONTACT, variables: { id: friendId } });
+    apolloExpect(res2, 'data', { contact: { ...expectedFormat, _id: friendId } });
   });
 
   test('should fail when get contact with invalid ID', async () => {
@@ -105,10 +107,11 @@ describe('Contact GraphQL', () => {
     expect.assertions(6);
 
     // find an user who not in contacts
-    const myContactIds = normalUser!.contacts.map(c => c.user.toString());
+    const myContactIds = normalUser!.contacts.map(c => c.user);
     const friend = normalUsers!
+      .slice(1) // skip normalUser himself (idx 0)
       .sort(shuffle)
-      .find(({ _id }) => _id.toString() !== normalUser!._id.toString() && !myContactIds.includes(_id.toString()));
+      .find(({ _id }) => !myContactIds.some(id => id.equals(_id)));
 
     const friendId = friend!._id.toString();
     const friendServer = testServer(friend);
@@ -119,7 +122,7 @@ describe('Contact GraphQL', () => {
       variables: prob(0.5) ? { expiresIn: 5 } : {},
     });
     apolloExpect(contactTokenRes, 'data', {
-      contactToken: { token: expect.any(String), expireAt: expect.any(Number) },
+      contactToken: { token: expect.any(String), expireAt: expectedDateFormat(true) },
     });
 
     // add contact

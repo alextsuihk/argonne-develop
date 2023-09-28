@@ -6,6 +6,7 @@
 import { LOCALE } from '@argonne/common';
 
 import {
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -43,8 +44,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   const expectedAdminFormat = {
     ...expectedMinFormat,
-    createdAt: expect.any(String),
-    updatedAt: expect.any(String),
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
   };
 
   beforeAll(async () => {
@@ -101,7 +102,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         data: { tenantId, custom: { title: FAKE_LOCALE, content: FAKE_LOCALE } },
         expectedMinFormat: {
           ...expectedMinFormat,
-          customs: [{ _id: expectedIdFormat, tenant: tenantId!, title: FAKE_LOCALE, content: FAKE_LOCALE }],
+          customs: [{ tenant: tenantId!, title: FAKE_LOCALE, content: FAKE_LOCALE }],
         },
       },
       {
@@ -110,7 +111,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         data: { tenantId, custom: { title: FAKE2_LOCALE, content: FAKE2_LOCALE } },
         expectedMinFormat: {
           ...expectedMinFormat,
-          customs: [{ _id: expectedIdFormat, tenant: tenantId!, title: FAKE2_LOCALE, content: FAKE2_LOCALE }],
+          customs: [{ tenant: tenantId!, title: FAKE2_LOCALE, content: FAKE2_LOCALE }],
         },
       },
       { action: 'removeCustom', headers: { 'Jest-User': tenantAdmin!._id }, data: { tenantId }, expectedMinFormat },

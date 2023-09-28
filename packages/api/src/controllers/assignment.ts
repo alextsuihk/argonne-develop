@@ -7,21 +7,23 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
+import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import type { AssignmentDocument, Id } from '../models/assignment';
 import Assignment, { searchableFields } from '../models/assignment';
 import type { BookAssignmentDocument } from '../models/book';
 import { BookAssignment } from '../models/book';
-import Classroom from '../models/classroom';
+import Classroom, { ClassroomDocument } from '../models/classroom';
 import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
 import DatabaseEvent from '../models/event/database';
 import type { HomeworkDocument } from '../models/homework';
 import Homework from '../models/homework';
-import Job from '../models/job';
-import { idsToString, schoolYear } from '../utils/helper';
+import Job, { JobDocument } from '../models/job';
+import { mongoId, schoolYear } from '../utils/helper';
 import log from '../utils/log';
+import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
@@ -33,6 +35,7 @@ type AssignmentDocumentEx = AssignmentDocument & Id & { contentsToken: string };
 
 const { MSG_ENUM } = LOCALE;
 const { ASSIGNMENT } = LOCALE.DB_ENUM;
+
 const { assertUnreachable, auth, paginateSort, searchFilter, select } = common;
 const { assignmentGradeSchema, assignmentSchema, assignmentUpdateSchema, idSchema, querySchema, removeSchema } =
   yupSchema;
@@ -51,12 +54,10 @@ const transform = async (userId: string, assignment: AssignmentDocument & Id): P
     ...assignment,
     contentsToken: await signContentIds(
       userId,
-      idsToString(
-        [
-          ...(assignment.bookAssignments as (BookAssignmentDocument & Id)[]).map(a => [a.content, ...a.examples]),
-          ...(assignment.homeworks as (HomeworkDocument & Id)[]).map(h => h.contents),
-        ].flat(),
-      ),
+      [
+        ...(assignment.bookAssignments as (BookAssignmentDocument & Id)[]).map(a => [a.content, ...a.examples]),
+        ...(assignment.homeworks as (HomeworkDocument & Id)[]).map(h => h.contents),
+      ].flat(),
     ),
   };
 };
@@ -67,54 +68,76 @@ const transform = async (userId: string, assignment: AssignmentDocument & Id): P
  */
 const create = async (req: Request, args: unknown): Promise<AssignmentDocumentEx> => {
   const { userId } = auth(req);
-  const { questions, flags, maxScores, homeworks, ...fields } = await assignmentSchema.validate(args);
+  const { assignments, flags, maxScores, homeworks, ...inputFields } = await assignmentSchema.validate(args);
 
-  const bookAssignments = questions.filter(question => mongoose.isObjectIdOrHexString(question));
-  const manualAssignments = questions.filter(question => !mongoose.isObjectIdOrHexString(question));
+  const bookAssignmentIds = assignments.filter(assignment => mongoose.isObjectIdOrHexString(assignment));
+  const manualAssignments = assignments.filter(assignment => !mongoose.isObjectIdOrHexString(assignment));
 
-  const [bookAssignmentCount, classroom] = await Promise.all([
-    bookAssignments.length &&
-      BookAssignment.countDocuments({ _id: { $in: bookAssignments }, deletedAt: { $exists: false } }),
-    Classroom.findOne({ _id: fields.classroom, teachers: userId, deletedAt: { $exists: false } }).lean(),
+  const [bookAssignments, classroom] = await Promise.all([
+    BookAssignment.find({ _id: { $in: bookAssignmentIds }, deletedAt: { $exists: false } }).lean(),
+    Classroom.findOne({ _id: inputFields.classroom, teachers: userId, deletedAt: { $exists: false } }).lean(),
   ]);
 
   if (
     !classroom ||
-    bookAssignments.length !== bookAssignmentCount ||
-    (maxScores && maxScores.length !== questions.length) ||
-    homeworks.map(h => h.user).filter(user => !idsToString(classroom.students).includes(user)).length // homework.users MUST match classroom.users
+    bookAssignmentIds.length !== bookAssignments.length ||
+    (maxScores && maxScores.length !== assignments.length)
   )
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const assignment = new Assignment<Partial<AssignmentDocument>>({
-    ...fields,
+  const _id = mongoId();
+  const createdHomeworks = homeworks
+    .filter(h => classroom.students.some(s => s.equals(h.user))) // remove homework.users not in classroom.users
+    .map(h => new Homework<Partial<HomeworkDocument>>({ assignment: _id, ...h, user: mongoId(h.user) }));
+
+  const assignment = new Assignment<Partial<AssignmentDocument & Id>>({
+    _id,
+    ...inputFields,
+    classroom: classroom._id,
     maxScores: maxScores?.filter((s): s is number => !!s), // make typescript to filter undefined[]
     flags: flags.filter(f => !!f && Object.keys(ASSIGNMENT.FLAG).includes(f)).filter((flag): flag is string => !!flag), // make typescript to filter undefined[],
-    bookAssignments,
+    bookAssignments, // populating bookAssignments[]
     manualAssignments,
+    homeworks: createdHomeworks, // populating homeworks
   });
 
-  const createdHomeworks = homeworks.map(
-    homework => new Homework<Partial<HomeworkDocument & Id>>({ assignment, ...homework }),
-  );
-  assignment.homeworks = createdHomeworks;
-  const id = assignment._id.toString();
+  // for assignment auto-grading, queue task
+  const job =
+    flags.includes(ASSIGNMENT.FLAG.AUTO_GRADE) &&
+    (await Job.queue({
+      type: 'grade',
+      owners: classroom.teachers,
+      tenantId: classroom.tenant,
+      assignmentId: _id,
+      startAfter: inputFields.deadline,
+    }));
+  if (job) assignment.job = job._id;
 
-  // for auto-grade assignment, queue task
-  if (flags.includes(ASSIGNMENT.FLAG.AUTO_GRADE))
-    assignment.job = await Job.queue({ task: 'grade', args: { assignmentId: id }, startAfter: fields.deadline });
-
+  const classroomUpdate: UpdateQuery<ClassroomDocument> = { $addToSet: { assignments: _id } };
   const [transformed] = await Promise.all([
-    transform(userId, assignment),
-    assignment.save(),
-    Homework.create(createdHomeworks),
-    Classroom.updateOne({ _id: classroom }, { $addToSet: { assignments: id } }),
-    DatabaseEvent.log(userId, `/assignments/${id}`, 'CREATE', { assignment: fields }),
-    notifySync('ASSIGNMENT', { tenantId: classroom.tenant, userIds: classroom.teachers }, { assignmentIds: [id] }),
+    transform(userId, assignment.toObject()), // manually populate homeworks
+    Assignment.insertMany(assignment, { rawResult: true }),
+    Classroom.updateOne(classroom, classroomUpdate),
+    Homework.insertMany(createdHomeworks, { rawResult: true }),
+    DatabaseEvent.log(userId, `/assignments/${_id}`, 'CREATE', args),
     notifySync(
-      'HOMEWORK',
-      { tenantId: classroom.tenant, userIds: classroom.students },
-      { homeworkIds: createdHomeworks },
+      classroom.tenant,
+      { userIds: [...classroom.teachers, ...classroom.students], event: 'ASSIGNMENT-HOMEWORK' },
+      {
+        bulkWrite: {
+          assignments: [{ insertOne: { document: assignment.toObject() } }] satisfies BulkWrite<AssignmentDocument>,
+
+          classrooms: [
+            { updateOne: { filter: { _id: classroom._id }, update: classroomUpdate } },
+          ] satisfies BulkWrite<ClassroomDocument>,
+
+          homeworks: [
+            { insertMany: { documents: createdHomeworks.map(h => h.toObject()) } },
+          ] satisfies BulkWrite<HomeworkDocument>,
+
+          ...(job && { jobs: [{ insertOne: { document: job } }] satisfies BulkWrite<JobDocument> }),
+        },
+      },
     ),
   ]);
 
@@ -145,9 +168,7 @@ const findCommon = async (userId: string, args: unknown, getOne = false) => {
   const assignmentIds = classrooms.map(classroom => classroom.assignments).flat();
 
   if (id)
-    return idsToString(assignmentIds).includes(id)
-      ? searchFilter<AssignmentDocument>([], { query }, { _id: id })
-      : null;
+    return assignmentIds.some(a => a.equals(id)) ? searchFilter<AssignmentDocument>([], { query }, { _id: id }) : null;
 
   return assignmentIds.length
     ? searchFilter<AssignmentDocument>(searchableFields, { query }, { _id: { $in: assignmentIds } })
@@ -233,11 +254,14 @@ const grade = async (req: Request, args: unknown): Promise<AssignmentDocumentEx>
   if (!original || !classroom || (!data && !score)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const content =
-    !!data && new Content<Partial<ContentDocument>>({ parents: [`/homeworks/${homeworkId}`], creator: userId, data });
-  const homework = await Homework.findOneAndUpdate(
-    { _id: homeworkId, assignment: id },
-    { $push: { ...(content && { contents: content }), ...(score && { scores: score }) } },
-  ).lean();
+    !!data &&
+    new Content<Partial<ContentDocument>>({ parents: [`/homeworks/${homeworkId}`], creator: mongoId(userId), data });
+
+  // must update homework before populating in Assignment.findOneAndUpdate()
+  const homeworkUpdate: UpdateQuery<HomeworkDocument> = {
+    $push: { ...(content && { contents: content._id }), ...(score && { scores: score }) },
+  };
+  const homework = await Homework.findOneAndUpdate({ _id: homeworkId, assignment: id }, homeworkUpdate).lean();
   if (!homework) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const [assignment] = await Promise.all([
@@ -247,13 +271,27 @@ const grade = async (req: Request, args: unknown): Promise<AssignmentDocumentEx>
       { fields: select(), new: true, populate: nestedPopulate },
     ).lean(),
     content && content.save(),
-    DatabaseEvent.log(userId, `/assignments/${id}`, 'grade', { homeworkId, score }),
-    notifySync('ASSIGNMENT', { tenantId: classroom.tenant, userIds: classroom.teachers }, { assignmentIds: [id] }),
-    notifySync('HOMEWORK', { tenantId: classroom.tenant, userIds: [homework.user] }, { homeworkIds: [homeworkId] }),
+    DatabaseEvent.log(userId, `/assignments/${id}`, 'grade', { id, homeworkId, score }),
+
+    notifySync(
+      classroom.tenant,
+      { userIds: [...classroom.teachers, homework.user], event: 'ASSIGNMENT-HOMEWORK' },
+      {
+        bulkWrite: {
+          assignments: [
+            { updateOne: { filter: { _id: id }, update: { updatedAt: new Date() } } },
+          ] satisfies BulkWrite<AssignmentDocument>,
+          homeworks: [
+            { updateOne: { filter: { _id: homeworkId }, update: homeworkUpdate } },
+          ] satisfies BulkWrite<HomeworkDocument>,
+        },
+        ...(content && { contentsToken: await signContentIds(null, [content._id]) }),
+      },
+    ),
   ]);
 
   if (assignment) return transform(userId, assignment);
-  log('error', 'questionController:grade()', { id, homeworkId, score }, userId);
+  log('error', 'assignmentController:grade()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -261,10 +299,11 @@ const grade = async (req: Request, args: unknown): Promise<AssignmentDocumentEx>
  * Delete by ID
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  const { userId } = auth(req);
+  const { userId, userTenants } = auth(req);
   const { id, remark } = await removeSchema.validate(args);
 
   const classroom = await Classroom.findOne({
+    tenant: { $in: { userTenants } },
     teachers: userId,
     assignments: id,
     deletedAt: { $exists: false },
@@ -278,12 +317,26 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   if (!assignment) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   await Promise.all([
-    DatabaseEvent.log(userId, `/assignments/${id}`, 'DELETE', { remark }),
-    notifySync('ASSIGNMENT', { tenantId: classroom.tenant, userIds: classroom.teachers }, { assignmentIds: [id] }),
+    Homework.updateMany({ _id: { $in: assignment.homeworks } }, { updatedAt: new Date() }), // for student re-fetching homework updates
+    DatabaseEvent.log(userId, `/assignments/${id}`, 'DELETE', { args }),
     notifySync(
-      'HOMEWORK',
-      { tenantId: classroom.tenant, userIds: classroom.students },
-      { homeworkIds: assignment.homeworks },
+      classroom.tenant,
+      { userIds: [...classroom.teachers, ...classroom.students], event: 'ASSIGNMENT-HOMEWORK' },
+      {
+        bulkWrite: {
+          assignments: [
+            { updateOne: { filter: { _id: id }, update: { deletedAt: new Date() } } },
+          ] satisfies BulkWrite<AssignmentDocument>,
+          homeworks: [
+            {
+              updateMany: {
+                filter: { _id: { $in: assignment.homeworks.map(h => mongoId(h)) } },
+                update: { updatedAt: new Date() },
+              },
+            },
+          ] satisfies BulkWrite<HomeworkDocument>,
+        },
+      },
     ),
   ]);
 
@@ -308,34 +361,49 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
  */
 const update = async (req: Request, args: unknown): Promise<AssignmentDocumentEx> => {
   const { userId } = auth(req);
-  const { id, ...fields } = await assignmentUpdateSchema.concat(idSchema).validate(args);
+  const { id, ...updateFields } = await assignmentUpdateSchema.concat(idSchema).validate(args);
 
-  const classroom = await Classroom.findOne({
-    teachers: userId,
-    assignments: id,
-    deletedAt: { $exists: false },
-  }).lean();
-  if (!classroom) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  const [original, classroom] = await Promise.all([
+    Assignment.findOne({ _id: id, deletedAt: { $exists: false } }).lean(),
+    Classroom.findOne({
+      teachers: userId,
+      assignments: id,
+      deletedAt: { $exists: false },
+    }).lean(),
+  ]);
+  if (!original || !classroom) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const assignment = await Assignment.findByIdAndUpdate(id, fields, {
-    fields: select(),
-    new: true,
-    populate: nestedPopulate,
-  }).lean();
-  if (!assignment) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const [transformed] = await Promise.all([
-    transform(userId, assignment),
-    DatabaseEvent.log(userId, `/assignments/${id}`, 'UPDATE', fields),
-    notifySync('ASSIGNMENT', { tenantId: classroom.tenant, userIds: classroom.teachers }, { assignmentIds: [id] }),
+  const [assignment] = await Promise.all([
+    Assignment.findByIdAndUpdate(id, updateFields, {
+      fields: select(),
+      new: true,
+      populate: nestedPopulate,
+    }).lean(),
+    Homework.updateMany({ _id: { $in: original.homeworks } }, { updatedAt: new Date() }), // for student re-fetching homework updates
+    DatabaseEvent.log(userId, `/assignments/${id}`, 'UPDATE', { args }),
     notifySync(
-      'HOMEWORK',
-      { tenantId: classroom.tenant, userIds: classroom.students },
-      { homeworkIds: assignment.homeworks },
+      classroom.tenant,
+      { userIds: [...classroom.teachers, ...classroom.students], event: 'ASSIGNMENT-HOMEWORK' },
+      {
+        bulkWrite: {
+          assignments: [
+            { updateOne: { filter: { _id: id }, update: updateFields } },
+          ] satisfies BulkWrite<AssignmentDocument>,
+          homeworks: [
+            {
+              updateMany: {
+                filter: { _id: { $in: original.homeworks.map(h => h._id) } },
+                update: { updatedAt: new Date() },
+              },
+            },
+          ] satisfies BulkWrite<HomeworkDocument>,
+        },
+      },
     ),
   ]);
-
-  return transformed;
+  if (assignment) return transform(userId, assignment);
+  log('error', 'assignmentController:update()', args, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 /**
  * Update Assignment (RESTful)

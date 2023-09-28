@@ -8,51 +8,50 @@ import type { Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Member } from './common';
-import { baseDefinition, memberDefinition } from './common';
+import type { BaseDocument, Bid, Member } from './common';
+import { baseDefinition, bidDefinition, memberDefinition } from './common';
 export type { Id, Member } from './common';
 
-interface QuestionExtra {
+export interface QuestionDocument extends BaseDocument {
+  tenant: Types.ObjectId;
+
+  parent?: Types.ObjectId; // clone from another question
+  student: Types.ObjectId;
+  tutor?: Types.ObjectId;
+  marshals: Types.ObjectId[];
+
+  members: Member[];
+
+  deadline: Date;
+
+  classroom?: Types.ObjectId;
+  level: Types.ObjectId;
+  subject: Types.ObjectId;
+  book?: Types.ObjectId;
+  bookRev?: string;
+  chapter?: string;
+  assignment?: Types.ObjectId;
+  assignmentIdx?: number;
+  dynParamIdx?: number;
+  homework?: Types.ObjectId;
+
+  lang: string;
+
+  contents: Types.ObjectId[];
+  contentIdx: number; // # of contents visible to all bidders (once tutor is assigned, new contents are not visible to bidders)
+  timeSpent?: number; // time spent by tutor
+
+  // bidding
   price?: number;
 
-  bidders: (string | Types.ObjectId)[];
-  bidContents: (string | Types.ObjectId)[][];
+  bidders: Types.ObjectId[];
+  bids: Bid[];
 
   paidAt?: Date;
 
   correctness: number;
   explicitness: number;
   punctuality: number;
-}
-
-export interface QuestionDocument extends BaseDocument, QuestionExtra {
-  tenant: string | Types.ObjectId;
-
-  parent?: string | Types.ObjectId;
-  student: string | Types.ObjectId;
-  tutor?: string | Types.ObjectId;
-  marshals: (string | Types.ObjectId)[];
-
-  members: Member[];
-
-  deadline: Date;
-
-  classroom?: string | Types.ObjectId;
-  level: string | Types.ObjectId;
-  subject: string | Types.ObjectId;
-  book?: string | Types.ObjectId;
-  bookRev?: string;
-  chapter?: string;
-  assignment?: string | Types.ObjectId;
-  assignmentIdx?: number;
-  dynParamIdx?: number;
-  homework?: string | Types.ObjectId;
-
-  lang: string;
-
-  contents: (string | Types.ObjectId)[];
-  contentIdx: number; // # of contents visible to all bidders
-  timeSpent?: number; // time spent by tutor
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -65,24 +64,9 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-export const questionExtraDefinition = {
-  price: Number, // initial offer price
-
-  bidders: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
-
-  bidContents: [[{ type: Schema.Types.ObjectId, ref: 'Content' }]],
-
-  paidAt: Date,
-
-  correctness: { type: Number, default: 0 },
-  explicitness: { type: Number, default: 0 },
-  punctuality: { type: Number, default: 0 },
-};
-
 const questionSchema = new Schema<QuestionDocument>(
   {
     ...baseDefinition,
-    ...questionExtraDefinition,
 
     tenant: { type: Schema.Types.ObjectId, ref: 'Tenant' },
 
@@ -110,6 +94,19 @@ const questionSchema = new Schema<QuestionDocument>(
     contents: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
     contentIdx: { type: Number, default: 1 },
     timeSpent: Number,
+
+    // bidding
+    price: Number, // initial offer price
+
+    bidders: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
+
+    bids: [bidDefinition],
+
+    paidAt: Date,
+
+    correctness: { type: Number, default: 0 },
+    explicitness: { type: Number, default: 0 },
+    punctuality: { type: Number, default: 0 },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );

@@ -12,7 +12,7 @@ import configLoader from '../config/config-loader';
 import type { TokenDocument } from '../models/token';
 import Token from '../models/token';
 import type { Id, UserDocument } from '../models/user';
-import { idsToString, latestSchoolHistory, randomString } from './helper';
+import { latestSchoolHistory, randomString } from './helper';
 import { notifySync } from './notify-sync';
 
 type ApiPayload = {
@@ -20,7 +20,7 @@ type ApiPayload = {
   scope: string;
 };
 export type Auth = {
-  userExtra?: UserDocument['schoolHistories'][number];
+  userExtra?: ReturnType<typeof latestSchoolHistory>; // UserDocument['schoolHistories'][number] | { school: string; level: string };
   userFlags: string[];
   userId: string;
   userLocale: string;
@@ -79,7 +79,7 @@ const createTokens = async (user: UserDocument & Id, extra: Extra): Promise<Toke
     userName: name,
     userRoles: roles,
     userScopes: scopes,
-    userTenants: idsToString(tenants),
+    userTenants: tenants.map(t => t.toString()),
     userExtra: latestSchoolHistory(schoolHistories),
     authUserId,
     ip,
@@ -114,13 +114,13 @@ const generate: Generate = async (user: UserDocument & Id, extra: Extra) => {
 
     const excessTokens = tokens.slice(DEFAULTS.AUTH.MAX_LOGIN - 1);
 
-    const recentIp = tokens[0]?.ip;
-    const differentIp = !!(DEFAULTS.AUTH.SAME_IP_LOGIN_ONLY && recentIp && recentIp !== ip);
+    const satelliteIp = tokens[0]?.ip;
+    const differentIp = !!(DEFAULTS.AUTH.SAME_IP_LOGIN_ONLY && satelliteIp && satelliteIp !== ip);
 
     if (!force && (excessTokens.length || differentIp))
       return {
         conflict: {
-          ...(differentIp && { ip: recentIp }),
+          ...(differentIp && { ip: satelliteIp }),
           ...(excessTokens.length && { maxLogin: DEFAULTS.AUTH.MAX_LOGIN, exceedLogin: excessTokens.length }),
         },
       };
@@ -130,9 +130,21 @@ const generate: Generate = async (user: UserDocument & Id, extra: Extra) => {
 
     await Promise.all([
       excessTokens.length && Token.deleteMany({ _id: { $in: excessTokens } }),
-      Token.create({ user, token: refreshToken, expireAt: refreshTokenExpireAt, ip, ua, authUser: authUserId }),
+      Token.create<Partial<TokenDocument>>({
+        user: user._id,
+        token: refreshToken,
+        expireAt: refreshTokenExpireAt,
+        ip,
+        ua,
+        authUser: authUserId,
+      }),
       differentIp && revokeOthers(user._id, refreshToken),
-      differentIp && notifySync('RENEW-TOKEN', { userIds: [user] }, {}), // force other clients to renew (logout)
+      differentIp &&
+        notifySync(
+          user.tenants[0] || null,
+          { userIds: [user._id], event: 'AUTH-RENEW-TOKEN' },
+          { extra: { revokeAllTokensByUserId: user._id.toString() } },
+        ), // force other clients to renew (logout), also kick out in satellite
     ]);
 
     return { accessToken, accessTokenExpireAt, refreshToken, refreshTokenExpireAt };
@@ -264,8 +276,8 @@ const sign = async (
 /**
  * Sign String[]
  */
-const signStrings = async (payload: string[], expiresIn?: number | string): Promise<string> =>
-  sign({ data: payload.join('#') }, expiresIn ?? 0);
+const signStrings = async (payload: string[], expiresIn: number | string): Promise<string> =>
+  sign({ data: payload.join('#') }, expiresIn);
 
 /**
  * Verify & Decode JWT

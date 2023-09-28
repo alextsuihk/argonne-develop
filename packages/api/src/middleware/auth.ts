@@ -10,7 +10,7 @@ import MobileDetect from 'mobile-detect';
 
 import User from '../models/user';
 import { isStagingMode, isTestMode } from '../utils/environment';
-import { idsToString, latestSchoolHistory } from '../utils/helper';
+import { latestSchoolHistory } from '../utils/helper';
 import token from '../utils/token';
 
 /**
@@ -35,7 +35,7 @@ export const decodeHeader = async (req: Request, _res: Response, next: NextFunct
         req.userName = jestUser.name;
         req.userRoles = jestUser.roles;
         req.userScopes = jestUser.scopes;
-        req.userTenants = idsToString(jestUser.tenants);
+        req.userTenants = jestUser.tenants.map(t => t.toString());
       }
     } else {
       // process as normal user access, decode JWT and populate request
@@ -66,7 +66,7 @@ export const decodeHeader = async (req: Request, _res: Response, next: NextFunct
           req.userName = user.name;
           req.userRoles = user.roles;
           req.userScopes = [scope];
-          req.userTenants = idsToString(user.tenants);
+          req.userTenants = user.tenants.map(t => t.toString());
         }
       }
     }

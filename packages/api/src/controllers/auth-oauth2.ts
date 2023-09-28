@@ -41,12 +41,19 @@ type OAuthPayload = {
 
 const { MSG_ENUM } = LOCALE;
 const { USER } = LOCALE.DB_ENUM;
+const { config, DEFAULTS } = configLoader;
 
 // TODO: https://codeburst.io/react-authentication-with-twitter-google-facebook-and-github-862d59583105
 // TODO: https://medium.com/authpack/facebook-auth-with-node-js-c4bb90d03fc0
 // TODO:  https://dzone.com/articles/implementing-oauth2-social-login-with-facebook-par-1
 const facebook = async (accessToken: string): Promise<void> => {
-  const { data } = await axios.get(`https://graph.facebook.com/v8.0/me?access_token=${accessToken}`);
+  type FACEBOOK_TYPE = unknown; // TODO: declare actual type
+  const { data } = await axios.get<FACEBOOK_TYPE | unknown>(
+    `https://graph.facebook.com/v8.0/me?access_token=${accessToken}`,
+    {
+      timeout: DEFAULTS.AXIOS_TIMEOUT,
+    },
+  );
   console.log('Facebook AccessToken Decode result >>>>> ', data);
 };
 
@@ -54,7 +61,7 @@ const facebook = async (accessToken: string): Promise<void> => {
  * Decode Google OAuth2 Token
  */
 const google = async (code: string): Promise<OAuthPayload> => {
-  const { google } = configLoader.config.oAuth2;
+  const { google } = config.oAuth2;
   const oAuth2Client = new OAuth2Client(google.clientId, google.clientSecret, google.redirectUrl);
 
   try {
@@ -74,7 +81,7 @@ const google = async (code: string): Promise<OAuthPayload> => {
   }
 };
 
-export default async (code: string, provider: string): Promise<OAuthPayload> => {
+export default async (provider: string, code: string): Promise<OAuthPayload> => {
   switch (provider) {
     case USER.OAUTH2.PROVIDER.FACEBOOK:
     case USER.OAUTH2.PROVIDER.GITHUB:

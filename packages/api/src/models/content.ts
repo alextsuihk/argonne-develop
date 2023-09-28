@@ -13,7 +13,7 @@ export type { Id } from './common';
 
 export interface ContentDocument extends BaseDocument {
   parents: string[];
-  creator: string | Types.ObjectId;
+  creator: Types.ObjectId;
   data: string;
   visibleAfter?: Date; // defer visibility to later time
 }

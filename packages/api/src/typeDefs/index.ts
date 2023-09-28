@@ -6,7 +6,6 @@ import analyticTypes from './analytic';
 import announcementTypes from './announcement';
 import assignmentTypes from './assignment';
 import authTypes from './auth';
-import authServiceTypes from './auth-service';
 import bookTypes from './book';
 import chatGroupTypes from './chat-group';
 import classroomTypes from './classroom';
@@ -14,7 +13,6 @@ import contactTypes from './contact';
 import contentTypes from './content';
 import contributionTypes from './contribution';
 import districtTypes from './district';
-import emailTypes from './email';
 import homeworkTypes from './homework';
 import levelTypes from './level';
 import passwordTypes from './password';
@@ -24,6 +22,7 @@ import questionTypes from './question';
 // import referralTypes from './referral'; // TODO
 import roleTypes from './role';
 import rootTypes from './root';
+import satelliteTypes from './satellite';
 import schoolTypes from './school';
 import subjectTypes from './subject';
 import systemTypes from './system';
@@ -41,14 +40,12 @@ export default [
   announcementTypes,
   assignmentTypes,
   authTypes,
-  authServiceTypes,
   bookTypes,
   chatGroupTypes,
   contactTypes,
   contentTypes,
   contributionTypes,
   districtTypes,
-  emailTypes,
   homeworkTypes,
   levelTypes,
   passwordTypes,
@@ -56,6 +53,7 @@ export default [
   publisherTypes,
   questionTypes,
   roleTypes,
+  satelliteTypes,
   schoolTypes,
   subjectTypes,
   systemTypes,

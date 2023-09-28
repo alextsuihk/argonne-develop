@@ -16,13 +16,13 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface HomeworkDocument extends BaseDocument {
-  assignment: string | Types.ObjectId | (AssignmentDocument & Id);
+  assignment: Types.ObjectId | (AssignmentDocument & Id);
 
-  user: string | Types.ObjectId; // student's userId
+  user: Types.ObjectId; // student's userId
   assignmentIdx: number;
   dynParamIdx?: number;
 
-  contents: (string | Types.ObjectId)[];
+  contents: Types.ObjectId[];
   answer?: string;
   answeredAt?: Date;
 
@@ -30,7 +30,7 @@ export interface HomeworkDocument extends BaseDocument {
   viewedExamples: number[]; // viewed example index
 
   scores: number[]; // graded by system or teacher
-  questions: (string | Types.ObjectId)[];
+  questions: Types.ObjectId[];
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;

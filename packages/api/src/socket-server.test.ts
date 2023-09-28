@@ -5,7 +5,10 @@ import type { AddressInfo } from 'net';
 import { io } from 'socket.io-client';
 
 import app from './app';
-import { apolloExpect, ApolloServer, FAKE, jestSetup, jestTeardown } from './jest';
+import configLoader from './config/config-loader';
+import { apolloExpect, ApolloServer, FAKE, FAKE_LOCALE, jestSetup, jestTeardown } from './jest';
+import type { TenantDocument } from './models/tenant';
+import Tenant from './models/tenant';
 import type { Id, UserDocument } from './models/user';
 import { LIST_SOCKETS } from './queries/auth';
 import socketServer from './socket-server';
@@ -13,11 +16,14 @@ import { mongoId } from './utils/helper';
 import token from './utils/token';
 
 const { MSG_ENUM } = LOCALE;
+const { DEFAULTS } = configLoader;
 
 const generateAccessToken = async (user: UserDocument & Id) => {
   const { accessToken } = await token.createTokens(user, { ip: '127.0.0.1', ua: 'Jest-User-Agent', expiresIn: 5 });
   return accessToken;
 };
+
+// const refreshToken = async (userId: string) => token.signStrings([REFRESH_TOKEN, userId, randomString()], 5);
 
 describe('Basic Test on Socket client connectivity', () => {
   let normalUser: (UserDocument & Id) | null;
@@ -133,7 +139,7 @@ describe('Basic Test on Socket client connectivity', () => {
   });
 
   test('should list two socket clients if two clients has joined', async () => {
-    expect.assertions(3);
+    expect.assertions(3 + 1);
 
     const socket1 = io(serverUrl);
     const token1 = await generateAccessToken(normalUser!);
@@ -148,7 +154,7 @@ describe('Basic Test on Socket client connectivity', () => {
     // REST-ful API
     const res = await axios.get(`${serverUrl}/api/auth/listSockets`, {
       headers: { 'Jest-User': userId },
-      timeout: 1000,
+      timeout: DEFAULTS.AXIOS_TIMEOUT,
     });
     expect(res.data).toEqual({ data: [expect.any(String), expect.any(String)] });
     expect(res.status).toBe(200);
@@ -157,7 +163,46 @@ describe('Basic Test on Socket client connectivity', () => {
     const res2 = await normalServer!.executeOperation({ query: LIST_SOCKETS });
     apolloExpect(res2, 'data', { listSockets: [expect.any(String), expect.any(String)] });
 
+    const intersectedSocketIds = res2.data!.listSockets.filter(x => res.data.data.includes(x));
+
+    // both responses (from RESTful & apollo) should match
+    expect(intersectedSocketIds.length).toBe(2);
+
     socket1.close();
     socket2.close();
+  });
+
+  test('should pass when satellite joining hub', async () => {
+    expect.assertions(1);
+
+    const socket = io(serverUrl);
+
+    const tenant = await Tenant.create<Partial<TenantDocument>>({
+      code: FAKE,
+      name: FAKE_LOCALE,
+      school: mongoId(),
+      apiKey: FAKE,
+      satelliteUrl: 'https://satellite.com',
+    });
+    const tenantId = tenant._id.toString();
+
+    let timer: NodeJS.Timeout;
+    await Promise.race([
+      new Promise(resolve => {
+        timer = setTimeout(resolve, 200);
+      }), // timeout
+      new Promise<void>(resolve => {
+        socket.once('JOIN_SATELLITE', (receivedMsg: { token?: string; error?: string; msg?: string }) => {
+          expect(receivedMsg).toEqual({ socket: expect.any(String), tenant: tenantId, msg: 'Welcome !' });
+          clearTimeout(timer);
+          resolve();
+        });
+        socket.emit('JOIN_SATELLITE', { tenant: tenantId, apiKey: tenant.apiKey });
+      }),
+    ]);
+
+    // clean up
+    socket.close();
+    await Tenant.deleteOne({ _id: tenant._id });
   });
 });

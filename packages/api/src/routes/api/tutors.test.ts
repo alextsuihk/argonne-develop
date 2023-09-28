@@ -6,15 +6,16 @@
 import { LOCALE } from '@argonne/common';
 
 import {
+  expectedDateFormat,
   expectedIdFormat,
   expectedRemark,
   FAKE,
   FAKE2,
+  genUser,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
-  shuffle,
+  randomItem,
 } from '../../jest';
 import Level from '../../models/level';
 import Subject from '../../models/subject';
@@ -40,26 +41,29 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   // expected MINIMUM single credential format
   const expectedMinFormat = {
     _id: expectedIdFormat,
-    tenant: expect.any(String),
-    user: expect.any(String),
+    tenant: expectedIdFormat,
+    user: expectedIdFormat,
 
     credentials: expect.any(Array), // could be empty array
     specialties: expect.any(Array), // could be an empty array for newly created tutor
-    rankingUpdatedAt: expect.any(String),
+    rankingUpdatedAt: expectedDateFormat(),
+
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
   };
 
   const expectedCredentialMinFormat = {
     _id: expectedIdFormat,
     title: expect.any(String),
     proofs: expect.any(Array),
-    updatedAt: expect.any(String),
+    updatedAt: expectedDateFormat(),
   };
 
   const expectedSpecialtyMinFormat = {
     _id: expectedIdFormat,
     lang: expect.toBeOneOf(Object.keys(QUESTION.LANG)),
-    level: expect.any(String),
-    subject: expect.any(String),
+    level: expectedIdFormat,
+    subject: expectedIdFormat,
     ranking: {
       correctness: expect.any(Number),
       punctuality: expect.any(Number),
@@ -72,35 +76,32 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   });
   afterAll(jestTeardown);
 
-  test('should response an array of tutors (as student)', async () => {
+  test('should pass when getMany & getById (as student)', async () => {
     // find an intersection of levels of tutors & normalUsers
     const tutors = await Tutor.find({
-      'specialties.level': {
-        $in: normalUsers!.map(user => user.schoolHistories[0]?.level.toString()).filter(lvl => !!lvl),
-      },
+      'specialties.level': { $in: normalUsers!.map(user => user.schoolHistories[0]?.level).filter(lvl => !!lvl) },
       deletedAt: { $exists: false },
     }).lean();
-    const [{ level }] = tutors.sort(shuffle)[0].specialties.sort(shuffle);
+    const tutorLevels = tutors.map(t => t.specialties.map(s => s.level)).flat();
     const student = normalUsers!.find(
-      ({ schoolHistories }) => schoolHistories[0]?.level.toString() === level.toString(),
+      ({ schoolHistories }) => schoolHistories[0] && tutorLevels.some(lvl => lvl.equals(schoolHistories[0].level)),
     );
+    if (!student) throw `No valid student for testing`;
 
-    await getMany<TutorDocument>(route, { 'Jest-User': student!._id }, expectedMinFormat, {
+    await getMany<TutorDocument>(route, { 'Jest-User': student._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
     });
   });
 
-  // There is no naLevel tutor initially
+  // There is no tutor (with naLevel) initially
   test.skip('should pass when getMany & getById (as teacher)', async () => {
     const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
+    const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
+    if (!teacher) throw `No valid teacher for testing`;
 
-    const teacher = normalUsers!.find(
-      ({ schoolHistories }) =>
-        schoolHistories[0] && schoolHistories[0].level.toString() === teacherLevel!._id.toString(),
-    );
-    await getMany<TutorDocument>(route, { 'Jest-User': teacher!._id }, expectedMinFormat, {
+    await getMany<TutorDocument>(route, { 'Jest-User': teacher._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
@@ -123,7 +124,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect.assertions(3);
 
     // create a new user (without identifiedAt)
-    const user = await User.create({ tenants: [tenantId!], name: `tutor-${FAKE}` });
+    const user = genUser(tenantId!);
+    await user.save();
 
     await createUpdateDelete(route, { 'Jest-User': tenantAdmin!._id }, [
       {
@@ -144,19 +146,18 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect.assertions(3 * (11 + 1));
 
     // create a new user (with identifiedAt)
-    const user = await User.create({ tenants: [tenantId!], name: `tutor-${FAKE}`, identifiedAt: new Date() });
+    const user = genUser(tenantId!, { identifiedAt: new Date() });
+    await user.save();
     const userId = user._id.toString();
 
     const updateIntro = { intro: FAKE, ...(prob(0.5) && { officeHour: FAKE2 }) };
 
-    const subjects = await Subject.find({ deletedAt: { $exists: false } }).lean();
-    const [subject] = subjects.sort(shuffle);
-    const subjectId = subject._id.toString();
-    const levelId = randomId(subject.levels);
+    const subject = randomItem(await Subject.find({ deletedAt: { $exists: false } }).lean());
+    const level = randomItem(subject.levels).toString();
 
-    const [lang] = Object.keys(QUESTION.LANG).sort(shuffle);
+    const lang = randomItem(Object.keys(QUESTION.LANG));
     const credential = { title: FAKE, proofs: [`${FAKE} PNG`] };
-    const specialty = { lang, subject: subjectId, level: levelId, ...(prob(0.5) && { note: `specialty ${FAKE}` }) };
+    const specialty = { lang, subject: subject._id.toString(), level, ...(prob(0.5) && { note: `specialty ${FAKE}` }) };
 
     const tutor = await createUpdateDelete<TutorDocument & Id>(
       route,
@@ -216,7 +217,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
               expect.objectContaining({
                 ...expectedCredentialMinFormat,
                 ...credential,
-                verifiedAt: expect.any(String),
+                verifiedAt: expectedDateFormat(),
               }),
             ],
           },

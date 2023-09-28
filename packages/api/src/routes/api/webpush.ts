@@ -8,7 +8,7 @@
 
 import { Router } from 'express';
 import { auth } from '../../middleware/auth'; // TODO: to implement auth & admin
-import webpush from '../../utils/messaging/webpush.ts_';
+import webpush from '../../utils/messaging/webpush.ts';
 
 const router = Router();
 

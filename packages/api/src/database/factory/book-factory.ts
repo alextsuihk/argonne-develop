@@ -18,35 +18,26 @@ import Contribution from '../../models/contribution';
 import Level from '../../models/level';
 import Publisher from '../../models/publisher';
 import Subject from '../../models/subject';
-import User, { UserDocument } from '../../models/user';
-import { idsToString, mongoId, prob, randomString, shuffle } from '../../utils/helper';
-import { fakeContents } from '../helper';
+import User from '../../models/user';
+import { mongoId, prob, randomItem, randomItems, randomString } from '../../utils/helper';
+import { fakeContents, fakeContribution } from '../helper';
 
 const { CHAT_GROUP, USER } = LOCALE.DB_ENUM;
-
-const fakeContribution = (contributors: (UserDocument & Id)[]) =>
-  new Contribution<Partial<ContributionDocument>>({
-    title: faker.lorem.slug(5),
-    ...(prob(0.5) && { description: faker.lorem.sentences(3) }),
-    contributors: contributors.map(user => ({
-      user: user._id,
-      name: faker.name.fullName(),
-      school: user.schoolHistories[0]!.school,
-    })),
-    urls: Array(3)
-      .fill(0)
-      .map(_ => faker.internet.url()),
-  });
 
 /**
  * Generate (factory)
  */
-const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount = 5): Promise<string> => {
-  const [levels, publishers, subjects, users] = await Promise.all([
+const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount = 5): Promise<string> => {
+  const [levels, publishers, subjects, users, { systemId }] = await Promise.all([
     Level.find({ deletedAt: { $exists: false } }).lean(),
     Publisher.find({ deletedAt: { $exists: false } }).lean(),
     Subject.find({ deletedAt: { $exists: false } }).lean(),
-    User.find({ status: USER.STATUS.ACTIVE, deletedAt: { $exists: false } }).lean(),
+    User.find({
+      status: USER.STATUS.ACTIVE,
+      'schoolHistories.school': { $exists: true }, // pull only students (and teachers)
+      deletedAt: { $exists: false },
+    }).lean(),
+    User.findSystemAccountIds(),
   ]);
 
   if (!levels.length) throw new Error('Level Collection is empty');
@@ -61,10 +52,9 @@ const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount 
   for (let i = 0; i < count; i++) {
     const bookId = mongoId();
 
-    const [levelId] = idsToString(levels).sort(shuffle);
-    if (!levelId) throw 'no valid levelId';
-    const validSubjectIds = idsToString(subjects.filter(subject => idsToString(subject.levels).includes(levelId)));
-    if (!validSubjectIds.length) continue; // skip this iteration if no validSubjects available (this is not a bug, it could happen)
+    const level = randomItem(levels);
+    const validSubjects = subjects.filter(subject => subject.levels.some(l => l.equals(level._id)));
+    if (!validSubjects.length) continue; // skip this iteration if no validSubjects available (this is not a bug, it could happen)
 
     const year = faker.datatype.number(20) + 2000;
 
@@ -76,20 +66,15 @@ const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount 
     });
     chatGroups.push(chatGroup);
 
-    const contributors = users
-      .filter(user => user.schoolHistories.length)
-      .sort(shuffle)
-      .slice(0, 5);
-
     const assignments = Array(assignmentCount)
       .fill(0)
-      .map(_ => {
+      .map(() => {
         const bookAssignmentId = mongoId();
 
-        const contribution = fakeContribution(contributors);
+        const contribution = fakeContribution(randomItems(users, 3));
         contributions.push(contribution);
 
-        const [content, ...examples] = fakeContents('bookAssignments', bookAssignmentId, idsToString(contributors), 5);
+        const [content, ...examples] = fakeContents('bookAssignments', bookAssignmentId, [systemId], 5);
         contents.push(content!, ...examples);
 
         const hasDynParams = prob(0.5);
@@ -99,46 +84,46 @@ const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount 
           contribution: contribution._id,
           chapter: `${faker.datatype.number(10)}#${faker.datatype.number(20)}`,
           content: content!._id,
-          dynParams: hasDynParams
-            ? Array(3)
-                .fill(0)
-                .map(_ => faker.datatype.number(30).toString())
-            : [],
-          solutions: hasDynParams
-            ? Array(3)
-                .fill(0)
-                .map(_ => faker.datatype.number(30).toString())
-            : [faker.datatype.number(30).toString()],
-          examples: idsToString(examples),
+
+          dynParams: Array(hasDynParams ? 3 : 0)
+            .fill(0)
+            .map(() => faker.datatype.number(30).toString()),
+
+          solutions: Array(hasDynParams ? 3 : 1)
+            .fill(0)
+            .map(() => faker.datatype.number(30).toString()),
+          examples: examples.map(e => e._id),
+
+          ...(prob(0.1) && { deletedAt: faker.date.recent(120) }),
         });
       });
     bookAssignments.push(...assignments);
 
-    const supplements: BookDocument['supplements'] = Array(supplementCount)
-      .fill(0)
-      .map(_ => {
-        const contribution = fakeContribution(contributors);
-        contributions.push(contribution);
-
-        return {
-          _id: mongoId(),
-          contribution,
-          chapter: `${faker.datatype.number(10)}#${faker.datatype.number(20)}`,
-          ...(prob(0.1) && { deletedAt: faker.date.recent(120) }),
-        };
-      });
-
     const book = new Book<Partial<BookDocument & Id>>({
       _id: bookId,
-      publisher: idsToString(publishers).sort(shuffle)[0],
-      level: levelId,
-      subjects: validSubjectIds.sort(shuffle).slice(0, Math.ceil(Math.random() * 3)),
-      title: faker.lorem.slug(5),
+      publisher: randomItem(publishers)._id,
+      level: level._id,
+      subjects: randomItems(validSubjects, Math.ceil(Math.random() * 3)).map(s => s._id),
+      // subjects: randomItems(validSubjects, Math.ceil(Math.random() * 3)).map(s => s._id),
+      title: `factory ${faker.lorem.slug(5)}`,
       ...(prob(0.5) && { subTitle: faker.lorem.sentence(6) }),
       chatGroup: chatGroup._id,
 
-      assignments: idsToString(assignments),
-      supplements,
+      assignments: assignments.map(a => a._id),
+
+      supplements: Array(supplementCount)
+        .fill(0)
+        .map(() => {
+          const contribution = fakeContribution(randomItems(users, 3));
+          contributions.push(contribution);
+
+          return {
+            _id: mongoId(),
+            contribution: contribution._id,
+            chapter: `${faker.datatype.number(10)}#${faker.datatype.number(20)}`,
+            ...(prob(0.1) && { deletedAt: faker.date.recent(120) }),
+          };
+        }),
 
       revisions: Array(rev)
         .fill(0)
@@ -147,7 +132,9 @@ const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount 
           rev: String(rev - idx + 1),
           ...(prob(0.8) && { isbn: randomString() }),
           year: year - idx,
-          imageUrls: [],
+          imageUrls: Array(2)
+            .fill(0)
+            .map(() => faker.image.food()),
           ...(prob(0.3) && { listPrice: faker.datatype.number({ min: 100, max: 200 }) * 1000 }),
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -157,13 +144,13 @@ const fake = async (count = 100, rev = 3, assignmentCount = 10, supplementCount 
   }
 
   await Promise.all([
-    Book.create(books),
-    BookAssignment.create(bookAssignments),
-    ChatGroup.create(chatGroups),
-    Contribution.create(contributions),
-    Content.create(contents),
+    Book.insertMany<Partial<BookDocument>>(books, { rawResult: true }),
+    BookAssignment.insertMany<Partial<BookAssignmentDocument>>(bookAssignments, { rawResult: true }),
+    ChatGroup.insertMany<Partial<ChatGroupDocument>>(chatGroups, { rawResult: true }),
+    Contribution.insertMany<Partial<ContributionDocument>>(contributions, { rawResult: true }),
+    Content.insertMany<Partial<ContentDocument>>(contents, { rawResult: true }),
   ]);
-  return `(${chalk.green(books.length)} - ${chalk.green(bookAssignments.length)} created)`;
+  return `(${chalk.green(books.length)} books with ${chalk.green(bookAssignments.length)} bookAssignments created)`;
 };
 
 export { fake };

@@ -8,7 +8,18 @@ import 'jest-extended';
 import { LOCALE } from '@argonne/common';
 import { addDays } from 'date-fns';
 
-import { apolloExpect, ApolloServer, expectedIdFormat, FAKE, jestSetup, jestTeardown, prob, randomId } from '../jest';
+import {
+  apolloExpect,
+  ApolloServer,
+  expectedDateFormat,
+  expectedIdFormat,
+  FAKE,
+  jestSetup,
+  jestTeardown,
+  prob,
+  randomItem,
+} from '../jest';
+import type { AnnouncementDocument } from '../models/announcement';
 import Announcement from '../models/announcement';
 import type { Id, UserDocument } from '../models/user';
 import { ADD_ANNOUNCEMENT, GET_ANNOUNCEMENT, GET_ANNOUNCEMENTS, REMOVE_ANNOUNCEMENT } from '../queries/announcement';
@@ -28,14 +39,14 @@ describe('Announcement GraphQL', () => {
   const expectedFormat = {
     _id: expectedIdFormat,
     flags: expect.any(Array),
-    tenant: expect.toBeOneOf([null, expect.any(String)]),
+    tenant: expect.toBeOneOf([null, expectedIdFormat]),
     title: expect.any(String),
     message: expect.any(String),
-    beginAt: expect.any(Number),
-    endAt: expect.any(Number),
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    beginAt: expectedDateFormat(true),
+    endAt: expectedDateFormat(true),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   beforeAll(async () => {
@@ -57,13 +68,13 @@ describe('Announcement GraphQL', () => {
     expect.assertions(2);
 
     // in case database has no valid (non-expired) announcement, create a site-wide & tenant-specific announcements
-    await Announcement.create([
-      { title: FAKE, message: FAKE, beginAt: Date.now(), endAt: addDays(Date.now(), 10) },
+    await Announcement.create<Partial<AnnouncementDocument>>([
+      { title: FAKE, message: FAKE, beginAt: new Date(), endAt: addDays(Date.now(), 10) },
       {
-        tenant: randomId(normalUser!.tenants),
+        tenant: randomItem(normalUser!.tenants),
         title: FAKE,
         message: FAKE,
-        beginAt: Date.now(),
+        beginAt: new Date(),
         endAt: addDays(Date.now(), 10),
       },
     ]);
@@ -83,13 +94,13 @@ describe('Announcement GraphQL', () => {
 
     const res1 = await normalServer!.executeOperation({
       query: GET_ANNOUNCEMENT,
-      variables: { id: randomId(siteWideAnnouncements) },
+      variables: { id: randomItem(siteWideAnnouncements)._id.toString() },
     });
     apolloExpect(res1, 'data', { announcement: expectedFormat });
 
     const res2 = await normalServer!.executeOperation({
       query: GET_ANNOUNCEMENT,
-      variables: { id: randomId(tenantAnnouncements) },
+      variables: { id: randomItem(tenantAnnouncements)._id.toString() },
     });
     apolloExpect(res2, 'data', { announcement: expectedFormat });
   });

@@ -8,19 +8,20 @@
 import { CONTENT_PREFIX, LOCALE, yupSchema } from '@argonne/common';
 import merge from 'deepmerge';
 import type { Request, RequestHandler } from 'express';
-import type { UpdateQuery } from 'mongoose';
+import type { Types, UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import type { AssignmentDocument, Id } from '../models/assignment';
 import Assignment, { searchableFields } from '../models/assignment';
-import type { BookAssignmentDocument } from '../models/book';
 import Classroom from '../models/classroom';
 import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
 import DatabaseEvent from '../models/event/database';
 import type { HomeworkDocument } from '../models/homework';
 import Homework from '../models/homework';
-import { idsToString } from '../utils/helper';
+import { mongoId } from '../utils/helper';
+import log from '../utils/log';
+import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 import common from './common';
 import { signContentIds } from './content';
@@ -43,20 +44,22 @@ const nestedPopulate = [
  * (helper) generate contentsToken
  */
 const transform = async (userId: string, homework: HomeworkDocument & Id): Promise<HomeworkDocumentEx> => {
-  return {
-    ...homework,
-    contentsToken: await signContentIds(
-      userId,
-      idsToString(
-        [
-          ...homework.contents,
-          ...((homework.assignment as AssignmentDocument & Id).bookAssignments as (BookAssignmentDocument & Id)[]).map(
-            a => [a.content, ...a.examples],
-          ),
-        ].flat(),
-      ),
-    ),
-  };
+  if (typeof homework.assignment !== 'string' && !(homework.assignment instanceof mongoose.Types.ObjectId))
+    return {
+      ...homework,
+      contentsToken: await signContentIds(userId, [
+        ...homework.contents,
+        ...homework.assignment.bookAssignments
+          .map(a =>
+            typeof a === 'string' || a instanceof mongoose.Types.ObjectId ? 'IMPOSSIBLE' : [a.content, ...a.examples],
+          )
+          .flat()
+          .filter((x): x is Types.ObjectId => x !== 'IMPOSSIBLE'),
+      ]),
+    };
+
+  log('error', 'homeworkController:transform() [improper population]', { homeworkId: homework._id.toString() }, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
@@ -138,32 +141,46 @@ const recallContent = async (req: Request, args: unknown): Promise<HomeworkDocum
     Content.findOne({
       _id: contentId,
       parents: `/homeworks/${id}`,
-      creator: userId,
+      creator: mongoId(userId),
       flags: { $nin: [CONTENT.FLAG.BLOCKED, CONTENT.FLAG.RECALLED] },
     }).lean(),
   ]);
 
   const assignment =
     homework &&
-    content &&
-    (await Assignment.findOne({ _id: homework.assignment, deletedAt: { $exists: false } }).lean());
+    (await Assignment.findOneAndUpdate(
+      { _id: homework.assignment, deletedAt: { $exists: false } },
+      { updatedAt: new Date() },
+    ).lean());
   const classroom =
     assignment && (await Classroom.findOne({ _id: assignment.classroom, deletedAt: { $exists: false } }).lean());
-  if (!classroom) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (!content || !classroom) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
+  const contentUpdate: UpdateQuery<ContentDocument> = {
+    $addToSet: { flags: CONTENT.FLAG.RECALLED },
+    data: `${CONTENT_PREFIX.RECALLED}#${Date.now()}###${userId}`,
+  };
   const [transformed] = await Promise.all([
     transform(userId, homework),
-    Content.updateOne(
-      { _id: contentId },
-      { $addToSet: { flags: CONTENT.FLAG.RECALLED }, data: `${CONTENT_PREFIX.RECALLED}#${Date.now()}###${userId}` },
-    ),
-    DatabaseEvent.log(userId, `/homeworks/${id}`, 'recallContent', { contentId, data: content.data }),
+    Content.updateOne({ _id: contentId }, contentUpdate),
+    DatabaseEvent.log(userId, `/homeworks/${id}`, 'recallContent', { args, data: content.data }),
     notifySync(
-      'ASSIGNMENT',
-      { tenantId: classroom.tenant, userIds: classroom.teachers },
-      { assignmentIds: [assignment] },
+      classroom.tenant,
+      { userIds: [...classroom.teachers, userId], event: 'ASSIGNMENT-HOMEWORK' },
+      {
+        bulkWrite: {
+          assignments: [
+            { updateOne: { filter: { _id: assignment._id }, update: { updatedAt: new Date() } } },
+          ] satisfies BulkWrite<AssignmentDocument>,
+          homeworks: [
+            { updateOne: { filter: { _id: id }, update: { updatedAt: new Date() } } },
+          ] satisfies BulkWrite<HomeworkDocument>,
+          contents: [
+            { updateOne: { filter: { _id: content._id }, update: contentUpdate } },
+          ] satisfies BulkWrite<ContentDocument>,
+        },
+      },
     ),
-    notifySync('HOMEWORK', { tenantId: classroom.tenant, userIds: [userId] }, { homeworkIds: [id] }),
   ]);
 
   return transformed;
@@ -181,12 +198,12 @@ const update = async (req: Request, args: unknown): Promise<HomeworkDocumentEx> 
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const content =
-    !!data && new Content<Partial<ContentDocument>>({ parents: [`/homeworks/${id}`], creator: userId, data });
+    !!data && new Content<Partial<ContentDocument>>({ parents: [`/homeworks/${id}`], creator: mongoId(userId), data });
 
   // note: deep-merge is smart enough to merge two $push
   const homeworkUpdate = merge.all<UpdateQuery<AssignmentDocument>>([
     answer ? { answer, answeredAt: new Date() } : {},
-    content ? { $push: { contents: content } } : {},
+    content ? { $push: { contents: content._id } } : {},
     timeSpent ? { timeSpent } : {},
     viewedExample !== undefined ? { $push: { viewedExamples: viewedExample } } : {},
   ]);
@@ -212,11 +229,20 @@ const update = async (req: Request, args: unknown): Promise<HomeworkDocumentEx> 
     content && content.save(),
     DatabaseEvent.log(userId, `/homeworks/${id}`, 'UPDATE', { answer, timeSpent, viewedExample }),
     notifySync(
-      'ASSIGNMENT',
-      { tenantId: classroom.tenant, userIds: classroom.teachers },
-      { assignmentIds: [assignment] },
+      classroom.tenant,
+      { userIds: [...classroom.teachers, userId], event: 'ASSIGNMENT-HOMEWORK' },
+      {
+        bulkWrite: {
+          assignments: [
+            { updateOne: { filter: { _id: assignment._id }, update: { updatedAt: new Date() } } },
+          ] satisfies BulkWrite<AssignmentDocument>,
+          homeworks: [
+            { updateOne: { filter: { _id: id }, update: homeworkUpdate } },
+          ] satisfies BulkWrite<HomeworkDocument>,
+        },
+        ...(content && { contentsToken: await signContentIds(null, [content._id]) }),
+      },
     ),
-    notifySync('HOMEWORK', { tenantId: classroom.tenant, userIds: [userId] }, { homeworkIds: [id] }),
   ]);
 
   return transformed;

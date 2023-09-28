@@ -1,11 +1,12 @@
 {
   "compilerOptions": {
-    "target": "esnext",
-    "module": "commonjs",
+    "target": "es2022",
+    "module": "CommonJS",
     "composite": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
+    "lib": ["es2023"],
     "moduleResolution": "node",
     "noUncheckedIndexedAccess": true,
     "removeComments": true,
@@ -13,7 +14,7 @@
     "skipLibCheck": true,
     "strict": true,
     "rootDir": "./src",
-    "outDir": "./dist",
+    "outDir": "dist",
     "typeRoots": ["@types", "node_modules/@types", "node_modules/jest-extended/types"]
   },
   "references": [{ "path": "../common" }],

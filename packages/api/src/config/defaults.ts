@@ -31,6 +31,8 @@ export default {
     SAME_IP_LOGIN_ONLY: true, // all devices MUST be accessed from the same IP (WAN) address when login
   },
 
+  AXIOS_TIMEOUT: 1000,
+
   BANNED_WORDS: ['屌', '𨳊', '仆街', '老母', '冚家剷', '攔坦', 'ass', 'fxxx', 'fuck', 'hell', 'shit'],
 
   BYGONE_DAYS: 365 * 3,
@@ -48,7 +50,16 @@ export default {
     DETACH_TAG: Number(process.env.REACT_APP_CREDITABILITY_DETACH_TAG || 7),
   },
 
-  JOB: { RETRY: 3, TIMEOUT: 1000 * 60, SLEEP: 1000 * 60 * 5 },
+  JOB_RUNNER: {
+    INTERVAL: 1000 * 60 * 5,
+    JOB: {
+      MAX_ATTEMPTS: 3,
+      TIMEOUT: 1000 * 60, // task timeout at 60 seconds
+    },
+    SYNC: {
+      ATTEMPT_FAILURE_WRITE_LOG: 12,
+    },
+  },
 
   JWT: {
     EXPIRES: {
@@ -61,6 +72,8 @@ export default {
 
   LOGGER_URL: 'https://service.alextsui.net/logger',
 
+  MESSENGER: { MAX_ATTEMPTS: 3 },
+
   MONGOOSE: {
     // remove documents after expiring
     EXPIRES: {
@@ -71,17 +84,16 @@ export default {
       JOB: '90d',
       LOG: '400d',
       OPINION: '30d',
-      REDIRECT: '5d',
       REFERRAL: '30d',
+      REPLY_SLIP: '400d',
+      SYNC_JOB: '30d',
       TUTOR_RANKING: '180d',
       USER: '400d',
+      VERIFICATION: '1d',
     },
     SCHEMA_OPTS: {
       timestamps: true, // add createdAt & updatedAt fields by default
       toJSON: {
-        // transform: function (_: unknown, ret: { _id?: unknown }): void {
-        //   delete ret._id; // remove _id when returning
-        // },
         getters: true,
         setters: true,
         virtuals: false, // no need to send 'id'
@@ -119,10 +131,6 @@ export default {
     CLOSE_DAYS: 14,
   },
 
-  REDIRECT: {
-    EXPIRES: 60 * 60 * 24, // in seconds (tmp Login)
-  },
-
   REDIS: {
     EXPIRES: {
       // default record expiration time in seconds
@@ -136,13 +144,17 @@ export default {
   },
 
   STORAGE: {
-    PRESIGNED_URL_PUT_EXPIRY: 10, // in seconds
+    PRESIGNED_URL_PUT_EXPIRY: 60 * 5, // in seconds
     PRESIGNED_URL_GET_EXPIRY: 60 * 5, // in seconds
     // REPORT_EXPIRY: 60 * 60 * 24 * 7, // report expires in seconds
   },
 
-  TENANT: {
-    TOKEN_EXPIRES_IN: 60 * 60 * 24 * 7, // expires in 7 day
+  SATELLITE: {
+    SEED_EXPIRES_IN: 60 * 30, // seed expires in 30min (seed file removed)
+  },
+
+  TENANT_BINDING: {
+    TOKEN_EXPIRES_IN: 60 * 60 * 24 * 1, // expires in 1 day
   },
 
   DARK_MODE: false,

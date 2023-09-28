@@ -20,18 +20,17 @@ export interface SessionAnalyticDocument extends GenericDocument {
   location: Point;
 }
 
-const SessionAnalytic = Analytic.discriminator(
-  'SessionAnalytic',
-  new Schema<SessionAnalyticDocument>(
-    {
-      user: { type: Schema.Types.ObjectId, ref: 'user', index: true },
-      fullscreen: { type: Boolean, alias: 'fs' },
-      token: String,
-      ua: String,
-      ip: String,
-      location: pointSchema,
-    },
-    options,
-  ),
+const sessionAnalyticSchema = new Schema<SessionAnalyticDocument>(
+  {
+    user: { type: Schema.Types.ObjectId, ref: 'user', index: true },
+    fullscreen: { type: Boolean, alias: 'fs' },
+    token: String,
+    ua: String,
+    ip: String,
+    location: pointSchema,
+  },
+  options,
 );
+
+const SessionAnalytic = Analytic.discriminator('SessionAnalytic', sessionAnalyticSchema);
 export default SessionAnalytic;

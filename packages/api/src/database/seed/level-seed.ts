@@ -4,10 +4,10 @@
  */
 
 import chalk from 'chalk';
+import type { Types } from 'mongoose';
 
 import type { Id, LevelDocument } from '../../models/level';
 import Level from '../../models/level';
-import { mongoId } from '../../utils/helper';
 
 /**
  * Find Levels (na, primary, junior, senior)
@@ -29,7 +29,7 @@ export const findLevels = async () => {
   const tertiaryLevels = levels.filter(level => ['COLLEGE'].includes(level.code));
 
   if (!naLevel || !teacherLevel || primaryLevels.length !== 6 || juniorLevels.length !== 3 || seniorLevels.length !== 3)
-    throw `Levels are not probably initialized`;
+    throw `Levels are not properly initialized`;
 
   return { naLevel, teacherLevel, primaryLevels, juniorLevels, seniorLevels, tertiaryLevels };
 };
@@ -54,18 +54,15 @@ const rawLevels: (Pick<LevelDocument, 'code' | 'name'> & { hasNextLevel?: boolea
 ];
 
 const seed = async (): Promise<string> => {
-  // generate _id first, then reverse levels, because we need to optionally add nextLevel
-  let nextLevel: string | undefined;
-  const levels = rawLevels
-    .map(lvl => ({ _id: mongoId(), ...lvl }))
-    .reverse()
-    .map(({ hasNextLevel, ...fields }) => {
-      const level = new Level<Partial<LevelDocument>>({ ...fields, ...(hasNextLevel && { nextLevel }) });
-      nextLevel = level._id.toString();
-      return level;
-    });
+  // generate _id first, then reverse levels, because we need to optionally append nextLevel
+  let nextLevel: Types.ObjectId | undefined;
+  const levels = rawLevels.reverse().map(({ hasNextLevel, ...fields }) => {
+    const level = new Level<Partial<LevelDocument>>({ ...fields, ...(hasNextLevel && { nextLevel }) });
+    nextLevel = level._id;
+    return level;
+  });
 
-  await Level.create(levels);
+  await Level.insertMany<Partial<LevelDocument>>(levels, { rawResult: true });
   return `(${chalk.green(levels.length)} created)`;
 };
 

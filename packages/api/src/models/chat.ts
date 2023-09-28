@@ -16,7 +16,7 @@ export interface ChatDocument extends BaseDocument {
   parents: string[];
   title?: string;
   members: Member[];
-  contents: (string | Types.ObjectId)[];
+  contents: Types.ObjectId[];
 }
 
 const { DEFAULTS } = configLoader;

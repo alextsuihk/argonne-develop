@@ -15,7 +15,6 @@ import mongoose from 'mongoose';
 
 import { ApolloServer, testServer } from './apollo';
 import configLoader from './config/config-loader';
-import jobRunner from './job-runner';
 import type { AssignmentDocument } from './models/assignment';
 import Assignment from './models/assignment';
 import Book from './models/book';
@@ -29,19 +28,19 @@ import type { ContentDocument } from './models/content';
 import Content from './models/content';
 import type { HomeworkDocument } from './models/homework';
 import Homework from './models/homework';
+import type { PresignedUrlDocument } from './models/presigned-url';
 import PresignedUrl from './models/presigned-url';
 import type { QuestionDocument } from './models/question';
 import Question from './models/question';
-import Tenant from './models/tenant';
+import Tenant, { TenantDocument } from './models/tenant';
 import type { Id, UserDocument } from './models/user';
 import User from './models/user';
 import { redisClient } from './redis';
-import socketServer from './socket-server';
-import { idsToString, mongoId, prob, randomString, schoolYear, shuffle, terminate } from './utils/helper';
+import { mongoId, prob, randomItem, randomString, schoolYear, shuffle, terminate } from './utils/helper';
 import { client as minioClient, privateBucket, publicBucket } from './utils/storage';
 
 export { ApolloServer, testServer } from './apollo';
-export { idsToString, prob, randomId, randomString, shuffle } from './utils/helper';
+export { mongoId, prob, randomItem, randomItems, randomString, shuffle } from './utils/helper';
 
 type JestSetup = {
   adminServer: ApolloServer | null;
@@ -54,6 +53,7 @@ type JestSetup = {
   rootUser: (UserDocument & Id) | null;
   tenantAdmin: (UserDocument & Id) | null;
   tenantAdminServer: ApolloServer | null;
+  tenant: (TenantDocument & Id) | null;
   tenantId: string | null;
 };
 const { USER } = LOCALE.DB_ENUM;
@@ -109,16 +109,25 @@ export const expectedAddressFormat = expect.objectContaining({
 // expected ID Format
 export const expectedIdFormat = expect.any(String);
 
-// expect ChatFormat
-export const expectChatFormat = {
+// expected Date Format
+export const expectedDateFormat = (isApollo = false) => (isApollo ? expect.any(Number) : expect.any(String));
+
+// expected ChatFormat
+export const expectedChatFormat = {
   _id: expectedIdFormat,
   flags: expect.any(Array),
   parents: expect.arrayContaining([expect.any(String)]),
   // title: expect.toBeOneOf([null, expect.any(String)]), // optional
   members: expect.any(Array),
-  contents: expect.arrayContaining([expect.any(String)]),
-  createdAt: expect.any(String),
-  updatedAt: expect.any(String),
+  contents: expect.arrayContaining([expectedIdFormat]),
+  createdAt: expectedDateFormat(),
+  updatedAt: expectedDateFormat(),
+};
+export const expectedChatFormatApollo = {
+  ...expectedChatFormat,
+  title: expect.toBeOneOf([null, expect.any(String)]),
+  createdAt: expectedDateFormat(true),
+  updatedAt: expectedDateFormat(true),
 };
 
 // expected Min Contribution Format
@@ -127,7 +136,7 @@ export const expectedContributionFormat = expect.objectContaining({
   flags: expect.any(Array),
   title: expect.any(String),
   contributors: expect.arrayContaining([
-    expect.objectContaining({ user: expect.any(String), name: expect.any(String), school: expect.any(String) }),
+    expect.objectContaining({ user: expectedIdFormat, name: expect.any(String), school: expectedIdFormat }),
   ]),
   urls: expect.arrayContaining([expect.any(String)]),
   remarks: expect.any(Array),
@@ -141,23 +150,15 @@ export const expectedLocaleFormat = {
 };
 
 // expect member
-export const expectedMember = (userId: string | Types.ObjectId, isApollo = false) => ({
-  members: [
-    {
-      user: userId.toString(),
-      flags: [],
-      ...(isApollo
-        ? { lastViewedAt: expect.any(Number) }
-        : { _id: expectedIdFormat, lastViewedAt: expect.any(String) }),
-    },
-  ],
+export const expectedMember = (userId: string | Types.ObjectId, flags: string[], isApollo = false) => ({
+  user: userId.toString(),
+  flags,
+  lastViewedAt: expectedDateFormat(isApollo),
 });
 
 // expected Remark (only work for single addRemark)
 export const expectedRemark = (userId: string | Types.ObjectId, msg: string, isApollo = false) => ({
-  remarks: [
-    { _id: expect.any(String), t: isApollo ? expect.any(Number) : expect.any(String), u: userId.toString(), m: msg },
-  ],
+  remarks: [{ t: expectedDateFormat(isApollo), u: userId.toString(), m: msg }],
 });
 
 // expected User
@@ -165,7 +166,7 @@ export const expectedUserFormat = {
   _id: expectedIdFormat,
   flags: expect.any(Array),
 
-  // tenants: expect.arrayContaining([expect.any(String)]),
+  // tenants: expect.arrayContaining([expectedIdFormat]),
   tenants: expect.any(Array), // newly registered user & user added by ROOT (e.g publisher) does not tenant
   status: USER.STATUS.ACTIVE,
   name: expect.any(String),
@@ -175,8 +176,7 @@ export const expectedUserFormat = {
   oAuth2s: expect.any(Array),
 
   // avatarUrl: expect.any(String), // could be undefined
-  // mobile: expect.any(String), // could be undefined
-  // whatsapp: expect.any(String), // could be undefined
+  messengers: expect.any(Array), // could be empty array
 
   timezone: expect.any(String),
   locale: expect.any(String),
@@ -190,7 +190,7 @@ export const expectedUserFormat = {
 
   coin: expect.any(Number),
   virtualCoin: expect.any(Number),
-  balanceAuditedAt: expect.any(String),
+  balanceAuditedAt: expectedDateFormat(),
 
   paymentMethods: expect.any(Array),
   // preference: expect.any(String), // could be undefined
@@ -209,33 +209,50 @@ export const expectedUserFormat = {
 
   favoriteTutors: expect.any(Array),
 
-  createdAt: expect.any(String),
-  updatedAt: expect.any(String),
-  // deletedAt: expect.toBeOneOf([null, expect.any(String)]), // undefined for RESTful, null for apollo
+  createdAt: expectedDateFormat(),
+  updatedAt: expectedDateFormat(),
+  // deletedAt: expect.toBeOneOf([null, expectedDateFormat()]), // undefined for RESTful, null for apollo
 };
 
 // Apollo date is number (float)
 export const expectedUserFormatApollo = {
   ...expectedUserFormat,
-  balanceAuditedAt: expect.any(Number),
-  identifiedAt: expect.toBeOneOf([null, expect.any(Number)]),
+  // avatarUrl: expect.toBeOneOf([null, expect.any(String)]),
+  // dob: expect.toBeOneOf([null, expect.any(Number)]),
+  availability: expect.toBeOneOf([null, expect.any(String)]),
+  // preference: expect.toBeOneOf([null, expect.any(String)]),
+  // suspendUtil: expect.toBeOneOf([null, expectedDateFormat(true)]),
+  // theme: expect.toBeOneOf([null, expect.any(String)]),
+  // yob: expect.toBeOneOf([null, expect.any(Number)]),
 
-  createdAt: expect.any(Number),
-  updatedAt: expect.any(Number),
-  deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+  formalName: expect.toBeOneOf([
+    null,
+    { enUS: expect.any(String), zhHK: expect.any(String), zhCN: expect.toBeOneOf([null, expect.any(String)]) },
+  ]),
+
+  avatarUrl: expect.toBeOneOf([null, expectedIdFormat]),
+
+  suspendUtil: expect.toBeOneOf([null, expectedDateFormat(true)]),
+  balanceAuditedAt: expectedDateFormat(true),
+  identifiedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
+
+  // remark: null,
+  createdAt: expectedDateFormat(true),
+  updatedAt: expectedDateFormat(true),
+  deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
 };
 
 export const genChatGroup = (tenant: string, userId: string | Types.ObjectId) => {
   const chat = new Chat<Partial<ChatDocument>>({});
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/chats/${chat._id}`],
-    creator: userId,
+    creator: mongoId(userId),
     data: FAKE,
   });
   const chatGroup = new ChatGroup<Partial<ChatGroupDocument>>({
-    tenant,
-    admins: [userId],
-    users: [userId],
+    tenant: mongoId(tenant),
+    admins: [mongoId(userId)],
+    users: [mongoId(userId)],
     chats: [chat],
   });
   chat.parents = [`/chatGroups/${chatGroup._id}`];
@@ -246,23 +263,23 @@ export const genChatGroup = (tenant: string, userId: string | Types.ObjectId) =>
 
 export const genClassroom = async (tenant: string, teacherId: string | Types.ObjectId) => {
   const books = await Book.find({ deletedAt: { $exists: false } }).lean();
-  const [book] = books.sort(shuffle);
+  const book = randomItem(books);
 
   const chat = new Chat<Partial<ChatDocument>>({});
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/chats/${chat._id}`],
-    creator: teacherId,
+    creator: mongoId(teacherId),
     data: FAKE,
   });
 
   const classroom = new Classroom<Partial<ClassroomDocument>>({
-    tenant,
+    tenant: mongoId(tenant),
     level: book.level,
     subject: book.subjects[0],
     schoolClass: `schoolClass ${FAKE}`,
     books: [book._id],
-    teachers: [teacherId],
-    students: [FAKE_ID],
+    teachers: [mongoId(teacherId)],
+    students: [mongoId()],
     year: schoolYear(),
     chats: [chat],
   }); // bare minimal info
@@ -270,7 +287,7 @@ export const genClassroom = async (tenant: string, teacherId: string | Types.Obj
   chat.parents = [`/classrooms/${classroom._id}`];
   chat.contents = [content._id];
 
-  return { book, classroom, chat, content, fakeUserId: FAKE_ID };
+  return { book, classroom, chat, content, fakeUserId: mongoId() };
 };
 
 export const genClassroomWithAssignment = async (tenant: string, teacherId: string | Types.ObjectId) => {
@@ -295,7 +312,7 @@ export const genClassroomWithAssignment = async (tenant: string, teacherId: stri
         }),
     );
 
-  homework.contents = idsToString(homeworkContents);
+  homework.contents = homeworkContents.map(c => c._id);
   assignment.homeworks = [homework];
   classroom.assignments = [assignment._id];
 
@@ -304,20 +321,18 @@ export const genClassroomWithAssignment = async (tenant: string, teacherId: stri
 
 export const genClassroomUsers = (
   tenant: string | Types.ObjectId,
-  school: string | Types.ObjectId,
-  level: string | Types.ObjectId,
+  school: Types.ObjectId,
+  level: Types.ObjectId,
   schoolClass: string,
   count: number,
 ): (UserDocument & Id)[] =>
   Array(count)
     .fill(0)
-    .map(
-      (_, idx) =>
-        new User<Partial<UserDocument>>({
-          name: `classroomUser-${idx}`,
-          tenants: [tenant],
-          schoolHistories: [{ year: schoolYear(), school, level, schoolClass, updatedAt: new Date() }],
-        }),
+    .map((_, idx) =>
+      genUser(tenant, {
+        name: `classroomUser-${idx}`,
+        schoolHistories: [{ year: schoolYear(), school, level, schoolClass, updatedAt: new Date() }],
+      }),
     );
 
 export const genQuestion = (
@@ -326,17 +341,17 @@ export const genQuestion = (
   classroom?: string | Types.ObjectId,
   owner?: 'tutor' | 'student',
 ) => {
-  const content = new Content<Partial<ContentDocument>>({ creator: userId, data: FAKE });
+  const content = new Content<Partial<ContentDocument>>({ creator: mongoId(userId), data: FAKE });
   const question = new Question<Partial<QuestionDocument>>({
-    tenant,
-    ...(classroom && { classroom }),
+    tenant: mongoId(tenant),
+    ...(classroom && { classroom: mongoId(classroom) }),
     ...(owner === 'student'
-      ? { student: userId }
+      ? { student: mongoId(userId) }
       : owner === 'tutor'
-      ? { tutor: userId }
+      ? { tutor: mongoId(userId) }
       : prob(0.5)
-      ? { student: userId }
-      : { tutor: userId }),
+      ? { student: mongoId(userId) }
+      : { tutor: mongoId(userId) }),
     contents: [content._id],
   });
   content.parents = [`/questions/${question._id}`];
@@ -344,9 +359,17 @@ export const genQuestion = (
   return { question, content };
 };
 
-// minimal user info: name
-export const genUser = (tenantId: string | Types.ObjectId | null, name = randomString()) =>
-  new User<Partial<UserDocument>>({ ...(tenantId && { tenants: [tenantId] }), name });
+/**
+ * Generate an unique Test User
+ */
+export const genUser = (tenantId: string | Types.ObjectId | null, override: Partial<UserDocument> = {}) =>
+  new User<Partial<UserDocument>>({
+    ...(tenantId && { tenants: [mongoId(tenantId)] }),
+    name: `Jest User ${domain}`,
+    emails: [`jest-${randomString()}@${domain}`.toUpperCase()],
+    password: User.genValidPassword(),
+    ...override,
+  });
 
 export const jestPutObject = async (
   userId: string | Types.ObjectId,
@@ -358,11 +381,14 @@ export const jestPutObject = async (
   const objectName = randomString('png');
   await Promise.all([
     minioClient.putObject(publicBucket, objectName, image),
-    PresignedUrl.create({
-      user: userId,
-      url: `/${bucketName}/${objectName}`,
-      expireAt: addSeconds(Date.now(), DEFAULTS.STORAGE.PRESIGNED_URL_PUT_EXPIRY + 5),
-    }),
+    PresignedUrl.insertMany<Partial<PresignedUrlDocument>>(
+      {
+        user: mongoId(userId),
+        url: `/${bucketName}/${objectName}`,
+        expireAt: addSeconds(Date.now(), DEFAULTS.STORAGE.PRESIGNED_URL_PUT_EXPIRY + 5),
+      },
+      { rawResult: true },
+    ),
   ]);
 
   return `/${publicBucket}/${objectName}`;
@@ -413,10 +439,9 @@ export const jestSetup = async (
       ? allUsers
           .filter(
             ({ _id }) =>
-              !idsToString(tenant.admins).includes(_id.toString()) &&
-              !idsToString(tenant.supports).includes(_id.toString()) &&
-              !idsToString(tenant.counselors).includes(_id.toString()) &&
-              !idsToString(tenant.marshals).includes(_id.toString()),
+              ![...tenant.admins, ...tenant.supports, ...tenant.counselors, ...tenant.marshals].some(user =>
+                user.equals(_id),
+              ),
           )
           .filter(u => ((apollo ? 0 : 1) + u.idx) % 2) // half for apollo-test, another half for restful
           .sort(shuffle) // randomize
@@ -428,9 +453,7 @@ export const jestSetup = async (
   const [normalUser] = normalUsers ?? [null];
 
   const tenantAdmin =
-    tenant && allUsers
-      ? allUsers.filter(user => idsToString(tenant.admins).includes(user._id.toString()))[apollo ? 1 : 0]
-      : null;
+    tenant && allUsers ? allUsers.filter(user => tenant.admins.some(a => a.equals(user._id)))[apollo ? 1 : 0] : null;
 
   const [adminServer, guestServer, normalServer, rootServer, tenantAdminServer] = [
     apollo && types.includes('admin') ? testServer(adminUser) : null,
@@ -451,7 +474,8 @@ export const jestSetup = async (
     rootServer,
     tenantAdmin,
     tenantAdminServer,
-    tenantId: tenant ? tenant._id.toString() : null,
+    tenant,
+    tenantId: tenant?._id.toString() || null,
   };
 };
 
@@ -460,19 +484,6 @@ export const jestSetup = async (
  */
 export const jestTeardown = async (): Promise<void> => {
   redisClient.disconnect();
-  await Promise.all([jobRunner.stop(), socketServer.stop(), mongoose.connection.close()]);
-};
-
-/**
- * Generate an unique Test User
- */
-export const uniqueTestUser = (): { email: string; name: string; password: string } => {
-  // const email = `jest@${domain}`;
-  // const idx = email.indexOf('@');
-  return {
-    // email: [email.slice(0, idx), `-${randomString()}`, email.slice(idx)].join(''),
-    email: `jest-${randomString()}@${domain}`,
-    name: `Jest User ${domain}`,
-    password: User.genValidPassword(),
-  };
+  await mongoose.connection.close();
+  // await Promise.all([jobRunner.removeRedisListener(), socketServer.stop(), mongoose.connection.close()]); // socketServer.stop() to disconnect redis
 };

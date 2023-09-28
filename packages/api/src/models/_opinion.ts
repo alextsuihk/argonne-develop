@@ -18,7 +18,7 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface OpinionDocument extends BaseDocument {
-  user: string | Types.ObjectId;
+  user: Types.ObjectId;
   event: string;
   data: unknown;
   processedAt: Date;

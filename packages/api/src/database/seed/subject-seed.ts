@@ -11,7 +11,6 @@ import convert from 'chinese_convert';
 
 import type { SubjectDocument } from '../../models/subject';
 import Subject from '../../models/subject';
-import { idsToString } from '../../utils/helper';
 import { findLevels } from './level-seed';
 
 const { SUBJECT } = LOCALE.DB_ENUM;
@@ -19,9 +18,9 @@ const { SUBJECT } = LOCALE.DB_ENUM;
 const seed = async (): Promise<string> => {
   const { naLevel, primaryLevels, juniorLevels, seniorLevels } = await findLevels();
 
-  const primaryLevelIds = idsToString(primaryLevels);
-  const juniorLevelIds = idsToString(juniorLevels);
-  const seniorLevelIds = idsToString(seniorLevels);
+  const primaryLevelIds = primaryLevels.map(l => l._id);
+  const juniorLevelIds = juniorLevels.map(l => l._id);
+  const seniorLevelIds = seniorLevels.map(l => l._id);
 
   const subjects: Partial<SubjectDocument>[] = [
     { name: { enUS: 'Not Applicable', zhHK: '不適用', zhCN: '不适用' }, levels: [naLevel!._id], flags: [] },
@@ -173,10 +172,10 @@ const seed = async (): Promise<string> => {
 
   // add common values to array
   subjects.forEach(subject => {
-    if (!subject.name?.zhCN) subject.name!.zhCN = convert.tw2cn(subject.name?.zhHK ?? '');
+    if (subject.name?.zhHK && !subject.name?.zhCN) subject.name!.zhCN = convert.tw2cn(subject.name.zhHK);
   });
 
-  await Subject.create(subjects);
+  await Subject.insertMany<Partial<SubjectDocument>>(subjects, { rawResult: true });
   return `(${chalk.green(subjects.length)} created)`;
 };
 

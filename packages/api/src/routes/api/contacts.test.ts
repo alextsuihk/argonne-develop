@@ -9,7 +9,7 @@ import { LOCALE } from '@argonne/common';
 import request from 'supertest';
 
 import app from '../../app';
-import { expectedIdFormat, FAKE, jestSetup, jestTeardown, prob } from '../../jest';
+import { expectedDateFormat, expectedIdFormat, FAKE, jestSetup, jestTeardown, prob, shuffle } from '../../jest';
 import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
@@ -21,16 +21,17 @@ const route = 'contacts';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUsers: (UserDocument & Id)[] | null;
   let normalUser: (UserDocument & Id) | null;
+  let normalUsers: (UserDocument & Id)[] | null;
 
   const expectedMinFormat = {
     _id: expectedIdFormat,
     flags: expect.any(Array),
     // avatarUrl:  expect.any(String), // could be undefined
     name: expect.any(String),
-    status: expect.any(String),
-    tenants: expect.arrayContaining([expect.any(String)]),
+    availability: expect.any(String),
+    tenants: expect.any(Array),
+    updatedAt: expectedDateFormat(),
   };
 
   beforeAll(async () => {
@@ -39,30 +40,35 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   afterAll(jestTeardown);
 
-  test('should pass when getMany & getById', async () =>
-    getMany(route, { 'Jest-User': normalUser!._id }, expectedMinFormat, {
+  test('should pass when getMany & getById', async () => {
+    const user = normalUsers!.find(u => u.contacts.length);
+    if (!user) throw 'No valid users (with contacts)';
+
+    await getMany(route, { 'Jest-User': user._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
-    }));
+    });
+  });
 
   test('should pass when generate token, add contact, and then remove', async () => {
     expect.assertions(18);
 
     const userId = normalUser!._id.toString();
 
-    // find an user who not in contacts
-    const myContactIds = normalUser!.contacts.map(c => c.user.toString());
-    const friendId = normalUsers!
-      .find(({ _id }) => _id.toString() !== normalUser!._id.toString() && !myContactIds.includes(_id.toString()))!
-      ._id.toString();
+    const myContactIds = normalUser!.contacts.map(c => c.user);
+    const friend = normalUsers!
+      .slice(1) // skip normalUser himself (idx 0)
+      .sort(shuffle)
+      .find(({ _id }) => !myContactIds.some(id => id.equals(_id)));
+    const friendId = friend!._id.toString();
 
     // create contactToken
     const tokenRes = await request(app)
       .post('/api/contacts/createToken')
       .send(prob(0.5) ? { expiresIn: 5 } : {})
       .set({ 'Jest-User': friendId });
-    expect(tokenRes.body).toEqual({ data: { token: expect.any(String), expireAt: expect.any(String) } });
+    expect(tokenRes.body).toEqual({ data: { token: expect.any(String), expireAt: expectedDateFormat() } });
     expect(tokenRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(tokenRes.status).toBe(200);
     const { token } = tokenRes.body.data;

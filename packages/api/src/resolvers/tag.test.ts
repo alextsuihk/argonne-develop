@@ -11,6 +11,7 @@ import configLoader from '../config/config-loader';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -20,8 +21,7 @@ import {
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
-  shuffle,
+  randomItem,
   testServer,
 } from '../jest';
 import Tag from '../models/tag';
@@ -44,9 +44,9 @@ describe('Tag GraphQL', () => {
     name: expectedLocaleFormat,
     description: expectedLocaleFormat,
     remarks: null,
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedAdminFormat = {
@@ -82,7 +82,8 @@ describe('Tag GraphQL', () => {
     expect.assertions(1);
 
     const tags = await Tag.find({ deletedAt: { $exists: false } }).lean();
-    const res = await guestServer!.executeOperation({ query: GET_TAG, variables: { id: randomId(tags) } });
+    const id = randomItem(tags)._id.toString();
+    const res = await guestServer!.executeOperation({ query: GET_TAG, variables: { id } });
     apolloExpect(res, 'data', { tag: expectedNormalFormat });
   });
 
@@ -101,7 +102,8 @@ describe('Tag GraphQL', () => {
   test('should fail when mutating without ADMIN role & without sufficient creditability', async () => {
     expect.assertions(2);
 
-    const user = normalUsers!.sort(shuffle).find(user => user.creditability < DEFAULTS.CREDITABILITY.CREATE_TAG);
+    const user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.CREATE_TAG);
+    if (!user) throw 'no valid user to proceed';
     const userServer = testServer(user);
 
     // add a document
@@ -131,7 +133,8 @@ describe('Tag GraphQL', () => {
     const newId: string = createdRes.data!.addTag._id;
 
     // update without sufficient creditability
-    const user = normalUsers!.sort(shuffle).find(user => user.creditability < DEFAULTS.CREDITABILITY.UPDATE_TAG);
+    const user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.UPDATE_TAG);
+    if (!user) throw 'no valid user to proceed';
     const updatedFailRes = await testServer(user!).executeOperation({
       query: UPDATE_TAG,
       variables: { id: newId, tag: { name: FAKE2_LOCALE, description: FAKE_LOCALE } },
@@ -155,7 +158,8 @@ describe('Tag GraphQL', () => {
     });
 
     // delete without sufficient creditability
-    const user2 = normalUsers!.sort(shuffle).find(user => user.creditability < DEFAULTS.CREDITABILITY.REMOVE_TAG);
+    const user2 = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.REMOVE_TAG);
+    if (!user) throw 'no valid user to proceed';
     const removedFailRes = await testServer(user2!).executeOperation({
       query: REMOVE_TAG,
       variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) },

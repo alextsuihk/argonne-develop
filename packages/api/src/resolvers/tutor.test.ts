@@ -8,22 +8,24 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
+  expectedDateFormat,
   expectedIdFormat,
   expectedRemark,
   FAKE,
   FAKE_ID,
   FAKE2,
+  genUser,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
-  shuffle,
+  randomItem,
   testServer,
 } from '../jest';
 import Level from '../models/level';
 import Subject from '../models/subject';
-import Tutor from '../models/tutor';
-import User, { Id, UserDocument } from '../models/user';
+import Tutor, { TutorDocument } from '../models/tutor';
+import type { Id, UserDocument } from '../models/user';
+import User from '../models/user';
 import {
   ADD_TUTOR,
   ADD_TUTOR_CREDENTIAL,
@@ -54,37 +56,37 @@ describe('Tutor GraphQL', () => {
     _id: expectedIdFormat,
     flags: expect.any(Array),
 
-    tenant: expect.any(String),
-    user: expect.any(String),
+    tenant: expectedIdFormat,
+    user: expectedIdFormat,
 
     intro: expect.toBeOneOf([null, expect.any(String)]),
     officeHour: expect.toBeOneOf([null, expect.any(String)]),
 
     credentials: expect.any(Array), // could be empty array
     specialties: expect.any(Array), // could be an empty array for newly created tutor
-    rankingUpdatedAt: expect.any(Number),
+    rankingUpdatedAt: expectedDateFormat(true),
     star: expect.toBeOneOf([null, expect.any(Number)]),
 
     remarks: expect.toBeOneOf([null, expect.any(Array)]),
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedCredentialFormat = {
     _id: expectedIdFormat,
     title: expect.any(String),
     proofs: expect.any(Array),
-    updatedAt: expect.any(Number),
-    verifiedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    updatedAt: expectedDateFormat(true),
+    verifiedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectedSpecialtyFormat = {
     _id: expectedIdFormat,
     note: expect.toBeOneOf([null, expect.any(String)]),
     lang: expect.toBeOneOf(Object.keys(QUESTION.LANG)),
-    level: expect.any(String),
-    subject: expect.any(String),
+    level: expectedIdFormat,
+    subject: expectedIdFormat,
     ranking: {
       correctness: expect.any(Number),
       punctuality: expect.any(Number),
@@ -111,10 +113,8 @@ describe('Tutor GraphQL', () => {
     apolloExpect(tutorsRes, 'data', { tutors: expect.arrayContaining([expectedFormat]) });
 
     // get one
-    const tutorRes = await server.executeOperation({
-      query: GET_TUTOR,
-      variables: { id: randomId(tutorsRes.data!.tutors) },
-    });
+    const tutor = randomItem(tutorsRes.data!.tutors as (TutorDocument & Id)[]);
+    const tutorRes = await server.executeOperation({ query: GET_TUTOR, variables: { id: tutor._id } });
 
     apolloExpect(tutorRes, 'data', { tutor: expectedFormat });
 
@@ -133,28 +133,26 @@ describe('Tutor GraphQL', () => {
   test('should pass when testing GetAll, GetById, invalidId, non nonExistingId (as student)', async () => {
     // find an intersection of levels of tutors & normalUsers
     const tutors = await Tutor.find({
-      'specialties.level': {
-        $in: normalUsers!.map(user => user.schoolHistories[0]?.level.toString()).filter(lvl => !!lvl),
-      },
+      'specialties.level': { $in: normalUsers!.map(user => user.schoolHistories[0]?.level).filter(lvl => !!lvl) },
       deletedAt: { $exists: false },
     }).lean();
-    const [{ level }] = tutors.sort(shuffle)[0].specialties.sort(shuffle);
+
+    const tutorLevels = tutors.map(t => t.specialties.map(s => s.level)).flat();
     const student = normalUsers!.find(
-      ({ schoolHistories }) => schoolHistories[0] && schoolHistories[0].level.toString() === level.toString(),
+      ({ schoolHistories }) => schoolHistories[0] && tutorLevels.some(lvl => lvl.equals(schoolHistories[0].level)),
     );
 
-    await getMany(testServer(student!));
+    if (!student) throw `No valid student for testing`;
+    await getMany(testServer(student));
   });
 
-  // There is no naLevel tutor initially
+  // There is no tutor (with naLevel) initially
   test.skip('should pass when testing GetAll, GetById, invalidId, non nonExistingId (as teacher)', async () => {
     const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
+    const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
+    if (!teacher) throw `No valid teacher for testing`;
 
-    const teacher = normalUsers!.find(
-      ({ schoolHistories }) => schoolHistories[0]?.level.toString() === teacherLevel!._id.toString(),
-    );
-
-    await getMany(testServer(teacher!));
+    await getMany(testServer(teacher));
   });
 
   test('should pass when testing GetAll, GetById, invalidId, non nonExistingId (as tenantAdmin)', async () =>
@@ -177,7 +175,8 @@ describe('Tutor GraphQL', () => {
     expect.assertions(1);
 
     // create a new user (without identifiedAt)
-    const user = await User.create({ tenants: [tenantId!], name: `tutor-${FAKE}` });
+    const user = genUser(tenantId!);
+    await user.save();
 
     // tenantAdmin addTutor
     const res = await tenantAdminServer!.executeOperation({
@@ -194,7 +193,8 @@ describe('Tutor GraphQL', () => {
     expect.assertions(11);
 
     // create a new user (with identifiedAt)
-    const user = await User.create({ tenants: [tenantId!], name: `tutor-${FAKE}`, identifiedAt: new Date() });
+    const user = genUser(tenantId!, { identifiedAt: new Date() });
+    await user.save();
     const userServer = testServer(user);
     const userId = user._id.toString();
 
@@ -204,7 +204,7 @@ describe('Tutor GraphQL', () => {
       variables: { tenantId: tenantId!, userId },
     });
     apolloExpect(createdRes, 'data', { addTutor: { ...expectedFormat, tenant: tenantId!, user: userId } });
-    const tutorId = createdRes.data!.addTutor._id.toString();
+    const tutorId = createdRes.data!.addTutor._id;
 
     // new tutor updates intro & officeHour
     const updateIntro = { intro: FAKE, ...(prob(0.5) && { officeHour: FAKE2 }) };
@@ -237,7 +237,7 @@ describe('Tutor GraphQL', () => {
     });
 
     // tenantAdmin verifyCredential
-    const credentialId = addCredentialRes.data!.addTutorCredential.credentials[0]._id.toString();
+    const credentialId = addCredentialRes.data!.addTutorCredential.credentials[0]._id;
     const verifyCredentialRes = await tenantAdminServer!.executeOperation({
       query: VERIFY_TUTOR_CREDENTIAL,
       variables: { id: tutorId, credentialId },
@@ -245,7 +245,7 @@ describe('Tutor GraphQL', () => {
     apolloExpect(verifyCredentialRes, 'data', {
       verifyTutorCredential: {
         ...expectedFormat,
-        credentials: [{ ...expectedCredentialFormat, ...credential, verifiedAt: expect.any(Number) }],
+        credentials: [{ ...expectedCredentialFormat, ...credential, verifiedAt: expectedDateFormat(true) }],
       },
     });
 
@@ -257,13 +257,11 @@ describe('Tutor GraphQL', () => {
     apolloExpect(removeCredentialRes, 'data', { removeTutorCredential: { ...expectedFormat, credentials: [] } });
 
     // tutor addSpecialty
-    const subjects = await Subject.find({ deletedAt: { $exists: false } }).lean();
-    const [subject] = subjects.sort(shuffle);
-    const subjectId = subject._id.toString();
-    const levelId = randomId(subject.levels);
+    const subject = randomItem(await Subject.find({ deletedAt: { $exists: false } }).lean());
+    const level = randomItem(subject.levels).toString();
 
-    const [lang] = Object.keys(QUESTION.LANG).sort(shuffle);
-    const specialty = { lang, subject: subjectId, level: levelId, ...(prob(0.5) && { note: `specialty ${FAKE}` }) };
+    const lang = randomItem(Object.keys(QUESTION.LANG));
+    const specialty = { lang, subject: subject._id.toString(), level, ...(prob(0.5) && { note: `specialty ${FAKE}` }) };
     const addSpecialtyRes = await userServer.executeOperation({
       query: ADD_TUTOR_SPECIALTY,
       variables: { id: tutorId, ...specialty },
@@ -274,7 +272,7 @@ describe('Tutor GraphQL', () => {
         specialties: [{ ...expectedSpecialtyFormat, ...specialty }],
       },
     });
-    const specialtyId = addSpecialtyRes.data!.addTutorSpecialty.specialties[0]._id.toString();
+    const specialtyId = addSpecialtyRes.data!.addTutorSpecialty.specialties[0]._id;
 
     // tutor removeSpecialty
     const removeSpecialtyRes = await userServer.executeOperation({
@@ -325,7 +323,7 @@ describe('Tutor GraphQL', () => {
   test('should fail when adding specialty without lang, level, subject', async () => {
     expect.assertions(3);
 
-    const [lang] = Object.keys(QUESTION.LANG).sort(shuffle);
+    const lang = randomItem(Object.keys(QUESTION.LANG));
 
     // add without lang
     const res1 = await normalServer!.executeOperation({

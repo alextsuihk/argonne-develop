@@ -6,7 +6,7 @@ import { gql } from 'apollo-server-express';
 
 export default gql`
   extend type Query {
-    contents(token: String!, query: QueryInput): Content
+    contents(token: String!, ids: [String!], query: QueryInput): Content
   }
 
   extend type Mutation {

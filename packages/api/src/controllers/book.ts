@@ -3,11 +3,13 @@
  *
  */
 
+import type { BookSchema } from '@argonne/common';
 import { CONTENT_PREFIX, LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import type { FilterQuery } from 'mongoose';
+import type { FilterQuery, Types, UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
+import configLoader from '../config/config-loader';
 import type { BookAssignmentDocument, BookDocument, Id } from '../models/book';
 import Book, { BookAssignment, searchableFields } from '../models/book';
 import type { ChatGroupDocument } from '../models/chat-group';
@@ -21,14 +23,17 @@ import Level from '../models/level';
 import type { PublisherDocument } from '../models/publisher';
 import Publisher from '../models/publisher';
 import Subject from '../models/subject';
-import { messageToAdmin } from '../utils/chat';
-import { idsToString } from '../utils/helper';
+import User from '../models/user';
+import { messageToAdmins } from '../utils/chat';
+import { mongoId } from '../utils/helper';
 import log from '../utils/log';
-import { notifySync } from '../utils/notify-sync';
+import type { BulkWrite } from '../utils/notify-sync';
+import { syncToAllSatellites } from '../utils/notify-sync';
 import storage from '../utils/storage';
 import type { StatusResponse } from './common';
 import common from './common';
-import { PUBLIC, signContentIds } from './content';
+import { signContentIds } from './content';
+import { sanitizeContributors } from './contribution';
 
 type Action =
   | 'addAssignment'
@@ -45,10 +50,11 @@ type BookDocumentEx = BookDocument & Id & { contentsToken: string };
 
 const { MSG_ENUM } = LOCALE;
 const { CHAT_GROUP, CONTRIBUTION, USER } = LOCALE.DB_ENUM;
+const { config } = configLoader;
 const { assertUnreachable, auth, DELETED, hubModeOnly, isAdmin, isTeacher, paginateSort, searchFilter, select } =
   common;
 const {
-  assignmentIdSchema,
+  bookAssignmentIdSchema,
   bookAssignmentSchema,
   bookIsbnSchema,
   bookRevisionIdSchema,
@@ -71,6 +77,8 @@ const nestedPopulate = [
   { path: 'supplements.contribution', select: adminSelect },
 ];
 
+const findAndUpdateOpt = { fields: adminSelect, new: true, populate: nestedPopulate };
+
 /**
  * only publisher.admin or admin have permission to proceed
  */
@@ -78,29 +86,31 @@ const checkPermission = async (
   id: string,
   userId: string,
   isAdmin: boolean,
-  extraFilter?: FilterQuery<BookDocument>,
+  extraFilter: FilterQuery<BookDocument> = {},
 ) => {
   const book = await Book.findOne({ _id: id, deletedAt: { $exists: false }, ...extraFilter }).lean();
   if (!book) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const publisher = await Publisher.findByPublisherId(book.publisher, userId, isAdmin);
+  const publisher = await Publisher.findById(book.publisher).lean();
+  if (!publisher) throw { statusCode: 400, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  return { book, publisher };
+  if (isAdmin || (userId && publisher.admins.some(a => a.equals(userId)))) return { book, publisher };
+  throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 };
 
 /**
  * (helper) hide solutions (to general students), hide remark, and generate contentsToken
  */
 const transform = async (
-  userId: string,
+  userId: string | null,
   userRoles: string[],
   book: BookDocument & Id,
   publishers: (PublisherDocument & Id)[],
   isTeacher = true,
 ): Promise<BookDocumentEx> => {
-  const isPublisherAdmin = !!publishers
-    .find(p => p._id.toString() === book.publisher.toString())
-    ?.admins.includes(userId);
+  const isPublisherAdmin =
+    !!userId &&
+    !!publishers.find(publisher => publisher._id.equals(book.publisher))?.admins.some(admin => admin.equals(userId));
 
   const hideRemark = !isAdmin(userRoles) && !isPublisherAdmin;
 
@@ -140,12 +150,29 @@ const transform = async (
       assignments
         .map(assignment =>
           typeof assignment === 'string' || assignment instanceof mongoose.Types.ObjectId
-            ? 'ERROR' // this is not possible (if populating correctly)
-            : idsToString([assignment.content, ...assignment.examples]),
+            ? 'IMPOSSIBLE' // this is not possible (if populating correctly)
+            : [assignment.content, ...assignment.examples],
         )
-        .flat(),
+        .flat()
+        .filter((x): x is Types.ObjectId => x !== 'IMPOSSIBLE'),
     ),
   };
+};
+
+/**
+ * (helper) validate user inputFields
+ */
+const validateInputs = async ({ book }: BookSchema) => {
+  const [level, publisher, subjects] = await Promise.all([
+    Level.exists({ _id: book.level, deletedAt: { $exists: false } }),
+    Publisher.findOne({ _id: book.publisher, deletedAt: { $exists: false } }).lean(),
+    Subject.find({ _id: { $in: book.subjects }, levels: book.level, deletedAt: { $exists: false } }, '_id').lean(),
+  ]);
+
+  if (!level || !publisher || book.subjects.length !== subjects.length)
+    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  return { level: level._id, publisher: publisher, subjects: subjects.map(s => s._id) };
 };
 
 /**
@@ -161,16 +188,16 @@ const addRemark = async (req: Request, args: unknown): Promise<BookDocumentEx> =
   const book = await Book.findByIdAndUpdate(
     id,
     { $push: { remarks: { t: new Date(), u: userId, m: remark } } },
-    { fields: adminSelect, new: true, populate: nestedPopulate },
+    findAndUpdateOpt,
   ).lean();
   if (book) {
     const [transformed] = await Promise.all([
       transform(userId, userRoles, book, [publisher]),
-      DatabaseEvent.log(userId, `/books/${id}`, 'REMARK', { remark }),
+      DatabaseEvent.log(userId, `/books/${id}`, 'REMARK', { args }),
     ]);
     return transformed;
   }
-  log('error', 'bookController:addRemark()', { id, remark }, userId);
+  log('error', 'bookController:addRemark()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -180,20 +207,14 @@ const addRemark = async (req: Request, args: unknown): Promise<BookDocumentEx> =
 const create = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
-  const { book: fields } = await bookSchema.validate(args);
+  const { book: inputFields } = await bookSchema.validate(args);
 
-  const [level, publisher, subjectCount] = await Promise.all([
-    Level.exists({ _id: fields.level, deletedAt: { $exists: false } }),
-    Publisher.findByPublisherId(fields.publisher, userId, isAdmin(userRoles)),
-    Subject.countDocuments({
-      _id: { $in: fields.subjects },
-      levels: fields.level,
-      deletedAt: { $exists: false },
-    }),
-  ]);
-  if (!level || subjectCount !== fields.subjects.length) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  const { level, publisher, subjects } = await validateInputs({ book: inputFields });
 
-  const book = new Book<Partial<BookDocument>>(fields);
+  if (!isAdmin(userRoles) && !publisher.admins.some(admin => admin.equals(userId)))
+    throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
+
+  const book = new Book<Partial<BookDocument>>({ ...inputFields, publisher: publisher._id, level, subjects });
   const { _id, title } = book;
 
   const chatGroup = new ChatGroup<Partial<ChatGroupDocument>>({
@@ -217,9 +238,11 @@ const create = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
     transform(userId, userRoles, book.toObject(), [publisher]),
     book.save(),
     chatGroup.save(),
-    messageToAdmin(msg, userId, userLocale, userRoles, publisher.admins, `PUBLISHER#${publisher._id}`),
-    DatabaseEvent.log(userId, `/books/${_id}`, 'CREATE', { book: fields }),
-    notifySync('CORE', {}, { bookIds: [_id] }),
+    messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${book._id}`),
+    DatabaseEvent.log(userId, `/books/${_id}`, 'CREATE', { args }),
+    syncToAllSatellites({
+      bulkWrite: { books: [{ insertOne: { document: book.toObject() } }] satisfies BulkWrite<BookDocument> },
+    }),
   ]);
 
   return transformed;
@@ -252,7 +275,7 @@ const find = async (req: Request, args: unknown): Promise<BookDocumentEx[]> => {
   ]);
 
   return Promise.all(
-    books.map(async book => transform(userId ?? PUBLIC, userRoles ?? [], book, publishers, isActiveTeacher)),
+    books.map(async book => transform(userId ?? null, userRoles ?? [], book, publishers, isActiveTeacher)),
   );
 };
 
@@ -276,7 +299,7 @@ const findMany: RequestHandler = async (req, res, next) => {
     res.status(200).json({
       meta: { total, ...options },
       data: await Promise.all(
-        books.map(async book => transform(userId ?? PUBLIC, userRoles ?? [], book, publishers, isActiveTeacher)),
+        books.map(async book => transform(userId ?? null, userRoles ?? [], book, publishers, isActiveTeacher)),
       ),
     });
   } catch (error) {
@@ -298,7 +321,7 @@ const findOne = async (req: Request, args: unknown): Promise<BookDocumentEx | nu
     isTeacher(userExtra),
   ]);
 
-  return book && transform(userId || PUBLIC, userRoles ?? [], book, publishers, isActiveTeacher);
+  return book && transform(userId || null, userRoles ?? [], book, publishers, isActiveTeacher);
 };
 
 /**
@@ -341,17 +364,23 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
     zhHK: `剛刪除教科書：${common}。`,
   };
 
-  // const bookRevisionsImageUrls = book.revisions.map(rev => rev.imageUrls).flat();
+  // const bookRevisionsImageUrls = original.revisions.map(rev => rev.imageUrls).flat();
   await Promise.all([
     Book.updateOne(
       { _id: id, deletedAt: { $exists: false } },
       { deletedAt: new Date(), ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
     ),
     // ...bookRevisionsImageUrls.map(async url => storage.removeObject(url)), // remove all revision images
-    messageToAdmin(msg, userId, userLocale, userRoles, publisher.admins, `PUBLISHER#${original.publisher}`),
-    DatabaseEvent.log(userId, `/books/${id}`, 'DELETE', { remark, original }),
-    // notifySync('CORE',{}, { bookIds: [id],...(logoUrl && { minioRemoveItems: bookRevisionsImageUrls  }),
-    notifySync('CORE', {}, { bookIds: [id] }),
+    messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
+    DatabaseEvent.log(userId, `/books/${id}`, 'DELETE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: {
+        books: [
+          { updateOne: { filter: { _id: id }, update: { deletedAt: new Date() } } },
+        ] satisfies BulkWrite<BookDocument>,
+      },
+      // minio: { serverUrl: config.server.minio.serverUrl, removeObjects: bookRevisionsImageUrls },
+    }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -376,34 +405,41 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 const update = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
-  const { id, book: fields } = await bookSchema.concat(idSchema).validate(args);
+  const { id, book: inputFields } = await bookSchema.concat(idSchema).validate(args);
 
-  const [{ book: original, publisher }, level, subjectCount] = await Promise.all([
+  const [{ book: original, publisher }, { level, subjects }] = await Promise.all([
     checkPermission(id, userId, isAdmin(userRoles)),
-    Level.exists({ _id: fields.level, deletedAt: { $exists: false } }),
-    Subject.countDocuments({ _id: { $in: fields.subjects }, levels: fields.level, deletedAt: { $exists: false } }),
+    validateInputs({ book: inputFields }),
   ]);
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   //! not allow to change publisher
-  if (original.publisher.toString() !== fields.publisher || !level || subjectCount !== fields.subjects.length)
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (!original.publisher.equals(inputFields.publisher)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const common = `${fields.title} [/books/${id}]`;
+  const common = `${inputFields.title} [/books/${id}]`;
   const msg = {
     enUS: `A book is updated: ${common}.`,
     zhCN: `刚更新教科书：${common}。`,
     zhHK: `剛更新教科書：${common}。`,
   };
+  const update: UpdateQuery<BookDocument> = {
+    ...inputFields,
+    publisher: original.publisher, // override, not allow to change publisher
+    level,
+    subjects,
+    ...(inputFields.subTitle ? { subTitle: inputFields.subTitle } : { $unset: { subTitle: 1 } }),
+  };
   const [book] = await Promise.all([
-    Book.findByIdAndUpdate(id, fields, { fields: adminSelect, new: true, populate: nestedPopulate }).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, publisher.admins, `PUBLISHER#${publisher._id}`),
-    DatabaseEvent.log(userId, `/books/${id}`, 'UPDATE', { original, update: fields }),
-    notifySync('CORE', {}, { bookIds: [id] }),
+    Book.findByIdAndUpdate(id, update, findAndUpdateOpt).lean(),
+    messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
+    DatabaseEvent.log(userId, `/books/${id}`, 'UPDATE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: { books: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<BookDocument> },
+    }),
   ]);
 
   if (book) return transform(userId, userRoles, book, [publisher]);
-  log('error', 'bookController:update()', { id, ...fields }, userId);
+  log('error', 'bookController:update()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -426,20 +462,20 @@ const addRevision = async (req: Request, args: unknown): Promise<BookDocumentEx>
     zhCN: `刚新增教科书版本：${original.title}, 版本：${revision.rev} [/books/${id}]。`,
     zhHK: `剛新增教科書版本：${original.title}, 版本：${revision.rev} [/books/${id}]。`,
   };
-
+  const update: UpdateQuery<BookDocument> = {
+    $push: { revisions: { _id: mongoId(), ...revision, imageUrls: [], createdAt: new Date() } },
+  };
   const [book] = await Promise.all([
-    Book.findByIdAndUpdate(
-      id,
-      { $push: { revisions: { ...revision, imageUrls: [], createdAt: new Date() } } },
-      { fields: adminSelect, new: true, populate: nestedPopulate },
-    ).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, publisher.admins, `PUBLISHER#${original.publisher}`),
-    DatabaseEvent.log(userId, `/books/${id}`, 'addRevision', { originalRevisions: original.revisions, revision }),
-    notifySync('CORE', {}, { bookIds: [id] }),
+    Book.findByIdAndUpdate(id, update, findAndUpdateOpt).lean(),
+    messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
+    DatabaseEvent.log(userId, `/books/${id}`, 'addRevision', { args, originalRevisions: original.revisions }),
+    syncToAllSatellites({
+      bulkWrite: { books: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<BookDocument> },
+    }),
   ]);
 
   if (book) return transform(userId, userRoles, book, [publisher]);
-  log('error', 'bookController:addRevision()', { id, revision }, userId);
+  log('error', 'bookController:addRevision()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -461,6 +497,7 @@ const removeRevision = async (req: Request, args: unknown): Promise<BookDocument
     zhHK: `剛刪除教科書版本：${original.title} [/books/${id}]。`,
   };
 
+  // const imageUrls = original.revisions.find(rev => rev._id.equals(revisionId))?.imageUrls ?? [];
   const [book] = await Promise.all([
     Book.findOneAndUpdate(
       // { _id: id, revisions: { _id: revisionId } },
@@ -469,19 +506,28 @@ const removeRevision = async (req: Request, args: unknown): Promise<BookDocument
         $set: { 'revisions.$.deletedAt': new Date(), 'revisions.$.isbn': DELETED },
         ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
       },
-      { fields: adminSelect, new: true, populate: nestedPopulate },
+      findAndUpdateOpt,
     ).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, publisher.admins, `PUBLISHER#${original.publisher}`),
-    DatabaseEvent.log(userId, `/books/${id}`, 'removeRevision', {
-      remark,
-      originalRevisions: original.revisions,
-      revisionId,
-    }),
-    notifySync('CORE', {}, { bookIds: [id] }),
+    // ...imageUrls.map(async imageUrl => storage.removeObject(imageUrl)),
+    messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
+    DatabaseEvent.log(userId, `/books/${id}`, 'removeRevision', { args, originalRevisions: original.revisions }),
   ]);
 
-  if (book) return transform(userId, userRoles, book, [publisher]);
-  log('error', 'bookController:removeRevision()', { id, revisionId, remark }, userId);
+  if (book) {
+    const [transformed] = await Promise.all([
+      transform(userId, userRoles, book, [publisher]),
+      syncToAllSatellites({
+        bulkWrite: {
+          books: [
+            { updateOne: { filter: { _id: id }, update: { revisions: book.revisions } } },
+          ] satisfies BulkWrite<BookDocument>,
+        },
+        // minio: { serverUrl: config.server.minio.serverUrl, removeObjects: imageUrls },
+      }),
+    ]);
+    return transformed;
+  }
+  log('error', 'bookController:removeRevision()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -498,7 +544,7 @@ const addRevisionImage = async (req: Request, args: unknown): Promise<BookDocume
     storage.validateObject(url, userId), // check file is uploaded to Minio successfully
   ]);
 
-  const revision = original.revisions.find(r => r._id.toString() === revisionId);
+  const revision = original.revisions.find(r => r._id.equals(revisionId));
   if (revision) {
     const msg = {
       enUS: `A book cover photo is added: ${original.title}, Rev: ${revision.rev} [/books/${id}].`,
@@ -510,17 +556,29 @@ const addRevisionImage = async (req: Request, args: unknown): Promise<BookDocume
       Book.findOneAndUpdate(
         { _id: id, 'revisions._id': revisionId },
         { $push: { 'revisions.$.imageUrls': url } },
-        { fields: adminSelect, new: true, populate: nestedPopulate },
+        findAndUpdateOpt,
       ).lean(),
-      messageToAdmin(msg, userId, userLocale, userRoles, publisher.admins, `PUBLISHER#${original.publisher}`),
-      DatabaseEvent.log(userId, `/books/${id}`, 'addRevisionImage', { revisionId, url }),
-      notifySync('CORE', {}, { bookIds: [id], minioAddItems: [url] }),
+      messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
+      DatabaseEvent.log(userId, `/books/${id}`, 'addRevisionImage', { args }),
     ]);
 
-    if (book) return transform(userId, userRoles, book, [publisher]);
+    if (book) {
+      const [transformed] = await Promise.all([
+        transform(userId, userRoles, book, [publisher]),
+        syncToAllSatellites({
+          bulkWrite: {
+            books: [
+              { updateOne: { filter: { _id: id }, update: { revisions: book.revisions } } },
+            ] satisfies BulkWrite<BookDocument>,
+          },
+          minio: { serverUrl: config.server.minio.serverUrl, addObjects: [url] },
+        }),
+      ]);
+      return transformed;
+    }
   }
 
-  log('error', 'bookController:addRevisionImage()', { id, revisionId, url }, userId);
+  log('error', 'bookController:addRevisionImage()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -540,7 +598,7 @@ const removeRevisionImage = async (req: Request, args: unknown): Promise<BookDoc
     'revisions.imageUrls': url,
   });
 
-  const revision = original.revisions.find(r => r._id.toString() === revisionId && r.imageUrls.includes(url));
+  const revision = original.revisions.find(r => r._id.equals(revisionId) && r.imageUrls.includes(url));
   if (revision) {
     const msg = {
       enUS: `A book cover photo is removed: ${original.title} , Rev: ${revision.rev} [/books/${id}].`,
@@ -555,18 +613,28 @@ const removeRevisionImage = async (req: Request, args: unknown): Promise<BookDoc
           $set: { 'revisions.$.imageUrls': `${CONTENT_PREFIX.BLOCKED}#${url}` },
           ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
         },
-        { fields: adminSelect, new: true, populate: nestedPopulate },
+        findAndUpdateOpt,
       ).lean(),
       // storage.removeObject(url), // delete file in Minio if exists
-      messageToAdmin(msg, userId, userLocale, userRoles, publisher.admins, `PUBLISHER#${original.publisher}`),
-      DatabaseEvent.log(userId, `/books/${id}`, 'removeRevisionImage', { revisionId, url }),
-      notifySync('CORE', {}, { bookIds: [id], minioRemoveItems: [url] }),
+      messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
+      DatabaseEvent.log(userId, `/books/${id}`, 'removeRevisionImage', { args }),
     ]);
 
-    if (book) return transform(userId, userRoles, book, [publisher]);
+    if (book) {
+      const [transformed] = await Promise.all([
+        transform(userId, userRoles, book, [publisher]),
+        syncToAllSatellites({
+          bulkWrite: {
+            books: [
+              { updateOne: { filter: { _id: id }, update: { revisions: book.revisions } } },
+            ] satisfies BulkWrite<BookDocument>,
+          }, // minio: { serverUrl: config.server.minio.serverUrl, removeObjects: [url] },
+        }),
+      ]);
+      return transformed;
+    }
   }
-
-  log('error', 'bookController:removeRevisionImage()', { id, revisionId, remark, url }, userId);
+  log('error', 'bookController:removeRevisionImage()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -582,63 +650,61 @@ const addAssignment = async (req: Request, args: unknown): Promise<BookDocumentE
     assignment: { content: data, contribution: contributionFields, examples: examplesFields, ...assignmentFields },
   } = await bookAssignmentSchema.concat(idSchema).validate(args);
 
+  const [{ book: original, publisher }, contributors, { systemId }] = await Promise.all([
+    checkPermission(id, userId, isAdmin(userRoles)),
+    sanitizeContributors(contributionFields.contributors),
+    User.findSystemAccountIds(),
+  ]);
+  const creator = (contributors.length === 1 && contributors[0]?.user) || systemId; // if multiple contributors, use systemId
+
   const contribution = new Contribution<Partial<ContributionDocument>>({
     ...contributionFields,
+    contributors,
     flags: [CONTRIBUTION.FLAG.BOOK_ASSIGNMENT],
-    book: id,
+    book: original._id,
     chapter: assignmentFields.chapter,
   });
-  const content = new Content<Partial<ContentDocument>>({ parents: [`/bookAssignments/${id}`], creator: userId, data });
-  const examples = examplesFields.map(
-    data => new Content<Partial<ContentDocument>>({ parents: [`/bookAssignments/${id}`], creator: userId, data }),
-  );
-  const assignment = new BookAssignment<Partial<BookAssignmentDocument>>({
-    ...assignmentFields,
-    contribution,
-    content: content._id,
-    examples: idsToString(examples),
-  });
-  const assignmentId = assignment._id.toString();
-  content.parents = [`/bookAssignment/${assignmentId}`];
-  examples.forEach(ex => (ex.parents = [`/bookAssignment/${assignmentId}`]));
-
-  // save before populating
-  await Promise.all([contribution.save(), assignment.save()]);
-
-  const book = await Book.findOneAndUpdate(
-    { _id: id, deletedAt: { $exists: false } },
-    { $push: { assignments: assignment } },
-    { fields: adminSelect, new: true, populate: nestedPopulate },
-  ).lean();
-  if (!book) {
-    await Promise.all([
-      Contribution.deleteOne({ _id: contribution }),
-      BookAssignment.deleteOne({ _id: assignment }), // undo & remove bookAssignment
-    ]);
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  }
-
-  const msg = `A book assignment (${assignmentId}) is added to book (${id})`;
   const contributionId = contribution._id.toString();
 
-  const [publisher] = await Promise.all([
-    Publisher.findByPublisherId(book.publisher, userId, isAdmin(userRoles)),
-    Content.create([content, ...examples]),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], `BOOK#${id}`),
-    DatabaseEvent.log(userId, `/books/${id}`, 'addAssignment', { assignmentId, contributionId, args }),
-    notifySync(
-      'CORE',
-      {},
-      {
-        bookIds: [id],
-        bookAssignmentIds: [assignmentId],
-        contributionIds: [contributionId],
-        contentIds: [content, ...examples],
-      },
-    ),
-  ]);
+  const bookAssignmentId = mongoId();
+  const parents = [`/bookAssignments/${bookAssignmentId}`];
+  const content = new Content<Partial<ContentDocument>>({ parents, creator, data });
+  const examples = examplesFields.map(data => new Content<Partial<ContentDocument>>({ parents, creator, data }));
 
-  return transform(userId, userRoles, book, [publisher]);
+  const assignment = new BookAssignment<Partial<BookAssignmentDocument & Id>>({
+    _id: bookAssignmentId,
+    ...assignmentFields,
+    contribution: contribution._id,
+    content: content._id,
+    examples: examples.map(e => e._id),
+  });
+
+  await Promise.all([contribution.save(), assignment.save()]); // save before populating
+
+  const update: UpdateQuery<BookDocument> = { $push: { assignments: assignment._id } };
+  const msg = `A book assignment (${bookAssignmentId}) is added to book (${id})`;
+  const [book] = await Promise.all([
+    Book.findOneAndUpdate({ _id: id, deletedAt: { $exists: false } }, update, findAndUpdateOpt).lean(),
+    Content.insertMany([content, ...examples], { rawResult: true }),
+    messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
+    DatabaseEvent.log(userId, `/books/${id}`, 'addAssignment', { args, bookAssignmentId, contributionId }),
+    syncToAllSatellites({
+      bulkWrite: {
+        books: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<BookDocument>,
+        bookAssignments: [
+          { insertOne: { document: assignment.toObject() } },
+        ] satisfies BulkWrite<BookAssignmentDocument>,
+        contributions: [{ insertOne: { document: contribution.toObject() } }] satisfies BulkWrite<ContributionDocument>,
+      },
+      contentsToken: await signContentIds(
+        null,
+        [content, ...examples].map(c => c._id),
+      ),
+    }),
+  ]);
+  if (book) return transform(userId, userRoles, book, [publisher]);
+  log('error', 'bookController:addAssignment()', args, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
@@ -649,33 +715,38 @@ const addAssignment = async (req: Request, args: unknown): Promise<BookDocumentE
  */
 const removeAssignment = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
-  const { id, assignmentId, remark } = await assignmentIdSchema.concat(idSchema).concat(removeSchema).validate(args);
+  const { userId, userLocale, userRoles } = auth(req, 'ADMIN'); // only isAdmin could proceed
+  const { id, assignmentId, remark } = await bookAssignmentIdSchema
+    .concat(idSchema)
+    .concat(removeSchema)
+    .validate(args);
 
-  const original = await Book.findOne({ _id: id, assignments: assignmentId, deletedAt: { $exists: false } }).lean();
-  if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  await BookAssignment.updateOne({ _id: assignmentId }, { deletedAt: new Date() }); // update BookAssignment before populating
+  const { publisher } = await checkPermission(id, userId, isAdmin(userRoles), { assignments: assignmentId });
+  await BookAssignment.updateOne({ _id: assignmentId }, { deletedAt: new Date() }); // mark BookAssignment deleted before populating
 
   const msg = `A book assignment (${assignmentId}) is removed from book (${id})`;
-  const [book, publisher] = await Promise.all([
-    Book.findOneAndUpdate(
-      { _id: id, assignments: assignmentId, deletedAt: { $exists: false } },
-      {
-        // $pull: { assignments: assignmentId },
-        updatedAt: new Date(),
-        ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-      },
-      { fields: adminSelect, new: true, populate: nestedPopulate },
+  const [book] = await Promise.all([
+    Book.findByIdAndUpdate(
+      id,
+      { updatedAt: new Date(), ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
+      findAndUpdateOpt,
     ).lean(),
-    Publisher.findByPublisherId(original.publisher, userId, isAdmin(userRoles)),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], `BOOK#${id}`),
-    DatabaseEvent.log(userId, `/books/${id}`, 'removeAssignment', { remark, assignmentId }),
-    notifySync('CORE', {}, { bookIds: [id], bookAssignmentIds: [assignmentId] }),
+    messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
+    DatabaseEvent.log(userId, `/books/${id}`, 'removeAssignment', { args }),
+    syncToAllSatellites({
+      bulkWrite: {
+        books: [
+          { updateOne: { filter: { _id: id }, update: { updatedAt: new Date() } } },
+        ] satisfies BulkWrite<BookDocument>,
+        bookAssignments: [
+          { updateOne: { filter: { _id: assignmentId }, update: { deletedAt: new Date() } } },
+        ] satisfies BulkWrite<BookAssignmentDocument>,
+      },
+    }),
   ]);
 
   if (book) return transform(userId, userRoles, book, [publisher]);
-  log('error', 'bookController:removeAssignment()', { id, assignmentId, remark }, userId);
+  log('error', 'bookController:removeAssignment()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -692,32 +763,40 @@ const addSupplement = async (req: Request, args: unknown): Promise<BookDocumentE
     supplement: { contribution: contributionFields, ...supplementFields },
   } = await bookSupplementSchema.concat(idSchema).validate(args);
 
+  const [{ book: original, publisher }, contributors] = await Promise.all([
+    checkPermission(id, userId, isAdmin(userRoles)),
+    sanitizeContributors(contributionFields.contributors),
+  ]);
+
+  // save before population
   const contribution = await Contribution.create<Partial<ContributionDocument>>({
     ...contributionFields,
+    contributors,
     flags: [CONTRIBUTION.FLAG.BOOK_SUPPLEMENT],
-    book: id,
+    book: original._id,
     chapter: supplementFields.chapter,
   });
 
-  const book = await Book.findOneAndUpdate(
-    { _id: id, deletedAt: { $exists: false } },
-    { $push: { supplements: { contribution, ...supplementFields } } },
-    { fields: adminSelect, new: true, populate: nestedPopulate },
-  ).lean();
-  if (!book) {
-    await Contribution.deleteOne({ _id: contribution }); // undo & remove contribution
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  }
-
+  const update: UpdateQuery<BookDocument> = {
+    $push: { supplements: { _id: mongoId(), contribution: contribution._id, ...supplementFields } },
+  };
   const msg = `A book supplement is added to book (${id})`;
-  const [publisher] = await Promise.all([
-    Publisher.findByPublisherId(book.publisher, userId, isAdmin(userRoles)),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], `BOOK#${id}`),
+  await contribution.save(); // need to save before population
+  const [book] = await Promise.all([
+    Book.findOneAndUpdate({ _id: id, deletedAt: { $exists: false } }, update, findAndUpdateOpt).lean(),
+    messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
     DatabaseEvent.log(userId, `/books/${id}`, 'addSupplement', { args }),
-    notifySync('CORE', {}, { bookIds: [id], contributionIds: [contribution] }),
+    syncToAllSatellites({
+      bulkWrite: {
+        books: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<BookDocument>,
+        contributions: [{ insertOne: { document: contribution.toObject() } }] satisfies BulkWrite<ContentDocument>,
+      },
+    }),
   ]);
 
-  return transform(userId, userRoles, book, [publisher]);
+  if (book) return transform(userId, userRoles, book, [publisher]);
+  log('error', 'bookController:addSupplement()', args, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
@@ -728,25 +807,37 @@ const removeSupplement = async (req: Request, args: unknown): Promise<BookDocume
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { id, supplementId, remark } = await bookSupplementIdSchema.concat(removeSchema).validate(args);
 
-  const book = await Book.findOneAndUpdate(
-    { _id: id, 'supplements._id': supplementId, deletedAt: { $exists: false } },
-    {
-      $set: { 'supplements.$.deletedAt': new Date() },
-      ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-    },
-    { fields: adminSelect, new: true, populate: nestedPopulate },
-  ).lean();
-  if (!book) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  const { publisher } = await checkPermission(id, userId, isAdmin(userRoles), { 'supplements._id': supplementId });
 
   const msg = `A book supplement (${supplementId}) is removed from book (${id})`;
-  const [publisher] = await Promise.all([
-    Publisher.findByPublisherId(book.publisher, userId, isAdmin(userRoles)),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], `BOOK#${id}`),
-    DatabaseEvent.log(userId, `/books/${id}`, 'removeSupplement', { remark, supplementId }),
-    notifySync('CORE', {}, { bookIds: [id] }),
+  const [book] = await Promise.all([
+    Book.findOneAndUpdate(
+      { _id: id, 'supplements._id': supplementId, deletedAt: { $exists: false } },
+      {
+        $set: { 'supplements.$.deletedAt': new Date() },
+        ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
+      },
+      findAndUpdateOpt,
+    ).lean(),
+    messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
+    DatabaseEvent.log(userId, `/books/${id}`, 'removeSupplement', { args }),
+    syncToAllSatellites({
+      bulkWrite: {
+        books: [
+          {
+            updateOne: {
+              filter: { _id: id, 'supplements._id': supplementId },
+              update: { $set: { 'supplements.$.deletedAt': new Date() } },
+            },
+          },
+        ] satisfies BulkWrite<BookDocument>,
+      },
+    }),
   ]);
 
-  return transform(userId, userRoles, book, [publisher]);
+  if (book) return transform(userId, userRoles, book, [publisher]);
+  log('error', 'bookController:removeSupplement()', args, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**

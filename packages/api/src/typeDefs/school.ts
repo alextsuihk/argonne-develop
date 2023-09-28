@@ -44,12 +44,12 @@ export default gql`
     location: LocationPoint
     phones: [String!]!
     emi: Boolean
-    band: String
+    band: String!
     logoUrl: String
     website: String
-    funding: String
-    gender: String
-    religion: String
+    funding: String!
+    gender: String!
+    religion: String!
     levels: [String!]!
     remarks: [Remark!]
     createdAt: Float!

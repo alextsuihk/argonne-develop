@@ -7,21 +7,13 @@
  *  https://www.edb.gov.hk/en/curriculum-development/resource-support/textbook-info/index.html
  */
 
-import fsPromises from 'node:fs/promises';
-import path from 'node:path';
-
 import chalk from 'chalk';
 import convert from 'chinese_convert';
 
 import type { PublisherDocument } from '../../models/publisher';
 import Publisher from '../../models/publisher';
-import { randomString } from '../../utils/helper';
-import { client as minioClient, publicBucket } from '../../utils/storage';
 
 const seed = async (): Promise<string> => {
-  const publisherLogoImage = await fsPromises.readFile(path.join(__dirname, 'images', 'logo-publisher.png'));
-  const publisherLogoFilename = randomString('png');
-
   const publishers: Partial<PublisherDocument>[] = [
     {
       name: { enUS: '', zhHK: '進昇教育有限公司' },
@@ -276,14 +268,10 @@ const seed = async (): Promise<string> => {
   ];
 
   publishers.forEach(publisher => {
-    if (!publisher.name?.zhCN) publisher.name!.zhCN = convert.tw2cn(publisher.name?.zhHK ?? '');
-    publisher.logoUrl = `/${publicBucket}/${publisherLogoFilename}`;
+    if (publisher.name?.zhHK && !publisher.name?.zhCN) publisher.name!.zhCN = convert.tw2cn(publisher.name.zhHK);
   });
 
-  await Promise.all([
-    Publisher.create(publishers),
-    minioClient.putObject(publicBucket, publisherLogoFilename, publisherLogoImage),
-  ]);
+  await Publisher.insertMany<Partial<PublisherDocument>>(publishers, { rawResult: true });
   return `(${chalk.green(publishers.length)} created)`;
 };
 

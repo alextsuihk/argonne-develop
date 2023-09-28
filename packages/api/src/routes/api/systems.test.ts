@@ -42,7 +42,7 @@ describe('System API Routes', () => {
     logger: expect.objectContaining({
       ...expectedHealthReportFormat,
       url: expect.stringContaining('http'),
-      status: 'up',
+      server: 'up',
       timeElapsed: expect.any(Number),
       tenant: expect.any(String),
       lastLogCreatedAt: expect.any(String),
@@ -50,21 +50,21 @@ describe('System API Routes', () => {
     mongo: {
       pool: expect.any(Number),
       state: 'connected',
-      status: 'up',
+      server: 'up',
       timeElapsed: expect.any(Number),
     },
     redis: {
       state: 'ready',
-      status: 'up',
+      server: 'up',
       timeElapsed: expect.any(Number),
     },
     server: {
       port: expect.any(Number),
-      status: 'up',
+      server: 'up',
       appUrl: expect.stringContaining('http'),
       ...expectedHealthReportFormat,
     },
-    socket: { status: 'Not Available in Test Mode' },
+    socket: { server: 'Not Available in Test Mode' },
     webpush: expect.anything(),
   };
 
@@ -94,10 +94,7 @@ describe('System API Routes', () => {
   test('should return system status when Get Status', async () => {
     expect.assertions(3);
 
-    const apiKey = await token.generateApi(
-      { userId: normalUser!._id.toString() ?? 'invalid', scope: 'systems:r' },
-      '5s',
-    );
+    const apiKey = await token.generateApi({ userId: normalUser!._id.toString(), scope: 'systems:r' }, '5s');
     const res = await request(app).get(`/api/systems/status`).set({ 'x-api-key': apiKey });
     expect(res.body).toEqual({ data: expectedStatusFormat });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
@@ -112,7 +109,6 @@ describe('System API Routes', () => {
       data: {
         mode: expect.toBeOneOf(['HUB', 'SATELLITE']),
         primaryTenantId: expect.toBeOneOf([null, expect.any(String)]),
-        status: expect.toBeOneOf(['ready', 'uninitialized', 'initializing']),
         minio: expect.any(String),
         timestamp: expect.any(Number),
         version: expect.any(String),

@@ -24,8 +24,8 @@ export const dnsLookup = async (url: string) =>
 /**
  * Convert ObjectId[] | Document[] to string[]
  */
-export const idsToString = (items: (string | Types.ObjectId | Id)[]): string[] =>
-  items.map(item => (typeof item === 'string' ? item : item._id.toString()));
+// export const idsToString = (items: (string | Types.ObjectId | Id)[]): string[] =>
+//   items.map(item => (typeof item === 'string' ? item : item._id.toString()));
 
 /**
  * Is it Mongoose Document
@@ -46,9 +46,16 @@ export const latestSchoolHistory = (schoolHistories: UserDocument['schoolHistori
   };
 
 /**
- * generate a new mongo ID
+ * generate a new mongo ID or convert string to mongo ID
  */
-export const mongoId = () => new mongoose.Types.ObjectId();
+export const mongoId = (id?: string | Types.ObjectId | Id) =>
+  id instanceof mongoose.Types.ObjectId
+    ? id
+    : typeof id === 'string' || typeof id === 'undefined'
+    ? mongoose.isObjectIdOrHexString(id)
+      ? new mongoose.Types.ObjectId(id)
+      : new mongoose.Types.ObjectId()
+    : id._id;
 
 /**
  * Probability (0 - 1.0)
@@ -56,10 +63,14 @@ export const mongoId = () => new mongoose.Types.ObjectId();
 export const prob = (x: number): boolean => Math.random() > 1 - x;
 
 /**
- * Randomly Pick one from string[] or Pick one ID from Document[]
+ * Randomly pick one element from array
  */
-export const randomId = (items: (string | Types.ObjectId | Id)[]) =>
-  idsToString(items)[Math.floor(Math.random() * items.length)];
+export const randomItem = <T>(items: T[]) => items[Math.floor(Math.random() * items.length)]!;
+
+/**
+ * Randomly multiple elements from array
+ */
+export const randomItems = <T>(items: T[], count: number) => items.sort(shuffle).slice(0, count);
 
 /**
  * Generate a random string with optional timestamp (prefix) & file extension
@@ -97,4 +108,4 @@ export const terminate = (message: string): never => {
 /**
  * Return unique IDs from Array<string> | Array<Document>
  */
-export const uniqueIds = (ids: (string | Types.ObjectId | Id)[]): string[] => Array.from(new Set(idsToString(ids)));
+// export const uniqueIds = (ids: (string | Types.ObjectId | Id)[]): string[] => Array.from(new Set(idsToString(ids)));

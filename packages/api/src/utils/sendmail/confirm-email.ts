@@ -17,28 +17,14 @@ export const EMAIL_TOKEN_PREFIX = 'EMAIL';
 export default async (name: string, locale: string, email: string): Promise<boolean> => {
   const expiresBy = addSeconds(new Date(), DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN);
   const confirmToken = await token.signStrings([EMAIL_TOKEN_PREFIX, email], DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN);
+  const link = `${config.appUrl}/tokens/emailVerify/${confirmToken}`;
 
   const [subject, body] =
     locale === zhHK
-      ? [
-          '請確認郵箱',
-          `你好, ${name}, <a href="${
-            config.appUrl
-          }/emailVerify/${confirmToken}">Verify Email</a> by ${expiresBy.toString()}`,
-        ]
+      ? ['請確認郵箱', `你好, ${name}, <a href="${link}">Verify Email</a> by ${expiresBy.toString()}`]
       : locale === zhCN
-      ? [
-          '請確認郵箱',
-          `你好, ${name}, <a href="${
-            config.appUrl
-          }/emailVerify/${confirmToken}">Verify Email</a> by ${expiresBy.toString()}`,
-        ]
-      : [
-          'Please confirm email',
-          `Welcome, ${name}, <a href="${
-            config.appUrl
-          }/emailVerify/${confirmToken}">Verify Email</a> by ${expiresBy.toString()}`,
-        ];
+      ? ['請確認郵箱', `你好, ${name}, <a href="${link}">Verify Email</a> by ${expiresBy.toString()}`]
+      : ['Please confirm email', `Welcome, ${name}, <a href="${link}">Verify Email</a> by ${expiresBy.toString()}`];
 
   return sendmail(email, subject, body, `${__filename}: [ ${subject} ] ${email}`);
 };

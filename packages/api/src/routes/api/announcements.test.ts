@@ -6,7 +6,7 @@
 import { LOCALE } from '@argonne/common';
 import { addDays } from 'date-fns';
 
-import { expectedIdFormat, FAKE, jestSetup, jestTeardown } from '../../jest';
+import { expectedDateFormat, expectedIdFormat, FAKE, jestSetup, jestTeardown } from '../../jest';
 import type { AnnouncementDocument } from '../../models/announcement';
 import type { Id, UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
@@ -28,8 +28,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     flags: expect.any(Array),
     title: expect.any(String),
     message: expect.any(String),
-    beginAt: expect.any(String),
-    endAt: expect.any(String),
+    beginAt: expectedDateFormat(),
+    endAt: expectedDateFormat(),
   };
 
   beforeAll(async () => {

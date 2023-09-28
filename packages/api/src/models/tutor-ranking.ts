@@ -13,14 +13,14 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface TutorRankingDocument extends BaseDocument {
-  tenant: string | Types.ObjectId;
-  tutor: string | Types.ObjectId;
-  student: string | Types.ObjectId;
+  tenant: Types.ObjectId;
+  tutor: Types.ObjectId;
+  student: Types.ObjectId;
 
-  question: string | Types.ObjectId;
+  question: Types.ObjectId;
   lang: string;
-  level: string | Types.ObjectId;
-  subject: string | Types.ObjectId;
+  level: Types.ObjectId;
+  subject: Types.ObjectId;
 
   correctness: number;
   explicitness: number;

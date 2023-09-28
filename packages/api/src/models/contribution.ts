@@ -19,14 +19,14 @@ export interface ContributionDocument extends BaseDocument {
   title: string;
   description?: string;
   contributors: {
-    user: string | Types.ObjectId;
+    user: Types.ObjectId;
     name: string; // John (P6, S3)
-    school: string | Types.ObjectId;
+    school: Types.ObjectId;
   }[];
 
   urls: string[]; // YouTube, github url (with commit hash or branch), private repo for assignment, otherwise public repo
 
-  book?: string | Types.ObjectId;
+  book?: Types.ObjectId;
   chapter?: string; // e.g 1.2#33, chapter 1.2, homework#33
 }
 
@@ -48,6 +48,7 @@ const contributionSchema = new Schema<ContributionDocument>(
     description: String,
     contributors: [
       {
+        _id: false, // user is unique, _id is not needed
         user: { type: Schema.Types.ObjectId, ref: 'User' },
         name: String,
         school: { type: Schema.Types.ObjectId, ref: 'School' },

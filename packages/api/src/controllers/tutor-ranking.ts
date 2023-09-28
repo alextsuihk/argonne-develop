@@ -14,6 +14,7 @@ import mongoose from 'mongoose';
 
 import type { Id, TutorRankingDocument } from '../models/tutor-ranking';
 import TutorRanking from '../models/tutor-ranking';
+import { mongoId } from '../utils/helper';
 import common from './common';
 
 type AverageRanking = Pick<TutorRankingDocument & Id, '_id' | 'correctness' | 'explicitness' | 'punctuality'>;
@@ -80,7 +81,7 @@ const findOne = async (req: Request, args: unknown): Promise<AverageRanking | nu
   const { id } = await idSchema.validate(args);
 
   const tutorRankings = await TutorRanking.aggregate<AverageRanking>([
-    { $match: { tutor: new mongoose.Types.ObjectId(userId), student: new mongoose.Types.ObjectId(id) } },
+    { $match: { tutor: mongoId(userId), student: mongoId(id) } },
     {
       $group: {
         _id: '$student',

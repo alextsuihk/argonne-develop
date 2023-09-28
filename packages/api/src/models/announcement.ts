@@ -15,7 +15,7 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface AnnouncementDocument extends BaseDocument {
-  tenant?: string | Types.ObjectId;
+  tenant?: Types.ObjectId;
   title: string;
   message: string;
   beginAt: Date;

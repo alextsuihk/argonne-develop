@@ -5,6 +5,7 @@
 
 import { faker } from '@faker-js/faker';
 import chalk from 'chalk';
+import type { Types } from 'mongoose';
 
 import type { AnnouncementDocument } from '../../models/announcement';
 import Announcement from '../../models/announcement';
@@ -25,11 +26,11 @@ const fake = async (codes: string[], count = 10, tenantCount = 3): Promise<strin
     deletedAt: { $exists: false },
   }).lean();
 
-  const fakeAnnouncements = (count: number, tenant?: string) =>
+  const fakeAnnouncements = (count: number, tenant?: Types.ObjectId) =>
     Array(count)
       .fill(0)
       .map(
-        _ =>
+        () =>
           new Announcement<Partial<AnnouncementDocument>>({
             ...(tenant && { tenant }),
             title: faker.lorem.slug(5),
@@ -39,15 +40,18 @@ const fake = async (codes: string[], count = 10, tenantCount = 3): Promise<strin
           }),
       );
 
-  const announcements = await Announcement.create([
-    ...fakeAnnouncements(count),
-    ...tenants
-      .sort(shuffle)
-      .map(tenant => fakeAnnouncements(tenantCount, tenant._id.toString()))
-      .flat(),
-  ]);
+  const { insertedCount } = await Announcement.insertMany<Partial<AnnouncementDocument>>(
+    [
+      ...fakeAnnouncements(count),
+      ...tenants
+        .sort(shuffle)
+        .map(tenant => fakeAnnouncements(tenantCount, tenant._id))
+        .flat(),
+    ],
+    { rawResult: true },
+  );
 
-  return `(${chalk.green(announcements.length)} created)`;
+  return `(${chalk.green(insertedCount)} announcements created)`;
 };
 
 export { fake };

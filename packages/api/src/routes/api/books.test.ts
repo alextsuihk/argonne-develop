@@ -7,6 +7,7 @@ import { CONTENT_PREFIX } from '@argonne/common';
 
 import {
   expectedContributionFormat,
+  expectedDateFormat,
   expectedIdFormat,
   expectedRemark,
   FAKE,
@@ -16,8 +17,7 @@ import {
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
-  shuffle,
+  randomItem,
 } from '../../jest';
 import type { BookAssignmentDocument, BookDocument } from '../../models/book';
 import Book, { BookAssignment } from '../../models/book';
@@ -35,26 +35,25 @@ const route = 'books';
 describe(`${route.toUpperCase()} API Routes`, () => {
   let adminUser: (UserDocument & Id) | null;
   let normalUsers: (UserDocument & Id)[] | null;
-  let url: string;
-  let teacherLevelId: string;
+  let url: string | undefined;
 
   // expected MINIMUM single book format
   const expectedMinFormat = {
     _id: expectedIdFormat,
     flags: expect.any(Array),
 
-    publisher: expect.any(String),
-    level: expect.any(String),
-    subjects: expect.arrayContaining([expect.any(String)]),
+    publisher: expectedIdFormat,
+    level: expectedIdFormat,
+    subjects: expect.arrayContaining([expectedIdFormat]),
     title: expect.any(String),
-    chatGroup: expect.any(String),
+    chatGroup: expectedIdFormat,
 
     assignments: expect.any(Array),
     supplements: expect.any(Array),
     revisions: expect.any(Array),
 
-    createdAt: expect.any(String),
-    updatedAt: expect.any(String),
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
 
     contentsToken: expect.any(String),
   };
@@ -64,12 +63,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     flags: expect.any(Array),
     contribution: expectedContributionFormat,
     chapter: expect.any(String),
-    content: expect.any(String),
+    content: expectedIdFormat,
     dynParams: expect.any(Array),
     solutions: expect.any(Array),
     examples: expect.any(Array),
-    createdAt: expect.any(String),
-    updatedAt: expect.any(String),
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
   };
 
   const expectedRevMinFormat = {
@@ -77,7 +76,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     rev: expect.any(String),
     year: expect.any(Number),
     imageUrls: expect.any(Array),
-    createdAt: expect.any(String),
+    createdAt: expectedDateFormat(),
   };
 
   const expectedSupplementMinFormat = {
@@ -88,16 +87,16 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   beforeAll(async () => {
     ({ adminUser, normalUsers } = await jestSetup(['admin', 'normal']));
-    const teacher = await Level.findOne({ code: 'TEACHER' }).lean();
-    if (!teacher) throw 'no valid teacher-level';
-    teacherLevelId = teacher._id.toString();
   });
   afterAll(async () => Promise.all([url && jestRemoveObject(url), jestTeardown()]));
 
-  test('should pass when getMany & getById (as non-teacher)', async () => {
+  test('should pass when getMany & getById (as non-Admin, non-teacher & non publishAdmin)', async () => {
+    const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
+
     const nonTeacher = normalUsers!.find(
-      ({ schoolHistories }) => schoolHistories[0].level.toString() !== teacherLevelId,
+      ({ schoolHistories }) => schoolHistories[0] && !schoolHistories[0]?.level.equals(teacherLevel!._id),
     );
+    if (!nonTeacher) throw 'no valid non-teacher for testing';
 
     await getMany(
       route,
@@ -116,12 +115,14 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   });
 
   test('should pass when getById [with assignments solutions] (as teacher)', async () => {
-    const teacher = normalUsers!.find(
-      ({ schoolHistories }) => schoolHistories[0] && schoolHistories[0]?.level.toString() === teacherLevelId,
-    );
-
     const bookAssignments = await BookAssignment.find({ solutions: { $ne: [] } }).lean();
-    const books = await Book.find({ assignments: { $in: bookAssignments } }).lean();
+    const [books, teacherLevel] = await Promise.all([
+      Book.find({ assignments: { $in: bookAssignments } }).lean(),
+      Level.findOne({ code: 'TEACHER' }).lean(),
+    ]);
+
+    const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
+    if (!teacher) throw 'no valid teacher for testing';
 
     await getById(
       route,
@@ -136,7 +137,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           }),
         ]),
       },
-      { id: randomId(books) },
+      { id: randomItem(books)._id.toString() },
     );
   });
 
@@ -152,10 +153,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     if (!allPublishers.length || !allSchools.length || !allSubjects.length)
       throw `At least one subject & one publisher are required/ ${allSubjects.length} subjects, and ${allPublishers.length} publishers.`;
 
-    const [subject] = allSubjects.sort(shuffle);
-    const level = randomId(subject.levels);
+    const subject = randomItem(allSubjects);
+    const level = randomItem(subject.levels).toString();
     const subjects = [subject._id.toString()];
-    const publisher = randomId(allPublishers);
+    const publisher = randomItem(allPublishers)._id.toString();
 
     const revision = {
       rev: FAKE,
@@ -235,7 +236,13 @@ describe(`${route.toUpperCase()} API Routes`, () => {
               contribution: {
                 title: FAKE,
                 ...(prob(0.5) && { description: FAKE }),
-                contributors: [{ user: randomId(normalUsers!), name: FAKE, school: randomId(allSchools) }],
+                contributors: [
+                  {
+                    user: randomItem(normalUsers!)._id.toString(),
+                    name: FAKE,
+                    school: randomItem(allSchools)._id.toString(),
+                  },
+                ],
                 urls: ['http://github/some-path', 'http://github/some-path-two'],
               },
             },
@@ -287,7 +294,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { revisionId, ...(prob(0.5) && { remark: FAKE2 }) },
           expectedMinFormat: {
             ...expectedMinFormat,
-            revisions: [expect.objectContaining({ ...expectedRevMinFormat, deletedAt: expect.any(String) })], // isbn is removed
+            revisions: [expect.objectContaining({ ...expectedRevMinFormat, deletedAt: expectedDateFormat() })], // isbn is removed
           },
         },
         {
@@ -295,7 +302,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { assignmentId, ...(prob(0.5) && { remark: FAKE }) },
           expectedMinFormat: {
             ...expectedMinFormat,
-            assignments: [expect.objectContaining({ ...expectedAssignmentMinFormat, deletedAt: expect.any(String) })],
+            assignments: [expect.objectContaining({ ...expectedAssignmentMinFormat, deletedAt: expectedDateFormat() })],
           },
         },
         {
@@ -303,7 +310,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { supplementId, ...(prob(0.5) && { remark: FAKE2 }) },
           expectedMinFormat: {
             ...expectedMinFormat,
-            supplements: [expect.objectContaining({ ...expectedSupplementMinFormat, deletedAt: expect.any(String) })],
+            supplements: [expect.objectContaining({ ...expectedSupplementMinFormat, deletedAt: expectedDateFormat() })],
           },
         },
         { action: 'delete', data: {} },

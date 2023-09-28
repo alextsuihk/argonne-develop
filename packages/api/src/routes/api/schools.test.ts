@@ -6,20 +6,20 @@
 import { LOCALE } from '@argonne/common';
 
 import {
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
   FAKE,
   FAKE_LOCALE,
   FAKE2_LOCALE,
-  idsToString,
   jestPutObject,
   jestRemoveObject,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
-  shuffle,
+  randomItem,
+  randomItems,
 } from '../../jest';
 import District from '../../models/district';
 import Level from '../../models/level';
@@ -36,8 +36,8 @@ const route = 'schools';
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
   let adminUser: (UserDocument & Id) | null;
-  let url: string;
-  let url2: string;
+  let url: string | undefined;
+  let url2: string | undefined;
 
   // expected MINIMUM single school format
   const expectedMinFormat = {
@@ -45,14 +45,20 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     flags: expect.any(Array),
     code: expect.any(String),
     name: expectedLocaleFormat,
-    district: expect.toBeOneOf([null, expect.any(String)]),
-    levels: expect.arrayContaining([expect.any(String)]),
+    district: expectedIdFormat,
+    levels: expect.arrayContaining([expectedIdFormat]),
+    band: expect.toBeOneOf(Object.keys(SCHOOL.BAND)),
+    funding: expect.toBeOneOf(Object.keys(SCHOOL.FUNDING)),
+    gender: expect.toBeOneOf(Object.keys(SCHOOL.GENDER)),
+    religion: expect.toBeOneOf(Object.keys(SCHOOL.RELIGION)),
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
   };
 
   beforeAll(async () => {
     ({ adminUser } = await jestSetup(['admin']));
   });
-  afterAll(async () => Promise.all([jestRemoveObject(url), jestRemoveObject(url2), jestTeardown()]));
+  afterAll(async () => Promise.all([url && jestRemoveObject(url), url2 && jestRemoveObject(url2), jestTeardown()]));
 
   test('should pass when getMany & getById', async () =>
     getMany(route, {}, expectedMinFormat, { testGetById: true, testInvalidId: true, testNonExistingId: true }));
@@ -65,35 +71,28 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     [url, url2] = await Promise.all([jestPutObject(adminUser!._id), jestPutObject(adminUser!._id)]);
 
-    const create = {
-      code: FAKE,
-      name: FAKE_LOCALE,
-      phones: ['+852 12345678'],
-      emi: prob(0.5),
-      ...(prob(0.5) && { band: FAKE }),
-      ...(prob(0.5) && { logoUrl: url }),
-      ...(prob(0.5) && { website: 'http://jest.com' }),
-      ...(prob(0.5) && { funding: Object.keys(SCHOOL.FUNDING).sort(shuffle)[0] }),
-      ...(prob(0.5) && { gender: Object.keys(SCHOOL.GENDER).sort(shuffle)[0] }),
-      ...(prob(0.5) && { religion: FAKE }),
-      levels: idsToString(levels.sort(shuffle).slice(0, 3)),
-    };
+    const fake = (type: 'create' | 'update') => ({
+      code: FAKE.toUpperCase(),
+      name: type === 'create' ? FAKE_LOCALE : FAKE2_LOCALE,
+      address: type === 'create' ? FAKE_LOCALE : FAKE2_LOCALE,
+      district: randomItem(districts)._id.toString(),
+      phones: type === 'create' ? ['+852 12345678'] : ['+852 98765432', '+852 88887777'],
+      ...(prob(0.5) && { emi: prob(0.5) }),
+      band: randomItem(Object.keys(SCHOOL.BAND)),
+      ...(type === 'create' && { logoUrl: url, website: 'http://jest.com' }),
+      funding: randomItem(Object.keys(SCHOOL.FUNDING)),
+      gender: randomItem(Object.keys(SCHOOL.GENDER)),
+      religion: randomItem(Object.keys(SCHOOL.RELIGION)),
+      levels: randomItems(levels, 3)
+        .map(level => level._id.toString())
+        .sort(), // sort in alphanumeric order
+    });
 
-    const update = {
-      code: FAKE,
-      name: FAKE2_LOCALE,
-      phones: ['+852 88887777'],
-      emi: prob(0.5),
-      website: 'http://jest2.com',
-      levels: idsToString(levels.sort(shuffle).slice(0, 3)),
-    };
+    const create = fake('create');
+    const update = fake('update');
 
     await createUpdateDelete<SchoolDocument & Id>(route, { 'Jest-User': adminUser!._id }, [
-      {
-        action: 'create',
-        data: { ...create, address: FAKE_LOCALE, district: randomId(districts) },
-        expectedMinFormat: { ...expectedMinFormat, ...create, code: FAKE.toUpperCase() },
-      },
+      { action: 'create', data: create, expectedMinFormat: { ...expectedMinFormat, ...create } },
       {
         action: 'addRemark',
         data: { remark: FAKE },
@@ -101,21 +100,21 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       },
       {
         action: 'update',
-        data: { ...update, code: 'NOT-ALLOWED-TO-CHANGE', address: FAKE2_LOCALE, district: randomId(districts) },
+        data: { ...update, code: 'NOT-ALLOWED-TO-CHANGE' },
         expectedResponse: {
           statusCode: 422,
           data: { type: 'plain', statusCode: 422, errors: [{ code: MSG_ENUM.USER_INPUT_ERROR }] },
         },
       },
       {
-        action: 'update', // remove logoUrl
-        data: { ...update, address: FAKE2_LOCALE, district: randomId(districts), logoUrl: '' },
-        expectedMinFormat: { ...expectedMinFormat, ...update, code: FAKE.toUpperCase() },
+        action: 'update', // remove logoUrl & website
+        data: { ...update, logoUrl: '', website: '' },
+        expectedMinFormat: { ...expectedMinFormat, ...update },
       },
       {
-        action: 'update', // add logoUrl back
-        data: { ...update, address: FAKE2_LOCALE, district: randomId(districts), logoUrl: url2 },
-        expectedMinFormat: { ...expectedMinFormat, ...update, code: FAKE.toUpperCase(), logoUrl: url2 },
+        action: 'update', // add logoUrl & website back
+        data: { ...update, logoUrl: url2, website: 'http://jest2.com' },
+        expectedMinFormat: { ...expectedMinFormat, ...update, logoUrl: url2, website: 'http://jest2.com' },
       },
       { action: 'delete', data: {} },
     ]);

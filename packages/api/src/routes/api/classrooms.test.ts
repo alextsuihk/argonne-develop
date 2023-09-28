@@ -6,7 +6,7 @@
 import { LOCALE } from '@argonne/common';
 
 import {
-  expectChatFormat,
+  expectedChatFormat,
   expectedIdFormat,
   expectedMember,
   expectedRemark,
@@ -17,12 +17,11 @@ import {
   genClassroomUsers,
   genClassroomWithAssignment,
   genQuestion,
-  idsToString,
   jestSetup,
   jestTeardown,
   prob,
 } from '../../jest';
-import Book, { BookAssignment } from '../../models/book';
+import Book from '../../models/book';
 import type { ChatDocument } from '../../models/chat';
 import type { ClassroomDocument } from '../../models/classroom';
 import Classroom from '../../models/classroom';
@@ -31,7 +30,7 @@ import Level from '../../models/level';
 import Tenant from '../../models/tenant';
 import type { Id, UserDocument } from '../../models/user';
 import User from '../../models/user';
-import { schoolYear, shuffle } from '../../utils/helper';
+import { randomItem, schoolYear } from '../../utils/helper';
 import commonTest from './rest-api-test';
 
 const { CHAT } = LOCALE.DB_ENUM;
@@ -80,10 +79,13 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should pass when getMany & getById (as student)', async () => {
     const classrooms = await Classroom.find({
       tenant: tenantId!,
-      'students.0': { $exists: true },
+      students: { $ne: [] },
+      teachers: { $ne: [] },
       deletedAt: { $exists: false },
     }).lean();
-    const [studentId] = classrooms[Math.floor(Math.random() * classrooms.length)].students.sort(shuffle);
+    const classroom = randomItem(classrooms);
+    const studentId = randomItem(classroom.students);
+    if (!studentId) throw `no studentId is available ${classrooms.length}`;
 
     await getMany(route, { 'Jest-User': studentId }, expectedMinFormat, {
       testGetById: true,
@@ -95,10 +97,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should pass when getMany & getById (as teacher)', async () => {
     const classrooms = await Classroom.find({
       tenant: tenantId!,
-      'teachers.0': { $exists: true },
+      students: { $ne: [] },
+      teachers: { $ne: [] },
       deletedAt: { $exists: false },
     }).lean();
-    const [teacherId] = classrooms[Math.floor(Math.random() * classrooms.length)].teachers.sort(shuffle);
+    const classroom = randomItem(classrooms);
+    const teacherId = randomItem(classroom.teachers);
 
     await getMany(route, { 'Jest-User': teacherId }, expectedMinFormat, {
       testGetById: true,
@@ -126,7 +130,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
+                ...expectedChatFormat,
                 _id: chat._id.toString(),
                 contents: [content._id.toString()],
               }),
@@ -161,7 +165,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
+                ...expectedChatFormat,
                 _id: chat._id.toString(),
                 contents: [content._id.toString()],
               }),
@@ -178,13 +182,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should pass when sharing homework to classroom', async () => {
     // create a classroom with assignment + homework
-    const { assignment, book, classroom, homework, homeworkContents, assignmentIdx } = await genClassroomWithAssignment(
+    const { assignment, classroom, homework, homeworkContents } = await genClassroomWithAssignment(
       tenantId!,
       normalUser!._id,
     );
 
-    await Promise.all([classroom.save(), assignment.save(), homework.save(), Content.create(homeworkContents)]);
-    const bookAssignment = await BookAssignment.findById(book.assignments[assignmentIdx]).lean();
+    await Promise.all([classroom.save(), assignment.save(), homework.save(), Content.insertMany(homeworkContents)]);
 
     await createUpdateDelete<ClassroomDocument & Id>(
       route,
@@ -197,8 +200,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
-                contents: idsToString([bookAssignment!.content, ...idsToString(homeworkContents)]),
+                ...expectedChatFormat,
+                contents: [expect.any(String), expect.any(String), ...homeworkContents.map(c => c._id.toString())],
               }),
             ],
           },
@@ -226,7 +229,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { id: classroom._id.toString(), sourceId: question._id.toString() },
           expectedMinFormat: {
             ...expectedMinFormat,
-            chats: [expect.objectContaining({ ...expectChatFormat, contents: [content._id.toString()] })],
+            chats: [
+              expect.objectContaining({
+                ...expectedChatFormat,
+                contents: [expect.any(String), ...question.contents.map(c => c.toString())],
+              }),
+            ],
           },
         },
       ],
@@ -246,13 +254,13 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       Tenant.findById(tenantId!),
     ]);
 
-    const [{ _id: book, subjects, level }] = books.sort(shuffle);
-    const [subject] = subjects.sort(shuffle);
+    const { _id: book, subjects, level } = randomItem(books);
+    const subject = randomItem(subjects);
     const schoolClass = `${level.toString().slice(-1)}-Y`;
 
     const newStudents = genClassroomUsers(tenantId!, tenant!.school!, level, schoolClass, 20);
-    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevel!._id.toString(), schoolClass, 3);
-    await User.create([...newStudents, ...newTeachers]);
+    const newTeachers = genClassroomUsers(tenantId!, tenant!.school!, teacherLevel!._id, schoolClass, 3);
+    await User.insertMany([...newStudents, ...newTeachers]);
 
     const [student0, student1, ...students] = newStudents;
     const [teacher0, ...teachers] = newTeachers;
@@ -288,8 +296,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         },
         {
           action: 'updateStudents', // tenantAdmin update teachers
-          data: { userIds: idsToString(students) },
-          expectedMinFormat: { ...expectedMinFormat, students: idsToString(students) },
+          data: { userIds: students.map(s => s._id.toString()) },
+          expectedMinFormat: { ...expectedMinFormat, students: students.map(s => s._id.toString()) },
         },
         {
           action: 'addRemark', // tenantAdmin adds remark
@@ -311,10 +319,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         {
           action: 'updateTeachers', // teacher update teachers
           headers: { 'Jest-User': teacher0!._id },
-          data: { userIds: idsToString(teachers) },
+          data: { userIds: teachers.map(t => t._id.toString()) },
           expectedMinFormat: {
             ...expectedMinFormat,
-            teachers: [teacher0._id.toString(), ...idsToString(teachers)],
+            teachers: [teacher0._id.toString(), ...teachers.map(t => t._id.toString())],
           },
         },
         {
@@ -350,9 +358,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
+                ...expectedChatFormat,
                 contents: [expect.any(String)],
-                ...expectedMember(teacher0._id.toString()),
+                members: [expectedMember(teacher0._id, [])],
               }),
             ],
           },
@@ -374,7 +382,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expect.any(String), expect.any(String)] }),
             ],
           },
         },
@@ -384,11 +392,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expect.any(String), expect.any(String)] }),
               expect.objectContaining({
-                ...expectChatFormat,
+                ...expectedChatFormat,
                 contents: [expect.any(String)],
-                ...expectedMember(student0._id.toString()),
+                members: [expectedMember(student0._id, [])],
               }),
             ],
           },
@@ -408,11 +416,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expect.any(String), expect.any(String)] }),
               expect.objectContaining({
-                ...expectChatFormat,
+                ...expectedChatFormat,
                 contents: [expect.any(String)],
-                ...expectedMember(student0._id.toString()),
+                members: [expectedMember(student0._id, [])],
               }),
             ],
           },
@@ -423,11 +431,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expect.any(String), expect.any(String)] }),
               expect.objectContaining({
-                ...expectChatFormat,
+                ...expectedChatFormat,
                 contents: [expect.any(String)],
-                ...expectedMember(student0._id.toString()),
+                members: [expectedMember(student0._id, [])],
               }),
             ],
           },
@@ -439,18 +447,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
-                contents: [expect.any(String), expect.any(String)],
-                members: [
-                  {
-                    _id: expectedIdFormat,
-                    user: teacher0._id.toString(),
-                    flags: [flag],
-                    lastViewedAt: expect.any(String),
-                  },
-                ],
+                ...expectedChatFormat,
+                members: [expectedMember(teacher0._id, [flag]), expectedMember(student0._id, [])],
               }),
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+              expect.objectContaining(expectedChatFormat),
             ],
           },
         },
@@ -461,13 +461,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
-                contents: [expect.any(String), expect.any(String)],
-                members: [
-                  { _id: expectedIdFormat, user: teacher0._id.toString(), flags: [], lastViewedAt: expect.any(String) },
-                ],
+                ...expectedChatFormat,
+                members: [expectedMember(teacher0._id, []), expectedMember(student0._id, [])],
               }),
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+              expect.objectContaining(expectedChatFormat),
             ],
           },
         },
@@ -479,14 +476,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
+                ...expectedChatFormat,
                 contents: [expect.any(String), expect.any(String)],
-                members: [
-                  { _id: expectedIdFormat, user: teacher0._id.toString(), flags: [], lastViewedAt: expect.any(String) },
-                  { _id: expectedIdFormat, user: student0._id.toString(), flags: [], lastViewedAt: expect.any(String) },
-                ],
+                members: [expectedMember(teacher0._id, []), expectedMember(student0._id, [])],
               }),
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expect.any(String)] }),
             ],
           },
         },
@@ -496,8 +490,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, title: FAKE }),
-              expect.objectContaining(expectChatFormat),
+              expect.objectContaining({ ...expectedChatFormat, title: FAKE }),
+              expect.objectContaining(expectedChatFormat),
             ],
           },
         },
@@ -506,7 +500,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { chatId },
           expectedMinFormat: {
             ...expectedMinFormat,
-            chats: [expect.objectContaining(expectChatFormat), expect.objectContaining(expectChatFormat)],
+            chats: [expect.objectContaining(expectedChatFormat), expect.objectContaining(expectedChatFormat)],
           },
         },
       ],

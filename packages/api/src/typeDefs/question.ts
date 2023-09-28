@@ -33,16 +33,14 @@ export default gql`
 
     addQuestionBidContent(id: ID!, content: String!, userId: String!): Question!
     addQuestionBidders(id: ID!, userIds: [String!]!): Question!
-    addQuestionContentByStudent(id: ID!, content: String!, visibleAfter: DateInput): Question!
-    addQuestionContentByTutor(id: ID!, content: String!, visibleAfter: DateInput, timeSpent: Int): Question!
-    addQuestionContentWithDispute(id: ID!, content: String!, visibleAfter: DateInput): Question!
+    addQuestionContent(id: ID!, content: String!, visibleAfter: DateInput, timeSpent: Int, flag: String): Question!
     assignQuestionTutor(id: ID!, userId: String!): Question!
     clearQuestionFlag(id: ID!, flag: String!): Question!
     closeQuestion(id: ID!): Question!
     cloneQuestion(id: ID!, userIds: [String!]!): Question!
     removeQuestion(id: ID!): StatusResponse!
     setQuestionFlag(id: ID!, flag: String!): Question!
-    updateQuestionLastViewedAt(id: String!, timestamp: DateInput): Question!
+    updateQuestionLastViewedAt(id: ID!, timestamp: DateInput): Question!
   }
 
   type Question {
@@ -80,7 +78,7 @@ export default gql`
 
     price: Int
     bidders: [String!]!
-    bidContents: [[String!]]!
+    bids: [Bid!]!
     paidAt: Float
 
     correctness: Int!

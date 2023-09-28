@@ -32,12 +32,7 @@ export default {
     addQuestion: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
     addQuestionBidContent: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addBidContent(req, args)),
     addQuestionBidders: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addBidders(req, args)),
-    addQuestionContentByStudent: async (_: unk, args: unk, { req }: Ctx) =>
-      tryCatch(() => addContent(req, args, 'addContentByStudent')),
-    addQuestionContentByTutor: async (_: unk, args: unk, { req }: Ctx) =>
-      tryCatch(() => addContent(req, args, 'addContentByTutor')),
-    addQuestionContentWithDispute: async (_: unk, args: unk, { req }: Ctx) =>
-      tryCatch(() => addContent(req, args, 'dispute')),
+    addQuestionContent: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addContent(req, args)),
     assignQuestionTutor: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => assignTutor(req, args)),
     clearQuestionFlag: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateFlag(req, args, 'clearFlag')),
     closeQuestion: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => close(req, args)),

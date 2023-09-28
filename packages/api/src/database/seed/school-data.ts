@@ -7,13 +7,14 @@
  */
 
 import type { Locale } from '@argonne/common';
+import type { Types } from 'mongoose';
 
 type SchoolData = {
   district: string;
   code: string;
   name: Locale;
   phones?: string[];
-  levels?: string[];
+  levels?: Types.ObjectId[];
   website?: string;
 };
 

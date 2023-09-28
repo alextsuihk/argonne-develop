@@ -10,14 +10,12 @@ import analyticRoutes from './api/analytics';
 import announcementRoutes from './api/announcements';
 import assignmentRoutes from './api/assignments';
 import authRoutes from './api/auth';
-import authServiceRoutes from './api/auth-services';
 import bookRoutes from './api/books';
 import chatGroupsRoutes from './api/chat-groups';
 import classroomRoutes from './api/classrooms';
 import contactRoutes from './api/contacts';
 import contentRoutes from './api/contents';
 import districtRoutes from './api/districts';
-import emailRoutes from './api/email';
 import homeworkRoutes from './api/homeworks';
 // import jobRoutes from './api/jobs'; // TODO:
 import levelRoutes from './api/levels';
@@ -27,9 +25,9 @@ import presignedUrlRoutes from './api/presigned-url';
 import publisherRoutes from './api/publishers';
 import questionRoutes from './api/questions';
 import roleRoutes from './api/roles';
+import satelliteRoutes from './api/satellite';
 import schoolRoutes from './api/schools';
 import subjectRoutes from './api/subjects';
-import syncRoutes from './api/sync';
 import systemRoutes from './api/systems';
 import tagRoutes from './api/tags';
 import tenantBindingRoutes from './api/tenant-binding';
@@ -63,18 +61,16 @@ export default (app: Application): void => {
     if (configLoader.config.restfulFullAccess) {
       app.use('/api/assignments', assignmentRoutes);
       app.use('/api/auth', authRoutes);
-      app.use('/api/auth-services', authServiceRoutes);
       app.use('/api/classrooms', classroomRoutes);
       app.use('/api/contacts', contactRoutes);
       app.use('/api/contents', contentRoutes);
-      app.use('/api/emails', emailRoutes);
       app.use('/api/homeworks', homeworkRoutes);
       // app.use('/api/jobs', jobRoutes); //TODO
       app.use('/api/password', passwordRoutes);
       app.use('/api/presigned-urls', presignedUrlRoutes);
       app.use('/api/questions', questionRoutes);
       app.use('/api/roles', roleRoutes);
-      app.use('/api/sync', syncRoutes);
+      app.use('/api/satellite', satelliteRoutes);
       app.use('/api/tenant-binding', tenantBindingRoutes);
       app.use('/api/tutor-rankings', tutorRankingRoutes);
       app.use('/api/tutors', tutorRoutes);

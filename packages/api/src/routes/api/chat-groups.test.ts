@@ -6,27 +6,29 @@
 import { LOCALE } from '@argonne/common';
 
 import {
-  expectChatFormat,
+  expectedChatFormat,
+  expectedDateFormat,
   expectedIdFormat,
   expectedMember,
   FAKE,
   FAKE2,
   genChatGroup,
   genQuestion,
-  idsToString,
+  genUser,
   jestPutObject,
   jestRemoveObject,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
+  randomItem,
 } from '../../jest';
+import Book from '../../models/book';
 import type { ChatDocument } from '../../models/chat';
-import type { ChatGroupDocument } from '../../models/chat-group';
+import type { ChatGroupDocument, Id } from '../../models/chat-group';
 import ChatGroup from '../../models/chat-group';
 import Level from '../../models/level';
 import Tenant from '../../models/tenant';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -40,19 +42,19 @@ const route = 'chat-groups';
 export const expectedMinFormat = {
   _id: expectedIdFormat,
   flags: expect.any(Array),
-  // tenant: expect.any(String),
+  // tenant: expectedIdFormat,
   // title: expect.any(String),
   // description: expect.any(String),
   membership: expect.toBeOneOf(Object.keys(CHAT_GROUP.MEMBERSHIP)),
-  admins: expect.arrayContaining([expect.any(String)]),
-  users: expect.arrayContaining([expect.any(String)]),
+  admins: expect.arrayContaining([expectedIdFormat]),
+  users: expect.arrayContaining([expectedIdFormat]),
   marshals: expect.any(Array),
-  chats: expect.arrayContaining([expect.objectContaining(expectChatFormat)]),
+  chats: expect.arrayContaining([expect.objectContaining(expectedChatFormat)]),
   // key: expect.any(String),
   // url: expect.any(String),
   // logoUrl: expect.any(String),
-  createdAt: expect.any(String),
-  updatedAt: expect.any(String),
+  createdAt: expectedDateFormat(),
+  updatedAt: expectedDateFormat(),
 
   contentsToken: expect.any(String),
 };
@@ -63,8 +65,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   let normalUser: (UserDocument & Id) | null;
   let normalUsers: (UserDocument & Id)[] | null;
   let tenantId: string | null;
-  let url: string;
-  let url2: string;
+  let url: string | undefined;
+  let url2: string | undefined;
 
   beforeAll(async () => {
     ({ adminUser, normalUser, normalUsers, tenantId } = await jestSetup(['admin', 'normal']));
@@ -73,18 +75,15 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should response an array of data when getMany & getById (as adminUser)', async () => {
     const chatGroups = await ChatGroup.find({
+      users: adminUser!._id,
       key: { $exists: true },
       flags: CHAT_GROUP.FLAG.ADMIN,
       deletedAt: { $exists: false },
     }).lean();
     if (!chatGroups.length) throw 'There is no admin message chatGroup';
 
-    await getById(
-      route,
-      { 'Jest-User': adminUser!._id },
-      { ...expectedMinFormat, key: expect.any(String) },
-      { id: randomId(chatGroups) },
-    );
+    const id = randomItem(chatGroups)._id.toString();
+    await getById(route, { 'Jest-User': adminUser!._id }, { ...expectedMinFormat, key: expect.any(String) }, { id });
   });
 
   test('should pass when getMany & getById', async () =>
@@ -100,15 +99,13 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     getUnauthenticated(`${route}/${normalUser!._id}`, {}));
 
   test('should pass when joining a book chatGroup (as teacher)', async () => {
-    const [bookChatGroups, teacherLevel] = await Promise.all([
-      ChatGroup.find({ flags: CHAT_GROUP.FLAG.BOOK }).lean(),
+    const [books, teacherLevel] = await Promise.all([
+      Book.find({ deletedAt: { $exists: false } }).lean(),
       Level.findOne({ code: 'TEACHER' }).lean(),
     ]);
 
-    const teacher = normalUsers!.find(
-      ({ schoolHistories }) =>
-        schoolHistories[0] && schoolHistories[0].level.toString() === teacherLevel!._id.toString(),
-    )!;
+    const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
+    if (!teacher) throw 'No teacher is found';
 
     await createUpdateDelete<ChatGroupDocument & Id>(
       route,
@@ -120,7 +117,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: { ...expectedMinFormat, admins: [], chats: expect.any(Array) }, // bookChatGroups have NO admins
         },
       ],
-      { overrideId: randomId(bookChatGroups) },
+      { overrideId: randomItem(books).chatGroup.toString() },
     );
   });
 
@@ -130,14 +127,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       Level.findOne({ code: 'TEACHER' }).lean(),
     ]);
 
-    const nonTeacher = normalUsers!.find(
-      ({ schoolHistories }) =>
-        schoolHistories[0] && schoolHistories[0].level.toString() !== teacherLevel?._id.toString(),
-    );
+    const nonTeacher = normalUsers!.find(({ schoolHistories }) => !schoolHistories[0]?.level.equals(teacherLevel!._id));
+    if (!nonTeacher) throw 'No valid non-teacher available for testing';
 
     await createUpdateDelete<ChatGroupDocument & Id>(
       route,
-      { 'Jest-User': nonTeacher!._id },
+      { 'Jest-User': nonTeacher._id },
       [
         {
           action: 'joinBook',
@@ -148,33 +143,33 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           },
         },
       ],
-      { overrideId: randomId(bookChatGroups) },
+      { overrideId: randomItem(bookChatGroups)._id.toString() },
     );
   });
 
   test('should pass when post two messages toAdmin', async () => {
     // create a new user without any admin-message
-    const user = await User.create({ tenants: [tenantId], name: `name-${FAKE}` });
-    const userId = user._id.toString();
+    const user = genUser(tenantId!);
+    await user.save();
 
     const { adminIds } = await User.findSystemAccountIds();
 
     const expectedMinFormatEx = {
       ...expectedMinFormat,
-      key: `USER#${userId}`,
+      key: `USER#${user._id}`,
       title: expect.any(String),
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
-      admins: adminIds,
-      users: [...adminIds, userId],
+      admins: adminIds.map(a => a.toString()),
+      users: [...adminIds, user._id].map(u => u.toString()),
     };
 
-    await createUpdateDelete<ChatGroupDocument & Id>(route, { 'Jest-User': userId }, [
+    await createUpdateDelete<ChatGroupDocument & Id>(route, { 'Jest-User': user._id }, [
       {
         action: 'create#toAdmin',
         data: { content: FAKE },
         expectedMinFormat: {
           ...expectedMinFormatEx,
-          chats: [expect.objectContaining({ ...expectChatFormat, ...expectedMember(userId) })],
+          chats: [expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(user._id, [])] })],
         },
       },
       {
@@ -183,8 +178,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         expectedMinFormat: {
           ...expectedMinFormatEx,
           chats: [
-            expect.objectContaining({ ...expectChatFormat, ...expectedMember(userId) }),
-            expect.objectContaining({ ...expectChatFormat, ...expectedMember(userId) }),
+            expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(user._id, [])] }),
+            expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(user._id, [])] }),
           ],
         },
       },
@@ -196,17 +191,15 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should pass when post two messages toAlex', async () => {
     // create a brand new user without previous messages with Alex
-    const [{ alexId }, user] = await Promise.all([
-      User.findSystemAccountIds(),
-      User.create({ tenants: [tenantId], name: `name-${FAKE}` }),
-    ]);
+    const user = genUser(tenantId!);
+    const [{ alexId }] = await Promise.all([User.findSystemAccountIds(), user.save()]);
     const userId = user._id.toString();
 
     const expectedMinFormatEx = {
       ...expectedMinFormat,
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
       admins: [],
-      users: [userId, alexId],
+      users: alexId ? [userId, alexId.toString()] : [userId],
       key: `ALEX#USER#${userId}`,
     };
 
@@ -216,7 +209,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         data: { content: FAKE },
         expectedMinFormat: {
           ...expectedMinFormatEx,
-          chats: [expect.objectContaining({ ...expectChatFormat, ...expectedMember(userId) })],
+          chats: [expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(userId, [])] })],
         },
       },
       {
@@ -225,8 +218,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         expectedMinFormat: {
           ...expectedMinFormatEx,
           chats: [
-            expect.objectContaining({ ...expectChatFormat, ...expectedMember(userId) }),
-            expect.objectContaining({ ...expectChatFormat, ...expectedMember(userId) }),
+            expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(userId, [])] }),
+            expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(userId, [])] }),
           ],
         },
       },
@@ -237,36 +230,29 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   });
 
   const messageToTenantAdmins = async (to: 'toTenantAdmins' | 'toTenantCounselors' | 'toTenantSupports') => {
-    const [tenant, user] = await Promise.all([
-      Tenant.findByTenantId(tenantId!),
-      User.create({ tenants: [tenantId], name: `name-${FAKE}` }),
-    ]);
-
-    const userId = user._id.toString();
+    const user = genUser(tenantId!);
+    const [tenant] = await Promise.all([Tenant.findByTenantId(tenantId!), user.save()]);
 
     const users =
-      to === 'toTenantAdmins'
-        ? idsToString(tenant!.admins)
-        : to === 'toTenantCounselors'
-        ? idsToString(tenant!.counselors)
-        : idsToString(tenant!.supports);
+      to === 'toTenantAdmins' ? tenant!.admins : to === 'toTenantCounselors' ? tenant!.counselors : tenant!.supports;
 
     const expectedMinFormatEx = {
       ...expectedMinFormat,
+      flags: [`TENANT_${to.replace('toTenant', '').toUpperCase()}`],
       tenant: tenantId!,
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
       admins: [],
-      users: [userId, ...users],
-      key: `TENANT#${tenantId}-USER#${userId} (${to.replace('toTenant', '').toLowerCase()})`,
+      users: [user._id, ...users].map(u => u.toString()),
+      key: `TENANT#${tenantId}-USER#${user._id} (${to.replace('toTenant', '').toLowerCase()})`,
     };
 
-    await createUpdateDelete<ChatGroupDocument & Id>(route, { 'Jest-User': userId }, [
+    await createUpdateDelete<ChatGroupDocument & Id>(route, { 'Jest-User': user._id }, [
       {
         action: `create#${to}`,
         data: { tenantId, content: FAKE },
         expectedMinFormat: {
           ...expectedMinFormatEx,
-          chats: [expect.objectContaining({ ...expectChatFormat, ...expectedMember(userId) })],
+          chats: [expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(user._id, [])] })],
         },
       },
       {
@@ -275,8 +261,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         expectedMinFormat: {
           ...expectedMinFormatEx,
           chats: [
-            expect.objectContaining({ ...expectChatFormat, ...expectedMember(userId) }),
-            expect.objectContaining({ ...expectChatFormat, ...expectedMember(userId) }),
+            expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(user._id, [])] }),
+            expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(user._id, [])] }),
           ],
         },
       },
@@ -294,14 +280,15 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect.assertions(3);
 
     // create a new user (without identifiedAt)
-    const user = await User.create({ tenants: [tenantId!], name: `tutor-${FAKE}` });
+    const user = genUser(tenantId!);
+    await user.save();
 
     await createUpdateDelete(route, { 'Jest-User': user._id }, [
       {
         action: 'create',
         data: {
           tenantId: tenantId!,
-          userIds: idsToString(normalUsers!.splice(-2)),
+          userIds: normalUsers!.splice(-2).map(u => u._id.toString()),
           membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
         },
         expectedResponse: {
@@ -320,6 +307,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const { chatGroup } = genChatGroup(tenantId!, normalUser!._id); // create a destination chatGroup
     const { chatGroup: source, chat, content } = genChatGroup(tenantId!, normalUser!._id); // create source (another) chatGroup
+    chatGroup.chats = []; // drop & ignore chats
     await Promise.all([chatGroup.save(), source.save(), chat.save(), content.save()]);
 
     await createUpdateDelete<ChatGroupDocument & Id>(
@@ -333,7 +321,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
+                ...expectedChatFormat,
                 _id: chat._id.toString(),
                 contents: [content._id.toString()],
               }),
@@ -365,7 +353,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, contents: [expectedIdFormat, content._id.toString()] }), // first contentId is auto-gen message
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat, content._id.toString()] }), // first contentId is auto-gen message
             ],
           },
         },
@@ -380,7 +368,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should pass the full suite', async () => {
     expect.assertions(3 * 21);
 
-    const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = idsToString(normalUsers!);
+    const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = normalUsers!.map(u => u._id.toString());
 
     [url, url2] = await Promise.all([jestPutObject(ownerId), jestPutObject(ownerId)]);
 
@@ -405,19 +393,19 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...create,
             tenant: tenantId!,
             admins: [ownerId],
-            users: [ownerId, user0Id],
+            users: [ownerId, user0Id].sort(),
             chats: [],
           },
         },
         {
           action: 'updateUsers', // even for CLOSED-MEMBERSHIP, chatGroup.admins could update users (remove user0, add user1, user2)
-          data: { userIds: [user1Id, user2Id] },
-          expectedMinFormat: { ...expectedMinFormat, users: [ownerId, user1Id, user2Id], chats: [] },
+          data: { userIds: [user1Id, user2Id].sort() },
+          expectedMinFormat: { ...expectedMinFormat, users: [ownerId, user1Id, user2Id].sort(), chats: [] },
         },
         {
           action: 'updateAdmins', // promote user1 to be admin
           data: { userIds: [user1Id] },
-          expectedMinFormat: { ...expectedMinFormat, admins: [ownerId, user1Id], chats: [] },
+          expectedMinFormat: { ...expectedMinFormat, admins: [ownerId, user1Id].sort(), chats: [] },
         },
         {
           action: 'join', // should fail when joining CLOSED membership
@@ -452,7 +440,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           action: 'updateUsers', // for NORMAL-MEMBERSHIP, any existing user could add new users
           headers: { 'Jest-User': user2Id },
           data: { userIds: [ownerId, user0Id, user1Id, user3Id] },
-          expectedMinFormat: { ...expectedMinFormat, users: [user2Id, ownerId, user0Id, user1Id, user3Id], chats: [] },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            users: [user2Id, ownerId, user0Id, user1Id, user3Id].sort(),
+            chats: [],
+          },
         },
         {
           action: 'join', // should fail when joining NORMAL membership
@@ -474,7 +466,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: {},
           expectedMinFormat: {
             ...expectedMinFormat,
-            users: [user2Id, ownerId, user0Id, user1Id, user3Id, joinId],
+            users: [...[user2Id, ownerId, user0Id, user1Id, user3Id].sort(), joinId], // joinId just appends to the end
             chats: [],
           },
         },
@@ -491,9 +483,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
-                contents: [expect.any(String)],
-                ...expectedMember(ownerId),
+                ...expectedChatFormat,
+                contents: [expectedIdFormat],
+                members: [expectedMember(ownerId, [])],
               }),
             ],
           },
@@ -503,7 +495,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
 
     const chatGroupId = chatGroup!._id.toString();
-    const [chatId] = idsToString(chatGroup!.chats);
+    const chatId = (chatGroup!.chats as (ChatDocument & Id)[])[0]!._id.toString();
 
     const chatGroup2 = await createUpdateDelete<ChatGroupDocument & Id>(
       route,
@@ -514,9 +506,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { chatId, content: FAKE },
           expectedMinFormat: {
             ...expectedMinFormat,
-            chats: [
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
-            ],
+            chats: [expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat, expectedIdFormat] })],
           },
         },
         {
@@ -525,11 +515,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat, expectedIdFormat] }),
               expect.objectContaining({
-                ...expectChatFormat,
-                contents: [expect.any(String)],
-                ...expectedMember(user2Id),
+                ...expectedChatFormat,
+                contents: [expectedIdFormat],
+                members: [expectedMember(user2Id, [])],
               }),
             ],
           },
@@ -538,7 +528,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       { overrideId: chatGroupId, skipAssertion: true },
     );
 
-    const contentIds = idsToString((chatGroup2!.chats[0] as ChatDocument & Id).contents);
+    const contentIds = (chatGroup2!.chats[0] as ChatDocument & Id).contents.map(c => c.toString());
     const flag = CHAT.MEMBER.FLAG.IMPORTANT;
 
     await createUpdateDelete<ChatGroupDocument & Id>(
@@ -551,8 +541,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat, expectedIdFormat] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat] }),
             ],
           },
         },
@@ -562,8 +552,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String), expect.any(String)] }),
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat, expectedIdFormat] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat] }),
             ],
           },
         },
@@ -574,11 +564,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
-                contents: [expect.any(String), expect.any(String)],
-                members: [{ _id: expectedIdFormat, user: ownerId, flags: [flag], lastViewedAt: expect.any(String) }],
+                ...expectedChatFormat,
+                contents: [expectedIdFormat, expectedIdFormat],
+                members: [expectedMember(ownerId, [flag]), expectedMember(user2Id, [])],
               }),
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat] }),
             ],
           },
         },
@@ -589,11 +579,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
-                contents: [expect.any(String), expect.any(String)],
-                members: [{ _id: expectedIdFormat, user: ownerId, flags: [], lastViewedAt: expect.any(String) }],
+                ...expectedChatFormat,
+                contents: [expectedIdFormat, expectedIdFormat],
+                members: [expectedMember(ownerId, []), expectedMember(user2Id, [])],
               }),
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat] }),
             ],
           },
         },
@@ -605,14 +595,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             chats: [
               expect.objectContaining({
-                ...expectChatFormat,
-                contents: [expect.any(String), expect.any(String)],
-                members: [
-                  { _id: expectedIdFormat, user: ownerId, flags: [], lastViewedAt: expect.any(String) },
-                  { _id: expectedIdFormat, user: user2Id, flags: [], lastViewedAt: expect.any(String) },
-                ],
+                ...expectedChatFormat,
+                contents: [expectedIdFormat, expectedIdFormat],
+                members: [expectedMember(ownerId, []), expectedMember(user2Id, [])],
               }),
-              expect.objectContaining({ ...expectChatFormat, contents: [expect.any(String)] }),
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat] }),
             ],
           },
         },
@@ -622,8 +609,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           expectedMinFormat: {
             ...expectedMinFormat,
             chats: [
-              expect.objectContaining({ ...expectChatFormat, title: FAKE }),
-              expect.objectContaining(expectChatFormat),
+              expect.objectContaining({ ...expectedChatFormat, title: FAKE }),
+              expect.objectContaining(expectedChatFormat),
             ],
           },
         },
@@ -632,7 +619,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { chatId },
           expectedMinFormat: {
             ...expectedMinFormat,
-            chats: [expect.objectContaining(expectChatFormat), expect.objectContaining(expectChatFormat)],
+            chats: [expect.objectContaining(expectedChatFormat), expect.objectContaining(expectedChatFormat)],
           },
         },
       ],

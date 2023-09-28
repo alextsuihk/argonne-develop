@@ -15,14 +15,14 @@ import { baseDefinition } from './common';
 export type { Id } from './common';
 
 export interface TutorDocument extends BaseDocument {
-  tenant: string | Types.ObjectId;
-  user: string | Types.ObjectId;
+  tenant: Types.ObjectId;
+  user: Types.ObjectId;
 
   intro?: string;
   officeHour?: string;
 
   credentials: {
-    _id: string | Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
+    _id: Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
     title: string;
     proofs: string[];
     updatedAt: Date;
@@ -30,12 +30,12 @@ export interface TutorDocument extends BaseDocument {
   }[];
 
   specialties: {
-    _id: string | Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
+    _id: Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
     note?: string;
     lang: string;
 
-    level: string | Types.ObjectId;
-    subject: string | Types.ObjectId;
+    level: Types.ObjectId;
+    subject: Types.ObjectId;
     deletedAt?: Date;
 
     priority?: number;

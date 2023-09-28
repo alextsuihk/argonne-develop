@@ -13,26 +13,35 @@ import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import { redisClient } from '../redis';
-import { randomString } from '../utils/helper';
-import type { BaseDocument } from './common';
+import { isTestMode } from '../utils/environment';
+import type { BaseDocument, Id } from './common';
 import { baseDefinition } from './common';
 
 export type { Id } from './common';
 
-// type Task = 'bulkUpdate' | 'grade' | 'report' | 'sync';
-type Task = 'censor' | 'grade' | 'report' | 'sync';
+export type CensorTask = {
+  type: 'censor';
+  tenantId: Types.ObjectId;
+  userId: string;
+  userLocale: string;
+  model: 'chat-groups' | 'questions';
+  parentId: string;
+  contentId: Types.ObjectId;
+};
 
-export type Args = Record<string, string | string[]>;
+type GradeTask = { type: 'grade'; tenantId: Types.ObjectId; assignmentId: Types.ObjectId };
+type RemoveObjectTask = { type: 'removeObject'; url: string };
+type ReportTask = { type: 'report'; file: string; args: unknown[]; tenantId?: Types.ObjectId };
+export type Task = CensorTask | GradeTask | RemoveObjectTask | ReportTask;
 
 export interface JobDocument extends BaseDocument {
   status: (typeof LOCALE.DB_TYPE.JOB.STATUS)[number];
   title?: string;
-  owners?: string[] | Types.ObjectId[];
+  owners: Types.ObjectId[];
   task: Task;
-  args: Args;
   priority: number;
   startAfter: Date;
-  retry: number;
+  attempt: number;
 
   startedAt?: Date;
   progress: number;
@@ -40,21 +49,15 @@ export interface JobDocument extends BaseDocument {
   result?: string; // CSV format
 }
 
-interface QueueData {
-  title?: string;
-  owners?: string[] | Types.ObjectId[];
-  task: Task;
-  args: Args;
-  startAfter?: Date;
-  priority?: number;
-}
-
+type Queue = (
+  task: Task & Partial<Pick<JobDocument & Id, 'owners' | 'priority' | 'startAfter' | 'title'>>,
+) => Promise<JobDocument & Id>;
 interface JobModel extends Model<JobDocument> {
-  queue(data: QueueData): Promise<string>;
+  queue: Queue;
 }
 
 const { JOB, SYSTEM } = LOCALE.DB_ENUM;
-const { DEFAULTS } = configLoader;
+const { config, DEFAULTS } = configLoader;
 
 const searchFields: string[] = ['title']; // non internationalized fields
 const searchLocaleFields: string[] = []; // internationalized fields
@@ -63,7 +66,7 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-export const NEW_JOB_CHANNEL = `new-job-${randomString()}`;
+export const NEW_JOB_CHANNEL = 'JOB';
 
 const jobSchema = new Schema<JobDocument>(
   {
@@ -72,11 +75,10 @@ const jobSchema = new Schema<JobDocument>(
     status: { type: String, default: JOB.STATUS.QUEUED, index: true },
     title: String,
     owners: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
-    task: String,
-    args: Schema.Types.Mixed,
+    task: Schema.Types.Mixed,
     priority: { type: Number, default: 0 },
     startAfter: { type: Date, default: Date.now, index: true },
-    retry: { type: Number, default: 0 },
+    attempt: { type: Number, default: 0 }, // 0: just queued, not yet attempt to execute
 
     startedAt: Date,
     progress: { type: Number, default: 0 },
@@ -86,15 +88,28 @@ const jobSchema = new Schema<JobDocument>(
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-jobSchema.static('queue', async (data: QueueData): Promise<string> => {
-  const { title, owners, task, args, startAfter = new Date(), priority = 0 } = data;
+const queue: Queue = async data => {
+  const { title, owners, startAfter = new Date(), priority = 0, ...task } = data;
 
-  // TODO: check if task is valid
-  const job = await Job.create({ status: JOB.STATUS.QUEUED, title, owners, task, args, startAfter, priority });
+  const job = await Job.create<Partial<JobDocument>>({
+    status: task.type === 'grade' && config.mode === 'SATELLITE' ? JOB.STATUS.IGNORE : JOB.STATUS.QUEUED, // ONLY Hub grades homework !
+    ...(title && { title }),
+    owners,
+    task,
+    startAfter,
+    priority,
+    ...(isTestMode && {
+      status: JOB.STATUS.COMPLETED,
+      progress: 100,
+      completedAt: new Date(),
+      result: 'Skip Execution in Test Mode',
+    }),
+  });
 
-  await redisClient.publish(NEW_JOB_CHANNEL, job._id.toString());
-  return job._id.toString();
-});
+  if (!isTestMode) await redisClient.publish(NEW_JOB_CHANNEL, job._id.toString());
+  return job.toObject();
+};
+jobSchema.static('queue', queue);
 
 jobSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Job = model<JobDocument, JobModel>('Job', jobSchema);

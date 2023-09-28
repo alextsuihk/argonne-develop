@@ -13,19 +13,19 @@ const router = Router();
  * @route   GET api/auth/:action
  * @desc    consolidate all GET requests to single requestHandler
  */
-router.get('/:action', authController.getAction);
+router.get('/:action/:extra?', authController.getHandler);
 
 /**
  * @route   POST api/auth/:action
  * @desc    consolidate all POST requests to single requestHandler
  */
-router.post('/:action', authController.postAction);
+router.post('/:action', authController.postHandler);
 
 /**
  * @route   PATCH api/auth/:action
  * @desc    update authUser
  */
-router.patch('/:action?', authController.updateById);
+router.patch('/:action', authController.updateHandler);
 
 //! Note: code below is old approach, moving logic into authController
 

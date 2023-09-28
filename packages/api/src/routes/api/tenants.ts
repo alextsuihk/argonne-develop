@@ -9,7 +9,7 @@ import configLoader from '../../config/config-loader';
 import tenantController from '../../controllers/tenant';
 
 const router = Router();
-const { createNew, findMany, updateById, removeById } = tenantController;
+const { findMany, postHandler, removeById, updateById } = tenantController;
 
 /**
  * @route   GET api/tenants
@@ -22,7 +22,7 @@ if (configLoader.config.restfulFullAccess) {
    * @route   POST api/tenants
    * @desc    add a new tenant
    */
-  router.post('/', createNew);
+  router.post('/:action?', postHandler);
 
   /**
    * @route   PATCH api/tenants

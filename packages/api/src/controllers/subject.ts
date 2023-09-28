@@ -5,15 +5,17 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
+import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import Level from '../models/level';
 import type { Id, SubjectDocument } from '../models/subject';
 import Subject, { searchableFields } from '../models/subject';
-import { messageToAdmin } from '../utils/chat';
+import { messageToAdmins } from '../utils/chat';
 import log from '../utils/log';
-import { notifySync } from '../utils/notify-sync';
+import type { BulkWrite } from '../utils/notify-sync';
+import { syncToAllSatellites } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -23,9 +25,12 @@ const { MSG_ENUM } = LOCALE;
 const { assertUnreachable, auth, DELETED_LOCALE, hubModeOnly, paginateSort, searchFilter, select } = common;
 const { idSchema, querySchema, remarkSchema, removeSchema, subjectSchema } = yupSchema;
 
-const validateLevel = async (levels: string[]): Promise<void> => {
-  const levelCount = await Level.countDocuments({ _id: { $in: levels } });
-  if (levels.length !== levelCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+// (helper) validate levelId
+const validateIds = async (levelIds: string[]) => {
+  const levels = await Level.find({ _id: { $in: levelIds }, deletedAt: { $exists: false } }).lean();
+  if (levels.length !== levelIds.length) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  return { levels: levels.map(lvl => lvl._id) };
 };
 
 /**
@@ -44,7 +49,7 @@ const addRemark = async (req: Request, args: unknown): Promise<SubjectDocument &
 
   if (!subject) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await DatabaseEvent.log(userId, `/subjects/${id}`, 'REMARK', { remark });
+  await DatabaseEvent.log(userId, `/subjects/${id}`, 'REMARK', { args });
   return subject;
 };
 
@@ -53,11 +58,11 @@ const addRemark = async (req: Request, args: unknown): Promise<SubjectDocument &
  */
 const create = async (req: Request, args: unknown): Promise<SubjectDocument & Id> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
-  const { subject: fields } = await subjectSchema.validate(args);
-  await validateLevel(fields.levels);
+  const { userId, userLocale } = auth(req, 'ADMIN');
+  const { subject: inputFields } = await subjectSchema.validate(args);
+  const { levels } = await validateIds(inputFields.levels);
 
-  const subject = new Subject<Partial<SubjectDocument>>(fields);
+  const subject = new Subject<Partial<SubjectDocument>>({ ...inputFields, levels });
   const { _id, name } = subject;
 
   const common = `(ENG): ${name.enUS}, (繁)：${name.zhHK}, (简)：${name.zhCN}) [/subjects/${_id}]`;
@@ -69,9 +74,11 @@ const create = async (req: Request, args: unknown): Promise<SubjectDocument & Id
 
   await Promise.all([
     subject.save(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/subjects/${_id}`, 'CREATE', { subject: fields }),
-    notifySync('CORE', {}, { subjectIds: [_id] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/subjects/${_id}`, 'CREATE', { args }),
+    syncToAllSatellites({
+      bulkWrite: { subjects: [{ insertOne: { document: subject.toObject() } }] satisfies BulkWrite<SubjectDocument> },
+    }),
   ]);
 
   return subject;
@@ -148,17 +155,13 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
+  const { userId, userLocale } = auth(req, 'ADMIN');
   const { id, remark } = await removeSchema.validate(args);
 
+  const update: UpdateQuery<SubjectDocument> = { name: DELETED_LOCALE, levels: [], deletedAt: new Date() };
   const original = await Subject.findOneAndUpdate(
     { _id: id, deletedAt: { $exists: false } },
-    {
-      name: DELETED_LOCALE,
-      levels: [],
-      deletedAt: new Date(),
-      ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-    },
+    { ...update, ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
   ).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
@@ -170,9 +173,11 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   };
 
   await Promise.all([
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/subjects/${id}`, 'DELETE', { remark, original }),
-    notifySync('CORE', {}, { subjectIds: [id] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/subjects/${id}`, 'DELETE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: { subjects: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<SubjectDocument> },
+    }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -197,15 +202,16 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 const update = async (req: Request, args: unknown): Promise<SubjectDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
-  const { id, subject: fields } = await idSchema.concat(subjectSchema).validate(args);
+  const { id, subject: inputFields } = await idSchema.concat(subjectSchema).validate(args);
 
-  const original = await Promise.all([
+  const [original, { levels }] = await Promise.all([
     Subject.findOne({ _id: id, deletedAt: { $exists: false } }).lean(),
-    validateLevel(fields.levels),
+    validateIds(inputFields.levels),
   ]);
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const common = `(ENG): ${fields.name.enUS}, (繁): ${fields.name.zhHK}, (简): ${fields.name.zhCN}) [/subjects/${id}]`;
+  const update: UpdateQuery<SubjectDocument> = { ...inputFields, levels };
+  const common = `(ENG): ${update.name.enUS}, (繁): ${update.name.zhHK}, (简): ${update.name.zhCN}) [/subjects/${id}]`;
   const msg = {
     enUS: `A subject is updated: ${common}.`,
     zhCN: `刚更新学科：${common}。`,
@@ -213,13 +219,16 @@ const update = async (req: Request, args: unknown): Promise<SubjectDocument & Id
   };
 
   const [subject] = await Promise.all([
-    Subject.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/subjects/${id}`, 'UPDATE', { original, update: fields }),
-    notifySync('CORE', {}, { subjectIds: [id] }),
+    Subject.findByIdAndUpdate(id, update, { fields: select(userRoles), new: true }).lean(),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/subjects/${id}`, 'UPDATE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: { subjects: [{ updateOne: { filter: { _id: id }, update } }] },
+    }),
   ]);
+
   if (subject) return subject;
-  log('error', `subjectController:update()`, { id, ...fields }, userId);
+  log('error', `subjectController:update()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 

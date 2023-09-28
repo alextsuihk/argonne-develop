@@ -13,6 +13,7 @@ export default gql`
     addTenant(tenant: TenantCoreInput!): Tenant!
     addTenantRemark(id: ID!, remark: String): Tenant!
     removeTenant(id: ID!, remark: String): StatusResponse!
+    sendTestEmail(email: String!): StatusResponse!
     updateTenantCore(id: ID!, tenant: TenantCoreInput!): Tenant!
     updateTenantExtra(id: ID!, tenant: TenantExtraInput!): Tenant!
   }

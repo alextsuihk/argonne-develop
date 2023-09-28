@@ -2,17 +2,19 @@
  * Sendmail: Invoice Tutor Tenant
  */
 
+import { LOCALE } from '@argonne/common';
+
 import configLoader from '../../config/config-loader';
 import Tenant from '../../models/tenant';
 import User from '../../models/user';
-import { messageToAdmin } from '../chat';
-import { idsToString } from '../helper';
+import { startChatGroup } from '../chat';
 import { sendmail } from './common';
 
+const { enUS } = LOCALE.DB_ENUM.SYSTEM.LOCALE;
 const { config } = configLoader;
 
 export default async (): Promise<void> => {
-  const [paidTenants, { accountId }] = await Promise.all([
+  const [paidTenants, { alexId }] = await Promise.all([
     Tenant.find({ school: { $exists: false } }).lean(),
     User.findSystemAccountIds(),
   ]);
@@ -30,7 +32,10 @@ export default async (): Promise<void> => {
 
     await Promise.all([
       sendmail(emails, subject, body, `${__filename}: [ ${subject} ] ${JSON.stringify(emails)}`),
-      messageToAdmin(body, accountId, 'enUS', [], idsToString(users), `TENANT#${tenant._id}`),
+      alexId && startChatGroup(tenant._id, body, [alexId, ...tenant.admins], enUS, `TENANT-INVOICING#${tenant._id}`),
     ]);
+
+    await sendmail(emails, subject, body, `${__filename}: [ ${subject} ] ${JSON.stringify(emails)}`);
+    await new Promise(resolve => setTimeout(resolve, 5000)); // add some delay, not to stress email server
   }
 };

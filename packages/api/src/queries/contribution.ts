@@ -16,7 +16,6 @@ export const CONTRIBUTION_FIELDS = gql`
     title
     description
     contributors {
-      _id
       user
       name
       school

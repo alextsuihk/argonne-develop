@@ -23,7 +23,8 @@ export default gql`
     avatarUrl: String
     name: String!
     identifiedAt: Float
-    status: String!
+    availability: String!
     tenants: [String!]!
+    updatedAt: Float!
   }
 `;

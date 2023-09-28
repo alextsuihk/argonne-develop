@@ -31,7 +31,6 @@ export default gql`
   }
 
   type Contributor {
-    _id: ID!
     user: String!
     name: String!
     school: String!

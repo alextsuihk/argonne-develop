@@ -4,53 +4,42 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import { addDays, sub } from 'date-fns';
+import { addDays } from 'date-fns';
 
 import {
   apolloExpect,
   ApolloServer,
-  expectChatFormat,
+  expectedDateFormat,
   expectedIdFormat,
   expectedMember,
   FAKE,
   FAKE2,
-  genChatGroup,
-  genQuestion,
-  idsToString,
-  jestPutObject,
-  jestRemoveObject,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
+  randomItem,
   shuffle,
   testServer,
 } from '../jest';
 import Classroom from '../models/classroom';
-import Level from '../models/level';
 import Question from '../models/question';
 import Subject from '../models/subject';
-import Tenant from '../models/tenant';
 import type { Id, UserDocument } from '../models/user';
-import User from '../models/user';
 import {
   ADD_QUESTION,
   ADD_QUESTION_BID_CONTENT,
   ADD_QUESTION_BIDDERS,
-  ADD_QUESTION_CONTENT_BY_STUDENT,
-  ADD_QUESTION_CONTENT_BY_TUTOR,
-  ADD_QUESTION_CONTENT_WITH_DISPUTE,
+  ADD_QUESTION_CONTENT,
   ASSIGN_QUESTION_TUTOR,
-  CLEAR_QUESTION_CHAT_FLAG,
+  CLEAR_QUESTION_FLAG,
   CLONE_QUESTION,
   CLOSE_QUESTION,
   GET_QUESTION,
   GET_QUESTIONS,
   REMOVE_QUESTION,
-  SET_QUESTION_CHAT_FLAG,
+  SET_QUESTION_FLAG,
   UPDATE_QUESTION_LAST_VIEWED_AT,
 } from '../queries/question';
-import { schoolYear } from '../utils/helper';
 
 const { MSG_ENUM } = LOCALE;
 const { QUESTION } = LOCALE.DB_ENUM;
@@ -66,38 +55,38 @@ describe('ChatGroup GraphQL', () => {
     _id: expectedIdFormat,
     flags: expect.any(Array),
 
-    tenant: expect.any(String),
+    tenant: expectedIdFormat,
     parent: expect.toBeOneOf([null, expect.any(String)]),
 
-    student: expect.any(String),
-    tutor: expect.toBeOneOf([null, expect.any(String)]),
+    student: expectedIdFormat,
+    tutor: expect.toBeOneOf([null, expectedIdFormat]),
     marshals: expect.any(Array),
     members: expect.any(Array),
     deadline: expect.any(Number),
 
-    classroom: expect.toBeOneOf([null, expect.any(String)]),
-    level: expect.any(String),
-    subject: expect.any(String),
-    book: expect.toBeOneOf([null, expect.any(String)]),
+    classroom: expect.toBeOneOf([null, expectedIdFormat]),
+    level: expectedIdFormat,
+    subject: expectedIdFormat,
+    book: expect.toBeOneOf([null, expectedIdFormat]),
     bookRev: expect.toBeOneOf([null, expect.any(String)]),
     chapter: expect.toBeOneOf([null, expect.any(String)]),
     assignmentIdx: expect.toBeOneOf([null, expect.any(Number)]),
     dynParamIdx: expect.toBeOneOf([null, expect.any(Number)]),
-    homework: expect.toBeOneOf([null, expect.any(String)]),
+    homework: expect.toBeOneOf([null, expectedIdFormat]),
 
     lang: expect.any(String),
 
-    contents: expect.any(Array),
+    contents: expect.arrayContaining([expectedIdFormat]), // must have at least one content
     timeSpent: expect.toBeOneOf([null, expect.any(Number)]),
 
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
-    deletedAt: expect.toBeOneOf([null, expect.any(Number)]),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
+    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
 
     price: expect.toBeOneOf([null, expect.any(Number)]),
     bidders: expect.any(Array),
-    bidContents: expect.any(Array), // contents: string[][]
-    paidAt: expect.toBeOneOf([null, expect.any(Number)]),
+    bids: expect.any(Array),
+    paidAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
 
     correctness: expect.any(Number),
     explicitness: expect.any(Number),
@@ -117,19 +106,16 @@ describe('ChatGroup GraphQL', () => {
   test('should response a single object when GET One by ID (as student, bidder & tutor)', async () => {
     expect.assertions(6);
 
-    const questions = await Question.find({ tenant: tenantId!, deletedAt: { $exists: false } }).lean();
+    const q = await Question.find({ tenant: tenantId!, deletedAt: { $exists: false } }).lean();
+    const questions = q.sort(shuffle);
 
     //! note: normalUsers are even odd or even indexed (1/2 of all users)
-    const studentQuestion = questions.sort(shuffle).find(q => idsToString(normalUsers!).includes(q.student.toString()));
-    const student = normalUsers!.find(u => u._id.toString() === studentQuestion?.student.toString());
-    const bidderQuestion = questions
-      .sort(shuffle)
-      .find(q => idsToString(q.bidders).some(bidder => idsToString(normalUsers!).includes(bidder)));
-    const bidder = normalUsers!.find(u => idsToString(bidderQuestion?.bidders ?? []).includes(u._id.toString()));
-    const tutorQuestion = questions
-      .sort(shuffle)
-      .find(q => q.tutor && idsToString(normalUsers!).includes(q.tutor.toString()));
-    const tutor = normalUsers!.find(u => u._id.toString() === tutorQuestion?.tutor?.toString());
+    const studentQuestion = questions.find(q => normalUsers!.some(u => u._id.equals(q.student)));
+    const student = normalUsers!.find(u => studentQuestion?.student.equals(u._id));
+    const bidderQuestion = questions.find(q => q.bidders.some(bidder => normalUsers!.some(u => u._id.equals(bidder))));
+    const bidder = normalUsers!.find(u => bidderQuestion?.bidders?.some(b => b.equals(u._id)));
+    const tutorQuestion = questions.find(q => normalUsers!.some(u => q.tutor && u._id.equals(q.tutor)));
+    const tutor = normalUsers!.find(u => tutorQuestion?.tutor?.equals(u._id));
 
     if (!student || !studentQuestion || !bidder || !bidderQuestion || !tutor || !tutorQuestion)
       throw `Insufficient Data for test: ${student?._id}, ${bidder?._id}, ${tutor?._id}`;
@@ -192,36 +178,35 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.INVALID_ID}`);
   });
 
-  test('should when student creates and removes a question', async () => {
+  test('should pass when student creates and removes a question', async () => {
     expect.assertions(2);
 
-    const userIds = idsToString(normalUsers!).slice(-2);
+    const userIds = normalUsers!
+      .slice(-2)
+      .map(u => u._id.toString())
+      .sort();
 
     const subject = await Subject.findOne({ deletedAt: { $exists: false } }).lean();
-    const level = randomId(subject!.levels);
-    const [lang] = Object.keys(QUESTION.LANG).sort(shuffle);
+    const create = {
+      level: randomItem(subject!.levels)._id.toString(),
+      subject: subject!._id.toString(),
+      lang: randomItem(Object.keys(QUESTION.LANG)),
+    };
     const createdRes = await normalServer!.executeOperation({
       query: ADD_QUESTION,
-      variables: {
-        tenantId,
-        userIds,
-        deadline: addDays(Date.now(), 2),
-        level,
-        subject: subject!._id.toString(),
-        lang,
-        content: FAKE,
-      },
+      variables: { ...create, tenantId, userIds, deadline: addDays(Date.now(), 2), content: FAKE },
     });
 
     apolloExpect(createdRes, 'data', {
       addQuestion: {
         ...expectedFormat,
+        ...create,
         tenant: tenantId!,
         parent: null,
         tutor: null,
         bidders: userIds,
-        bidContents: [[], []],
-        members: [{ user: normalUsers![0]._id.toString(), flags: [], lastViewedAt: expect.any(Number) }],
+        bids: [],
+        members: [expectedMember(normalUsers![0]._id, [], true)],
         contents: [expect.any(String)],
       },
     });
@@ -231,36 +216,32 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(removedRes, 'data', { removeQuestion: { code: MSG_ENUM.COMPLETED } });
   });
 
-  test('should when student creates and auto-assigns to a single tutor, but not allow to remove', async () => {
+  test('should pass when student creates and auto-assigns to a single tutor, but not allow to remove', async () => {
     expect.assertions(2);
 
-    const [tutorId] = idsToString(normalUsers!).slice(-1);
+    const tutorId = normalUsers!.at(-1)!._id.toString(); // pick the last user
 
     const subject = await Subject.findOne({ deletedAt: { $exists: false } }).lean();
-    const level = randomId(subject!.levels);
-    const [lang] = Object.keys(QUESTION.LANG).sort(shuffle);
+    const create = {
+      level: randomItem(subject!.levels)._id.toString(),
+      subject: subject!._id.toString(),
+      lang: randomItem(Object.keys(QUESTION.LANG)),
+    };
     const createdRes = await normalServer!.executeOperation({
       query: ADD_QUESTION,
-      variables: {
-        tenantId,
-        userIds: [tutorId],
-        deadline: addDays(Date.now(), 2),
-        level,
-        subject: subject!._id.toString(),
-        lang,
-        content: FAKE,
-      },
+      variables: { ...create, tenantId, userIds: [tutorId], deadline: addDays(Date.now(), 2), content: FAKE },
     });
 
     apolloExpect(createdRes, 'data', {
       addQuestion: {
         ...expectedFormat,
+        ...create,
         tenant: tenantId!,
         parent: null,
         tutor: tutorId,
         bidders: [],
-        bidContents: [],
-        members: [{ user: normalUsers![0]._id.toString(), flags: [], lastViewedAt: expect.any(Number) }],
+        bids: [],
+        members: [expectedMember(normalUsers![0]._id, [], true)],
         contents: [expect.any(String)],
       },
     });
@@ -270,49 +251,52 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(removedRes, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
   });
 
-  test.only('should pass the full suite', async () => {
+  test('should pass the full suite', async () => {
     // expect.assertions(21);
+
+    const flag = QUESTION.MEMBER.FLAG.IMPORTANT;
 
     const classrooms = await Classroom.find({ tenant: tenantId! }).lean();
 
     const classroom = classrooms
       .sort(shuffle)
-      .find(({ students }) => idsToString(students).find(studentId => idsToString(normalUsers!).includes(studentId)));
-    if (!classroom) throw 'no valid classroom for testing';
+      .find(({ students }) => students.find(student => normalUsers!.some(u => u._id.equals(student))));
+    const student = normalUsers!.find(user => classroom?.students.some(s => s.equals(user._id)));
+    if (!classroom || !student) throw `no valid classroom (${classroom?._id}) or student for testing`;
 
-    const student = normalUsers!.find(user => idsToString(classroom.students).includes(user._id.toString()));
-    const studentId = student!._id.toString();
+    const studentId = student._id.toString();
     const studentServer = testServer(student);
 
-    const [newBidderId, ...bidderIds] = idsToString(normalUsers!)
-      .filter(user => user.toString() !== studentId)
-      .slice(-3);
+    const [newBidderId, ...bidderIds] = normalUsers!
+      .filter(user => !user._id.equals(studentId))
+      .slice(-3)
+      .map(u => u._id.toString())
+      .sort();
 
     const create = {
-      tenantId,
-      userIds: bidderIds,
-      deadline: addDays(Date.now(), 2),
+      classroom: classroom._id.toString(),
       level: classroom.level.toString(),
       subject: classroom.subject.toString(),
-      ...(classroom.books.length && { book: randomId(classroom.books) }),
-      ...(prob(0.5) && { bookRev: `rev-${FAKE}` }),
-      lang: randomId(Object.keys(QUESTION.LANG)),
+      ...(classroom.books.length && { book: randomItem(classroom.books).toString() }),
+      ...(classroom.books.length && prob(0.5) && { bookRev: `rev-${FAKE}` }),
+      lang: randomItem(Object.keys(QUESTION.LANG)),
     };
-    const createdRes = await studentServer.executeOperation({
-      query: ADD_QUESTION,
-      variables: { ...create, content: FAKE },
-    });
 
     // student submits a question
+    const createdRes = await studentServer.executeOperation({
+      query: ADD_QUESTION,
+      variables: { ...create, tenantId, userIds: bidderIds, deadline: addDays(Date.now(), 2), content: FAKE },
+    });
     apolloExpect(createdRes, 'data', {
       addQuestion: {
         ...expectedFormat,
+        ...create,
         tenant: tenantId!,
         parent: null,
         tutor: null,
         bidders: bidderIds,
-        bidContents: bidderIds.map(_ => []),
-        members: [{ user: studentId, flags: [], lastViewedAt: expect.any(Number) }],
+        bids: [],
+        members: [expectedMember(studentId, [], true)],
         contents: [expect.any(String)],
       },
     });
@@ -320,367 +304,227 @@ describe('ChatGroup GraphQL', () => {
     const newId: string = createdRes.data!.addQuestion._id;
 
     // (second) bidder1 addBidContent
-    const bidder1Server = testServer(normalUsers!.find(user => user._id.toString() === bidderIds[1]));
-    const addBidContent11Res = await bidder1Server.executeOperation({
+    const bidder1Server = testServer(normalUsers!.find(user => user._id.equals(bidderIds[1])));
+    const bidder1AddBidContentRes = await bidder1Server.executeOperation({
       query: ADD_QUESTION_BID_CONTENT,
       variables: { id: newId, content: FAKE, userId: bidderIds[1] },
     });
-    apolloExpect(addBidContent11Res, 'data', {
+    apolloExpect(bidder1AddBidContentRes, 'data', {
       addQuestionBidContent: {
         ...expectedFormat,
         bidders: [bidderIds[1]], // bidder1 only sees himself
-        bidContents: [[expect.any(String)]], // bidder1 only sees his bidContents
+        bids: [
+          { bidder: bidderIds[1], price: expect.toBeOneOf([null, expect.any(Number)]), contents: [expect.any(String)] },
+        ], // bidder1 only sees his bidContents
       },
     });
 
     // student addBidContent to bidder0 (first bidder)
-    const studentAddBidContent0 = await studentServer.executeOperation({
+    const studentAddBidContentToBidder0Res = await studentServer.executeOperation({
       query: ADD_QUESTION_BID_CONTENT,
       variables: { id: newId, content: FAKE2, userId: bidderIds[0] },
     });
-    apolloExpect(studentAddBidContent0, 'data', {
+    apolloExpect(studentAddBidContentToBidder0Res, 'data', {
       addQuestionBidContent: {
         ...expectedFormat,
         bidders: bidderIds, // student able to see all bidders
-        bidContents: [[expect.any(String)], [expect.any(String)]],
+        bids: [
+          { bidder: bidderIds[1], price: expect.toBeOneOf([null, expect.any(Number)]), contents: [expect.any(String)] },
+          { bidder: bidderIds[0], price: expect.toBeOneOf([null, expect.any(Number)]), contents: [expect.any(String)] },
+        ],
       },
     });
 
     // student addBidders
-    const studentAddBidders = await studentServer.executeOperation({
+    const studentAddBiddersRes = await studentServer.executeOperation({
       query: ADD_QUESTION_BIDDERS,
       variables: { id: newId, userIds: [newBidderId] },
     });
-    apolloExpect(studentAddBidders, 'data', {
+    apolloExpect(studentAddBiddersRes, 'data', {
       addQuestionBidders: {
         ...expectedFormat,
         bidders: [...bidderIds, newBidderId], // student able to see all bidders
       },
     });
 
-    // students addBidContent to new bidder
-    const studentAddBidContent2 = await studentServer.executeOperation({
+    // new Bidder addBidContent
+    const newBidderServer = testServer(normalUsers!.find(user => user._id.equals(newBidderId)));
+    const newBidderAddBidContentRes = await newBidderServer.executeOperation({
       query: ADD_QUESTION_BID_CONTENT,
       variables: { id: newId, content: FAKE2, userId: newBidderId },
     });
-    apolloExpect(studentAddBidContent2, 'data', {
+    apolloExpect(newBidderAddBidContentRes, 'data', {
       addQuestionBidContent: {
         ...expectedFormat,
-        bidContents: [[expect.any(String)], [expect.any(String)], [expect.any(String)]],
+        bidders: [newBidderId], // bidder only see himself
+        bids: [
+          { bidder: newBidderId, price: expect.toBeOneOf([null, expect.any(Number)]), contents: [expect.any(String)] }, // bidder only see his bidContents
+        ],
       },
     });
 
     // student addBidContent to bidder1 (second bidder)
-    const studentAddBidContent1 = await studentServer.executeOperation({
+    const studentAddBidContentToBidder1Res = await studentServer.executeOperation({
       query: ADD_QUESTION_BID_CONTENT,
       variables: { id: newId, content: FAKE2, userId: bidderIds[1] },
     });
-    apolloExpect(studentAddBidContent1, 'data', {
+    apolloExpect(studentAddBidContentToBidder1Res, 'data', {
       addQuestionBidContent: {
         ...expectedFormat,
-        bidContents: [[expect.any(String)], [expect.any(String), expect.any(String)], [expect.any(String)]], // second bidder has two bidContents
+        bids: [
+          {
+            bidder: bidderIds[1],
+            price: expect.toBeOneOf([null, expect.any(Number)]),
+            contents: [expect.any(String), expect.any(String)], // total of 2 bidContentIds
+          },
+          { bidder: bidderIds[0], price: expect.toBeOneOf([null, expect.any(Number)]), contents: [expect.any(String)] },
+          { bidder: newBidderId, price: expect.toBeOneOf([null, expect.any(Number)]), contents: [expect.any(String)] },
+        ],
       },
     });
 
     // student addContent
-    const studentAddContent0 = await studentServer.executeOperation({
-      query: ADD_QUESTION_CONTENT_BY_STUDENT,
+    const studentAddContentRes = await studentServer.executeOperation({
+      query: ADD_QUESTION_CONTENT,
       variables: { id: newId, content: FAKE },
     });
-    apolloExpect(studentAddContent0, 'data', {
-      addQuestionContentByStudent: { ...expectedFormat, contents: [expect.any(String), expect.any(String)] }, // two contents now
+    apolloExpect(studentAddContentRes, 'data', {
+      addQuestionContent: { ...expectedFormat, contents: [expect.any(String), expect.any(String)] }, // two contentIds: initial & this one
     });
 
     // student assignTutor (to newBidderId)
-    const studentAssignTutor = await studentServer.executeOperation({
+    const studentAssignTutorRes = await studentServer.executeOperation({
       query: ASSIGN_QUESTION_TUTOR,
       variables: { id: newId, userId: newBidderId },
     });
-    apolloExpect(studentAssignTutor, 'data', {
+    apolloExpect(studentAssignTutorRes, 'data', {
       assignQuestionTutor: { ...expectedFormat, tutor: newBidderId },
     });
 
-    // newBidderId addContent
-    const bidder2Server = testServer(normalUsers!.find(user => user._id.toString() === newBidderId));
+    //  tutor (newBidderId) addContent
+    const tutorAddContentRes = await newBidderServer.executeOperation({
+      query: ADD_QUESTION_CONTENT,
+      variables: { id: newId, content: FAKE },
+    });
+    apolloExpect(tutorAddContentRes, 'data', {
+      addQuestionContent: {
+        ...expectedFormat,
+        tutor: newBidderId,
+        contents: [expect.any(String), expect.any(String), expect.any(String)], // 3 contentIds
+      },
+    });
 
-    // bidder0 is able to see ONLY two contents
+    // student addContent (add more)
+    const studentAddContentRes2 = await studentServer.executeOperation({
+      query: ADD_QUESTION_CONTENT,
+      variables: { id: newId, content: FAKE },
+    });
+    apolloExpect(studentAddContentRes2, 'data', {
+      addQuestionContent: {
+        ...expectedFormat,
+        tutor: newBidderId,
+        contents: [expect.any(String), expect.any(String), expect.any(String), expect.any(String)], // 4 contentIds
+      },
+    });
 
-    //   const [, , , user2, , join] = normalUsers!;
-    //   const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = idsToString(normalUsers!);
-    //   const ownerServer = normalServer!;
+    // bidder1 is no longer able to addBidContent
+    const bidder1AddBidContentRes2 = await bidder1Server.executeOperation({
+      query: ADD_QUESTION_BID_CONTENT,
+      variables: { id: newId, content: FAKE, userId: bidderIds[1] },
+    });
+    apolloExpect(bidder1AddBidContentRes2, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
 
-    //   [url, url2] = await Promise.all([jestPutObject(normalUser!._id), jestPutObject(normalUser!._id)]);
+    // bidder1 is only able to add TWO contents
+    const bidder1GetOneRes = await bidder1Server.executeOperation({ query: GET_QUESTION, variables: { id: newId } });
+    apolloExpect(bidder1GetOneRes, 'data', {
+      question: {
+        ...expectedFormat,
+        tutor: studentId, // override with studentId (tutorId is hidden)
+        contents: [expect.any(String), expect.any(String)], // only see TWO contentIds (before tutor is assigned)
+      },
+    });
 
-    //   const create = {
-    //     membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
-    //     ...(prob(0.5) && { title: FAKE }),
-    //     ...(prob(0.5) && { description: FAKE }),
-    //     ...(prob(0.5) && { logoUrl: url }),
-    //   };
+    // student update lastViewedAt
+    const studentUpdateLastViewedAtRes = await studentServer.executeOperation({
+      query: UPDATE_QUESTION_LAST_VIEWED_AT,
+      variables: { id: newId },
+    });
+    apolloExpect(studentUpdateLastViewedAtRes, 'data', {
+      updateQuestionLastViewedAt: { ...expectedFormat, members: [expectedMember(studentId, [], true)] },
+    });
 
-    //   // (owner) add ChatGroup
-    //   const createdRes = await ownerServer.executeOperation({
-    //     query: ADD_CHAT_GROUP,
-    //     variables: { tenantId: tenantId!, userIds: [user0Id], ...create },
-    //   });
-    //   apolloExpect(createdRes, 'data', {
-    //     addChatGroup: {
-    //       ...expectedFormat,
-    //       ...create,
-    //       tenant: tenantId!,
-    //       admins: [ownerId],
-    //       users: [ownerId, user0Id],
-    //       chats: [],
-    //     },
-    //   });
-    //   const newId: string = createdRes.data!.addChatGroup._id;
+    // tutor (newBidder) set flag
+    const newBidderSetFlagRes = await newBidderServer.executeOperation({
+      query: SET_QUESTION_FLAG,
+      variables: { id: newId, flag },
+    });
+    apolloExpect(newBidderSetFlagRes, 'data', {
+      setQuestionFlag: {
+        ...expectedFormat,
+        members: [expectedMember(studentId, [], true), expectedMember(newBidderId, [flag], true)],
+      },
+    });
 
-    //   // (owner) update users
-    //   const updateUsersRes = await ownerServer.executeOperation({
-    //     query: UPDATE_CHAT_GROUP_USERS,
-    //     variables: { id: newId, userIds: [user1Id, user2Id] },
-    //   });
-    //   apolloExpect(updateUsersRes, 'data', {
-    //     updateChatGroupUsers: {
-    //       ...expectedFormat,
-    //       admins: [ownerId],
-    //       users: [ownerId, user1Id, user2Id],
-    //       chats: [],
-    //     },
-    //   });
+    const bidder1UpdateLastViewedAtRes = await bidder1Server.executeOperation({
+      query: UPDATE_QUESTION_LAST_VIEWED_AT,
+      variables: { id: newId },
+    });
+    apolloExpect(bidder1UpdateLastViewedAtRes, 'data', {
+      updateQuestionLastViewedAt: {
+        ...expectedFormat,
+        members: [expectedMember(studentId, [], true), expectedMember(bidderIds[1], [], true)], // only able to see student & himself
+      },
+    });
 
-    //   // (owner) promote 1 user to admin
-    //   const addAdminsRes = await ownerServer.executeOperation({
-    //     query: UPDATE_CHAT_GROUP_ADMINS,
-    //     variables: { id: newId, userIds: [user1Id] },
-    //   });
-    //   apolloExpect(addAdminsRes, 'data', {
-    //     updateChatGroupAdmins: { ...expectedFormat, admins: [ownerId, user1Id], chats: [] },
-    //   });
+    // student update lastViewedAt (again)
+    const studentUpdateLastViewedAtRes2 = await studentServer.executeOperation({
+      query: UPDATE_QUESTION_LAST_VIEWED_AT,
+      variables: { id: newId },
+    });
+    apolloExpect(studentUpdateLastViewedAtRes2, 'data', {
+      updateQuestionLastViewedAt: {
+        ...expectedFormat,
+        members: [
+          expectedMember(studentId, [], true),
+          expectedMember(newBidderId, [flag], true),
+          expectedMember(bidderIds[1], [], true),
+        ],
+      },
+    });
 
-    //   // (joinUser) should fail when joining CLOSED membership
-    //   const joinServer = testServer(join);
-    //   const joinFailRes = await joinServer.executeOperation({ query: JOIN_CHAT_GROUP, variables: { id: newId } });
-    //   apolloExpect(joinFailRes, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
+    // tutor (newBidder) clear flag
+    const newBidderClearFlagRes = await newBidderServer.executeOperation({
+      query: CLEAR_QUESTION_FLAG,
+      variables: { id: newId, flag },
+    });
+    apolloExpect(newBidderClearFlagRes, 'data', {
+      clearQuestionFlag: {
+        ...expectedFormat,
+        members: [expectedMember(studentId, [], true), expectedMember(newBidderId, [], true)],
+      },
+    });
 
-    //   // (user2) for CLOSED-MEMBERSHIP, should fail when regular user (user2) tries to addUsers
-    //   const user2Server = testServer(user2);
-    //   const addUsersFailRes = await user2Server.executeOperation({
-    //     query: UPDATE_CHAT_GROUP_USERS,
-    //     variables: { id: newId, userIds: [user3Id] },
-    //   });
-    //   apolloExpect(addUsersFailRes, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
+    // student close question
+    const studentCloseQuestionRes = await studentServer.executeOperation({
+      query: CLOSE_QUESTION,
+      variables: { id: newId },
+    });
+    apolloExpect(studentCloseQuestionRes, 'data', {
+      closeQuestion: { ...expectedFormat, flags: expect.arrayContaining([QUESTION.FLAG.CLOSED]) },
+    });
 
-    //   // (owner) change to NORMAL-MEMBERSHIP & remove logoUrl
-    //   const updatedRes = await ownerServer.executeOperation({
-    //     query: UPDATE_CHAT_GROUP,
-    //     variables: { id: newId, title: FAKE2, description: FAKE2, membership: CHAT_GROUP.MEMBERSHIP.NORMAL, logoUrl: '' },
-    //   });
-    //   apolloExpect(updatedRes, 'data', {
-    //     updateChatGroup: {
-    //       ...expectedFormat,
-    //       title: FAKE2,
-    //       description: FAKE2,
-    //       membership: CHAT_GROUP.MEMBERSHIP.NORMAL,
-    //       logoUrl: null, // logoUrl is removed
-    //       chats: [],
-    //     },
-    //   });
-
-    //   // (user2) for NORMAL-MEMBERSHIP, any existing user could add new users
-    //   const addUsers2Res = await user2Server.executeOperation({
-    //     query: UPDATE_CHAT_GROUP_USERS,
-    //     variables: { id: newId, userIds: [ownerId, user0Id, user1Id, user3Id] },
-    //   });
-    //   apolloExpect(addUsers2Res, 'data', {
-    //     updateChatGroupUsers: {
-    //       ...expectedFormat,
-    //       users: [user2Id, ownerId, user0Id, user1Id, user3Id],
-    //       chats: [],
-    //     },
-    //   });
-
-    //   // (joinUser) should fail when joining non PUBLIC membership
-    //   const joinFail2Res = await joinServer.executeOperation({ query: JOIN_CHAT_GROUP, variables: { id: newId } });
-    //   apolloExpect(joinFail2Res, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
-
-    //   // (owner) change to PUBLIC-MEMBERSHIP & add logoUrl back
-    //   const updated2Res = await ownerServer.executeOperation({
-    //     query: UPDATE_CHAT_GROUP,
-    //     variables: { id: newId, membership: CHAT_GROUP.MEMBERSHIP.PUBLIC, logoUrl: url2 },
-    //   });
-    //   apolloExpect(updated2Res, 'data', {
-    //     updateChatGroup: { ...expectedFormat, membership: CHAT_GROUP.MEMBERSHIP.PUBLIC, logoUrl: url2, chats: [] },
-    //   });
-
-    //   // (joinUser) should pass when joining a PUBLIC-MEMBERSHIP
-    //   const joinRes = await joinServer.executeOperation({ query: JOIN_CHAT_GROUP, variables: { id: newId } });
-    //   apolloExpect(joinRes, 'data', {
-    //     joinChatGroup: {
-    //       ...expectedFormat,
-    //       users: [user2Id, ownerId, user0Id, user1Id, user3Id, joinId],
-    //       chats: [],
-    //     },
-    //   });
-
-    //   // (joinUser) should pass when leaving chatGroup
-    //   const leaveRes = await joinServer.executeOperation({ query: LEAVE_CHAT_GROUP, variables: { id: newId } });
-    //   apolloExpect(leaveRes, 'data', { leaveChatGroup: { code: MSG_ENUM.COMPLETED } });
-
-    //   // (owner) addContentWithNewChat
-    //   const addContentWithNewChatRes = await ownerServer.executeOperation({
-    //     query: ADD_CHAT_GROUP_CONTENT_WITH_NEW_CHAT,
-    //     variables: { id: newId, content: FAKE },
-    //   });
-    //   apolloExpect(addContentWithNewChatRes, 'data', {
-    //     addChatGroupContentWithNewChat: {
-    //       ...expectedFormat,
-    //       chats: [{ ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(ownerId, true) }],
-    //     },
-    //   });
-    //   const chatId = addContentWithNewChatRes.data!.addChatGroupContentWithNewChat.chats[0]._id.toString();
-
-    //   // (user2) addContent (append to first chat)
-    //   const addContentRes = await user2Server.executeOperation({
-    //     query: ADD_CHAT_GROUP_CONTENT,
-    //     variables: { id: newId, chatId, content: FAKE },
-    //   });
-    //   apolloExpect(addContentRes, 'data', {
-    //     addChatGroupContent: {
-    //       ...expectedFormat,
-    //       chats: [{ ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] }],
-    //     },
-    //   });
-    //   const contentIds = addContentRes.data?.addChatGroupContent.chats[0].contents;
-
-    //   // (user2) addContentWithNewChat
-    //   const addContentWithNewChatRes2 = await user2Server.executeOperation({
-    //     query: ADD_CHAT_GROUP_CONTENT_WITH_NEW_CHAT,
-    //     variables: { id: newId, content: FAKE },
-    //   });
-    //   apolloExpect(addContentWithNewChatRes2, 'data', {
-    //     addChatGroupContentWithNewChat: {
-    //       ...expectedFormat,
-    //       chats: [
-    //         { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
-    //         { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(user2Id, true) },
-    //       ],
-    //     },
-    //   });
-
-    //   // (owner) recall first content of first chat (his owner content)
-    //   const recallContentRes = await ownerServer.executeOperation({
-    //     query: RECALL_CHAT_GROUP_CONTENT,
-    //     variables: { id: newId, chatId, contentId: contentIds[0] },
-    //   });
-    //   apolloExpect(recallContentRes, 'data', {
-    //     recallChatGroupContent: {
-    //       ...expectedFormat,
-    //       chats: [
-    //         { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
-    //         { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(user2Id, true) },
-    //       ],
-    //     },
-    //   });
-
-    //   // (owner) recall second content of first chat (user2's content)
-    //   const blockContentRes = await ownerServer.executeOperation({
-    //     query: BLOCK_CHAT_GROUP_CONTENT,
-    //     variables: { id: newId, chatId, contentId: contentIds[1] },
-    //   });
-    //   apolloExpect(blockContentRes, 'data', {
-    //     blockChatGroupContent: {
-    //       ...expectedFormat,
-    //       chats: [
-    //         { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
-    //         { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(user2Id, true) },
-    //       ],
-    //     },
-    //   });
-
-    //   // (owner) set chat flag
-    //   const flag = CHAT.MEMBER.FLAG.IMPORTANT;
-    //   const setChatFlagRes = await ownerServer.executeOperation({
-    //     query: SET_CHAT_GROUP_CHAT_FLAG,
-    //     variables: { id: newId, chatId, flag },
-    //   });
-    //   apolloExpect(setChatFlagRes, 'data', {
-    //     setChatGroupChatFlag: {
-    //       ...expectedFormat,
-    //       chats: [
-    //         {
-    //           ...expectChatFormatEx,
-    //           contents: [expect.any(String), expect.any(String)],
-    //           members: [{ user: ownerId, flags: [flag], lastViewedAt: expect.any(Number) }],
-    //         },
-    //         { ...expectChatFormatEx, contents: [expect.any(String)] },
-    //       ],
-    //     },
-    //   });
-
-    //   // (owner) clear chat flag
-    //   const clearChatFlagRes = await ownerServer.executeOperation({
-    //     query: CLEAR_CHAT_GROUP_CHAT_FLAG,
-    //     variables: { id: newId, chatId, flag },
-    //   });
-    //   apolloExpect(clearChatFlagRes, 'data', {
-    //     clearChatGroupChatFlag: {
-    //       ...expectedFormat,
-    //       chats: [
-    //         {
-    //           ...expectChatFormatEx,
-    //           contents: [expect.any(String), expect.any(String)],
-    //           members: [{ user: ownerId, flags: [], lastViewedAt: expect.any(Number) }],
-    //         },
-    //         { ...expectChatFormatEx, contents: [expect.any(String)] },
-    //       ],
-    //     },
-    //   });
-
-    //   // (user2) update chat lastViewedAt
-    //   const updateLatViewedAtRes = await user2Server.executeOperation({
-    //     query: UPDATE_CHAT_GROUP_CHAT_LAST_VIEWED_AT,
-    //     variables: { id: newId, chatId },
-    //   });
-    //   apolloExpect(updateLatViewedAtRes, 'data', {
-    //     updateChatGroupChatLastViewedAt: {
-    //       ...expectedFormat,
-    //       chats: [
-    //         {
-    //           ...expectChatFormatEx,
-    //           contents: [expect.any(String), expect.any(String)],
-    //           members: [
-    //             { user: ownerId, flags: [], lastViewedAt: expect.any(Number) },
-    //             { user: user2Id, flags: [], lastViewedAt: expect.any(Number) },
-    //           ],
-    //         },
-    //         { ...expectChatFormatEx, contents: [expect.any(String)] },
-    //       ],
-    //     },
-    //   });
-
-    //   // (owner) set chat title
-    //   const updateChatTitleRes = await ownerServer.executeOperation({
-    //     query: UPDATE_CHAT_GROUP_CHAT_TITLE,
-    //     variables: { id: newId, chatId, title: FAKE },
-    //   });
-    //   apolloExpect(updateChatTitleRes, 'data', {
-    //     updateChatGroupChatTitle: {
-    //       ...expectedFormat,
-    //       chats: [{ ...expectChatFormatEx, title: FAKE }, expectChatFormatEx],
-    //     },
-    //   });
-
-    //   // (owner) unset chat title
-    //   const updateChatTitleRes2 = await ownerServer.executeOperation({
-    //     query: UPDATE_CHAT_GROUP_CHAT_TITLE,
-    //     variables: { id: newId, chatId },
-    //   });
-    //   apolloExpect(updateChatTitleRes2, 'data', {
-    //     updateChatGroupChatTitle: {
-    //       ...expectedFormat,
-    //       chats: [{ ...expectChatFormatEx, title: null }, expectChatFormatEx],
-    //     },
-    //   });
+    // student clone
+    const userIds = normalUsers!
+      .filter(user => !user._id.equals(studentId))
+      .slice(10, 13)
+      .map(u => u._id.toString())
+      .sort();
+    const studentCloneQuestionRes = await studentServer.executeOperation({
+      query: CLONE_QUESTION,
+      variables: { id: newId, userIds },
+    });
+    apolloExpect(studentCloneQuestionRes, 'data', {
+      cloneQuestion: { ...expectedFormat, parent: newId, bidders: userIds },
+    });
   });
 });

@@ -1,141 +1,168 @@
 /**
  * Job-Runner: Process Job Collection
  *
- * !note: single thread running one job at a time
+ * !note: single thread running one job at a time (not to overload CPU)
  */
 
 import { LOCALE } from '@argonne/common';
 import { addMilliseconds } from 'date-fns';
 import Redis from 'ioredis';
-import type { Types } from 'mongoose';
+import type { UpdateQuery } from 'mongoose';
+import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
+import type { JobDocument } from '../models/job';
 import Job, { NEW_JOB_CHANNEL } from '../models/job';
-import { isTestMode } from '../utils/environment';
+import { SYNC_JOB_CHANNEL } from '../models/sync-job';
+import Tenant from '../models/tenant';
+import { redisClient } from '../redis';
 import log from '../utils/log';
+import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
+import storage from '../utils/storage';
+import censor from './censor';
 import grade from './grade';
 import report from './report';
 import sync from './sync';
-import censor from './censor';
 
 const { JOB } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
 
-let status: 'off' | 'sleep' | 'running' = 'off';
-let sleepTimer: NodeJS.Timeout;
-let jobTimeout: NodeJS.Timeout;
-
-const redis = new Redis(config.server.redis.url);
-redis.subscribe(NEW_JOB_CHANNEL);
-redis.on('message', (channel, jobId: string) => {
-  if (channel !== NEW_JOB_CHANNEL) return;
-
-  console.log(`received a new Job request ${jobId}`);
-
-  isTestMode
-    ? Job.updateOne(
-        { _id: jobId },
-        { status: JOB.STATUS.COMPLETED, progress: 100, completedAt: new Date(), result: 'not execute in test mode' },
-      )
-    : start(jobId);
-});
-
-// get next queued job
-const getNextJob = async (jobId?: string | Types.ObjectId) =>
-  jobId
-    ? Job.findByIdAndUpdate(jobId, { status: JOB.STATUS.RUNNING, startedAt: new Date(), progress: 1 }, { new: true })
-    : Job.findOneAndUpdate(
-        { status: JOB.STATUS.QUEUED, startAfter: { $gte: new Date() }, retry: { $lte: DEFAULTS.JOB.RETRY } },
-        { status: JOB.STATUS.RUNNING, startedAt: new Date(), progress: 1 },
-        { sort: { priority: -1, startedAfter: 1, retry: 1 }, new: true },
-      );
-
 /**
- * Start (or re-schedule) Job Runner
+ * Execute (or re-schedule) Job Runner
+ * note: only run a single instance.
  */
-const start = async (jobId?: string | Types.ObjectId): Promise<void> => {
-  if (status === 'running') return; // do nothing if another instance is running
+const TIMEOUT_ERR = 'TIMEOUT_ERROR';
+let isRunning = false;
 
-  // in case of previous crash, re-queue jobs
-  if (status === 'off') await Job.updateMany({ status: JOB.STATUS.RUNNING }, { status: JOB.STATUS.QUEUED });
+const execute = async (jobId?: string): Promise<void> => {
+  if (isRunning) return; // only single instance could run
+  isRunning = true;
 
-  status = 'running';
-  clearTimeout(sleepTimer);
-  let reStartsInMs = DEFAULTS.JOB.SLEEP; // re-start in milliseconds
+  // get next queued job
+  const getNextJob = async (jobId?: string) =>
+    Job.findOneAndUpdate(
+      { ...(jobId && { _id: jobId }), status: JOB.STATUS.QUEUED, startAfter: { $gte: new Date() } },
+      { status: JOB.STATUS.RUNNING, startedAt: new Date(), progress: 1, $inc: { attempt: 1 } }, // increment attempt
+      { sort: { priority: -1, startedAfter: 1 }, new: true },
+    ).lean();
 
   let job = await getNextJob(jobId);
-  console.log(
-    `DEBUG>>>>> Job-Runner status: "${status}", sleepTimer: "${sleepTimer}", jobID: "${job?._id}", (${new Date()})`,
-  );
+
+  console.log(`DEBUG>>>>> Job-Runner, jobID: "${job?._id}", (${new Date()})`);
 
   while (job) {
-    const { _id, args, task } = job;
-    const jobId = _id.toString();
-    try {
-      const result = await Promise.race([
-        new Promise<never>((_, reject) => {
-          jobTimeout = setTimeout(reject, DEFAULTS.JOB.TIMEOUT, 'timeout');
-        }),
-        task === 'censor'
-          ? censor(args)
-          : task === 'grade'
-          ? grade(args)
-          : task === 'report'
-          ? report(args)
-          : task === 'sync'
-          ? sync(args)
-          : log('error', 'unknown task', { jobId, task: task }),
+    const { _id, attempt, task, owners } = job;
+
+    // update JobDocument, & notifyAndSync
+    const updateNotifySync = async (update: UpdateQuery<JobDocument>) => {
+      await Promise.all([
+        Job.updateOne({ _id }, update),
+
+        config.mode === 'HUB' &&
+          'tenantId' in task &&
+          notifySync(task.tenantId || null, owners.length ? { userIds: owners, event: 'JOB' } : null, {
+            bulkWrite: { jobs: [{ updateOne: { filter: { _id }, update } }] satisfies BulkWrite<JobDocument> },
+          }),
       ]);
+    };
 
-      await Job.updateOne(
-        { _id },
-        { status: JOB.STATUS.COMPLETED, progress: 100, completedAt: new Date(), ...(result && { result }) },
-      );
-    } catch (error) {
-      console.log(`jobRunner try-catch error() =>> ${error}`);
-      if (error === 'timeout') {
-        reStartsInMs = 5000; // re-try in 5 seconds if timeout
-
-        await Promise.all([
-          log('warn', `jobId: ${jobId} timeout, retries: ${job.retry} (${job.retry >= DEFAULTS.JOB.RETRY})`),
-          await Job.updateOne(
-            { _id },
-            job.retry >= DEFAULTS.JOB.RETRY
-              ? { status: JOB.STATUS.TIMEOUT, completedAt: new Date() }
-              : {
-                  status: JOB.STATUS.QUEUED,
-                  $inc: { retry: 1 },
-                  startAfter: addMilliseconds(new Date(), reStartsInMs),
-                },
-          ),
+    // grading & reporting ONLY support (execute) in hub-mode
+    if (['grade', 'report'].includes(task.type) && config.mode === 'SATELLITE') {
+      await Job.updateOne({ _id }, { status: JOB.STATUS.IGNORE }); // marked "ignore" and skip execution
+    } else {
+      let timerId: NodeJS.Timeout | undefined;
+      try {
+        const result = await Promise.race([
+          new Promise<never>((_, reject) => {
+            timerId = setTimeout(reject, DEFAULTS.JOB_RUNNER.JOB.TIMEOUT, TIMEOUT_ERR);
+          }),
+          task.type === 'censor'
+            ? censor(task)
+            : task.type === 'grade'
+            ? grade(task)
+            : task.type === 'report'
+            ? report(task)
+            : task.type === 'removeObject'
+            ? (await storage.removeObject(task.url)) || `fail to removeObject(${task.url})`
+            : 'unknown task.type',
         ]);
-      } else {
+        clearTimeout(timerId); // (just good practice), ok to let it expires later
+
+        await updateNotifySync({
+          status: JOB.STATUS.COMPLETED,
+          progress: 100,
+          completedAt: new Date(),
+          result,
+        });
+      } catch (error) {
+        console.log(`jobRunner try-catch error() =>> ${error}`);
+
+        clearTimeout(timerId); // (just good practice), in case error is thrown by censor(), grade(), etc
         await Promise.all([
-          log('error', `jobId: ${jobId}, message: ${error}`),
-          await Job.updateOne(
-            { _id },
-            { status: JOB.STATUS.ERROR, completedAt: new Date(), result: JSON.stringify(error) },
+          error === TIMEOUT_ERR
+            ? log('warn', `jobId: ${_id} timeout (${task.type})`, { _id, attempt, error })
+            : log('error', `jobId: ${_id} error (${task.type})`, { _id, attempt, error }),
+
+          updateNotifySync(
+            error == TIMEOUT_ERR
+              ? attempt >= DEFAULTS.JOB_RUNNER.JOB.MAX_ATTEMPTS
+                ? { status: JOB.STATUS.TIMEOUT, completedAt: new Date() }
+                : { status: JOB.STATUS.QUEUED, startAfter: addMilliseconds(new Date(), DEFAULTS.JOB_RUNNER.INTERVAL) } // re-schedule to later time
+              : { status: JOB.STATUS.ERROR, completedAt: new Date(), result: JSON.stringify(error) },
           ),
         ]);
       }
-    } finally {
-      clearTimeout(jobTimeout);
-
-      const [nextJob] = await Promise.all([
-        getNextJob(),
-        job.owners?.length && notifySync('JOB', { userIds: job.owners }, {}),
-      ]);
-      job = nextJob;
     }
+
+    job = await getNextJob();
   }
 
-  sleepTimer = setTimeout(start, reStartsInMs + 100); // restart once a while
-  status = 'sleep';
+  isRunning = false;
 };
 
+/**
+ * Setup
+ *
+ */
+let subClient: Redis | null = null;
+let timer: NodeJS.Timeout | undefined;
+
+const start = async () => {
+  // setup redisClient subscriber listener
+  subClient = redisClient.duplicate();
+  subClient.on('message', (channel, id) => {
+    console.log(`received a new SyncJob|Job ${id} (${mongoose.isObjectIdOrHexString(id)}) from channel ${channel}`);
+
+    if (mongoose.isObjectIdOrHexString(id)) {
+      switch (channel) {
+        case NEW_JOB_CHANNEL:
+          return execute(id);
+        case SYNC_JOB_CHANNEL:
+          return sync(id);
+        default:
+          break;
+      }
+    }
+  });
+
+  // re-queue previously running jobs (in case where server crashes previously)
+  await Job.updateMany({ status: JOB.STATUS.RUNNING }, { status: JOB.STATUS.QUEUED });
+
+  // re-run at an interval
+  timer = setInterval(async () => {
+    const satelliteTenants = await Tenant.findSatellites(); // tenant docs may get updated, refetch up-to-date docs
+    await Promise.all([execute(), ...satelliteTenants.map(async ({ _id }) => sync(_id.toString()))]);
+  }, DEFAULTS.JOB_RUNNER.INTERVAL);
+};
+
+/**
+ * Tear Down
+ * disconnect redisClient
+ */
 const stop = () => {
-  redis.disconnect();
+  subClient?.disconnect();
+  clearInterval(timer);
 };
 
 export default { start, stop };

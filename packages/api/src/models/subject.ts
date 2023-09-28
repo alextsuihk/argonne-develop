@@ -15,7 +15,7 @@ export type { Id } from './common';
 
 export interface SubjectDocument extends BaseDocument {
   name: Locale;
-  levels: (string | Types.ObjectId)[];
+  levels: Types.ObjectId[];
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;

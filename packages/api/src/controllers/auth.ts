@@ -21,35 +21,36 @@ import User, { userLoginSelect, userNormalSelect } from '../models/user';
 import socketServer from '../socket-server';
 import authenticateClient from '../utils/authenticate-client';
 import { extract } from '../utils/chat';
-import { idsToString, randomString } from '../utils/helper';
+import { mongoId, randomString } from '../utils/helper';
 import log from '../utils/log';
+import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 import mail from '../utils/sendmail';
 import storage from '../utils/storage';
 import type { TokensResponseConflict, TokensResponseSuccessful } from '../utils/token';
-import { REFRESH_TOKEN } from '../utils/token';
-import token from '../utils/token';
+import token, { REFRESH_TOKEN } from '../utils/token';
+import type { GetExtraAction, PostExtraAction } from './auth-extra';
+import {
+  isEmailAvailable,
+  sendEmailVerification,
+  sendMessengerVerification,
+  update,
+  updateHandler,
+  verifyEmail,
+} from './auth-extra';
 import oAuth2Decode from './auth-oauth2';
+import type { GetAuthServiceAction } from './auth-service';
+import { authServiceToken, authServiceUserInfo } from './auth-service';
 import type { StatusResponse } from './common';
 import common from './common';
 
 type AuthResponse = { user: UserDocument & Id } & (TokensResponseConflict | TokensResponseSuccessful); // response of login or register
 type AuthSuccessfulResponse = { user: UserDocument & Id } & TokensResponseSuccessful; // response of login or register
 
-// patch actions
-type Action =
-  | 'addApiKey'
-  | 'addPaymentMethod'
-  | 'oAuth2Link'
-  | 'oAuth2Unlink'
-  | 'removeApiKey'
-  | 'removePaymentMethod'
-  | 'updateLocale'
-  | 'updateNetworkStatus';
-
-type GetAction = 'listSockets' | 'listTokens' | 'loginToken';
+type GetAction = GetAuthServiceAction | GetExtraAction | 'listSockets' | 'listTokens' | 'loginToken';
 
 type PostAction =
+  | PostExtraAction
   | 'deregister'
   | 'impersonateStart'
   | 'impersonateStop'
@@ -63,33 +64,29 @@ type PostAction =
   | 'renewToken';
 
 const { MSG_ENUM } = LOCALE;
-const { SYSTEM, USER } = LOCALE.DB_ENUM;
+const { USER } = LOCALE.DB_ENUM;
 const { assertUnreachable, auth, authGetUser, hubModeOnly, guest, isAdmin, isRoot } = common;
 const {
+  loginCommon,
   deregisterSchema,
-  idSchema,
   impersonateSchema,
   loginSchema,
   loginWithStudentIdSchema,
   loginWithTokenSchema,
-  oAuth2UnlinkSchema,
   oAuth2Schema,
   optionalExpiresInSchema,
   refreshTokenSchema,
   registerSchema,
   renewTokenSchema,
   tenantIdSchema,
-  userApiKeySchema,
   userIdSchema,
-  userLocaleSchema,
-  userNetworkStatusSchema,
-  userPaymentMethodsSchema,
-  userProfileSchema,
 } = yupSchema;
+
+// const { verifyMessenger } = authProfileController;
 
 const { DEFAULTS } = configLoader;
 
-const LOGIN_TOKEN_PREFIX = 'LOGIN';
+const LOGIN_TOKEN_PREFIX = 'AUTH-LOGIN';
 
 const JWT_COOKIE = 'jwt';
 const cookieOptions: CookieOptions = {
@@ -100,21 +97,25 @@ const cookieOptions: CookieOptions = {
 /**
  * (helper) login message
  */
-const loginMsg = (ip: string) => ({
-  enUS: `You are being logged in from IP (${ip}).`,
-  zhCN: `您正在从 IP (${ip}) 登入。`,
-  zhHK: `您正在從 IP (${ip}) 登錄。`,
-});
+const loginMsg = (locale: string, ip: string) =>
+  extract(
+    {
+      enUS: `You are being logged in from IP (${ip}).`,
+      zhCN: `您正在从 IP (${ip}) 登入。`,
+      zhHK: `您正在從 IP (${ip}) 登錄。`,
+    },
+    locale,
+  );
 
 /**
- * Clear expired user.suspension
+ * Clear expired user.suspendUtil
  * ! note: user document might contain subset of fields
  */
 const clearExpiredUserSuspension = async (user: UserDocument & Id): Promise<UserDocument & Id> =>
-  user.suspension && user.suspension < new Date()
+  user.suspendUtil && user.suspendUtil < new Date()
     ? (await User.findByIdAndUpdate(
         user,
-        { $unset: { suspension: 1 } },
+        { $unset: { suspendUtil: 1 } },
         { fields: userNormalSelect, new: true },
       ).lean())!
     : user;
@@ -142,20 +143,40 @@ const deregister = async (req: Request, res: Response, args: unknown): Promise<S
   // check if password is correct
   if (!isPasswordMatched) throw { statusCode: 401, code: MSG_ENUM.AUTH_CREDENTIALS_ERROR };
 
+  const update: UpdateQuery<UserDocument> = {
+    status: USER.STATUS.DELETED,
+    password: `${randomString()}:::${randomString()}`,
+    oAuth2s: [], // clear out OAuth providers
+    deletedAt: new Date(),
+    emails: user.emails.map(email => `${email}@@${Date.now()}`), // make the email(s) invalid format
+    messengers: [],
+  };
+
+  const { oAuth2s, emails, messengers } = user;
+  const contactIds = user.contacts.map(c => c.user);
+  const removeContactsUpdate: UpdateQuery<UserDocument> = { $pull: { contacts: { user: user._id } } };
+  const removeStaffUpdate: UpdateQuery<UserDocument> = { $pull: { staffs: user._id } };
   await Promise.all([
     token.revokeAll(user._id),
-    User.updateOne(user, {
-      status: USER.STATUS.DELETED,
-      password: `${randomString()}:::${randomString()}`,
-      oAuth2: [], // clear out OAuth providers
-      deletedAt: new Date(),
-      emails: user.emails.map(email => `${email}@@${Date.now()}`), // make the email(s) invalid format
-      tokens: [],
-    }),
-    User.updateMany({ _id: { $in: user.contacts.map(c => c.user) } }, { $pull: { contacts: { user: user._id } } }),
-    User.updateMany({ _id: { $in: user.supervisors } }, { $pull: { staffs: user._id } }),
+    User.updateOne(user, update),
+    User.updateMany({ _id: { $in: contactIds } }, removeContactsUpdate),
+    User.updateMany({ _id: { $in: user.supervisors } }, removeStaffUpdate),
+    DatabaseEvent.log(user._id, '/auth', 'deregister', { oAuth2s, emails, messengers }),
     AuthEvent.log(user._id, 'deregister', req.ua, req.ip, coordinates),
-    notifySync('RENEW-TOKEN', { userIds: [user] }, { userIds: [user] }), // force other clients to renew (logout)
+    notifySync(
+      user.tenants[0] || null,
+      { userIds: [user._id], event: 'AUTH-RENEW-TOKEN' }, // force other clients to renew (logout)
+      {
+        bulkWrite: {
+          users: [
+            { updateOne: { filter: { _id: user._id }, update } },
+            { updateMany: { filter: { _id: { $in: contactIds } }, update: removeContactsUpdate } },
+            { updateMany: { filter: { _id: { $in: user.supervisors } }, update: removeStaffUpdate } },
+          ] satisfies BulkWrite<UserDocument>,
+        },
+        extra: { revokeAllTokensByUserId: user._id.toString() },
+      },
+    ),
   ]);
 
   res.clearCookie(JWT_COOKIE);
@@ -168,19 +189,25 @@ const deregister = async (req: Request, res: Response, args: unknown): Promise<S
  * ! TODO: root could impersonate anyone
  */
 const impersonateStart = async (req: Request, res: Response, args: unknown): Promise<AuthSuccessfulResponse> => {
-  const { userId, authUserId } = auth(req);
+  const { userId, userName, userTenants, authUserId } = auth(req);
   const [user, { userId: impersonatedAsId, coordinates, clientHash }] = await Promise.all([
     authGetUser(req),
     impersonateSchema.validate(args),
   ]);
 
   const [impersonatedUser] = await Promise.all([
-    User.findOneActive({ _id: impersonatedAsId }, userNormalSelect),
+    isRoot(userTenants)
+      ? User.findById(impersonatedAsId, userNormalSelect).lean() // ROOT could impersonate tenantAdmin[0] (non-login-able)
+      : User.findOneActive({ _id: impersonatedAsId }, userNormalSelect),
     authenticateClient(clientHash),
   ]);
 
   // nested impersonation is NOT allowed, and only admin & parent could impersonate
-  if (req.isMobile || authUserId || (!isAdmin(user.roles) && !user.staffs.includes(impersonatedAsId)))
+  if (
+    req.isMobile ||
+    authUserId ||
+    (!isAdmin(user.roles) && !user.staffs.some(staff => staff.equals(impersonatedAsId)))
+  )
     throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
   if (!impersonatedUser) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
@@ -188,7 +215,7 @@ const impersonateStart = async (req: Request, res: Response, args: unknown): Pro
   // NO ONE could impersonate ROOT
   let remark = isRoot(impersonatedUser.roles)
     ? `NOT allow impersonating ${impersonatedUser._id} (because of impersonated user is ROOT)`
-    : !isAdmin(user.roles) && !idsToString(impersonatedUser.supervisors).includes(userId)
+    : !isAdmin(user.roles) && !impersonatedUser.supervisors.some(s => s.equals(userId))
     ? `NOT allow impersonating ${impersonatedUser._id} (not supervisors)`
     : null;
 
@@ -205,25 +232,24 @@ const impersonateStart = async (req: Request, res: Response, args: unknown): Pro
     ua: req.ua,
   });
 
+  const msg = extract(
+    {
+      enUS: `You are being impersonated by ${userName} (IP: ${req.ip}).`,
+      zhCN: `${userName} 使用你身份登入。(IP: ${req.ip}).`,
+      zhHK: `${userName} 使用伙身份登錄。(IP: ${req.ip}).`,
+    },
+    impersonatedUser.locale,
+  );
   await Promise.all([
     AuthEvent.log(userId, 'impersonateStart', req.ua, req.ip, coordinates, remark),
     AuthEvent.log(impersonatedUser._id, 'impersonateStart', req.ua, req.ip, coordinates, remark),
     notifySync(
-      'IMPERSONATION',
-      { userIds: [impersonatedUser] },
-      {},
-      {
-        msg: extract(
-          {
-            enUS: `You are being impersonated by ${name} (IP: ${req.ip}).`,
-            zhCN: `${name} 使用你身份登入。(IP: ${req.ip}).`,
-            zhHK: `${name} 使用伙身份登錄。(IP: ${req.ip}).`,
-          },
-          impersonatedUser.locale,
-        ),
-      },
+      impersonatedUser.tenants[0] || null,
+      { userIds: [impersonatedUser._id], event: 'IMPERSONATION', msg },
+      null,
     ), // notify user who is being impersonated
-    notifySync('LOAD-AUTH', { userIds: [userId] }, {}), // effectively, force other tabs (in same browser) to reload tokens from localStorage
+
+    notifySync(null, { userIds: [userId], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
   res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
@@ -237,8 +263,7 @@ const impersonateStart = async (req: Request, res: Response, args: unknown): Pro
  */
 const impersonateStop = async (req: Request, res: Response, args: unknown): Promise<StatusResponse> => {
   const { userId, authUserId } = auth(req);
-  const { refreshToken, coordinates, clientHash } = await refreshTokenSchema.validate(args);
-  await authenticateClient(clientHash);
+  const { refreshToken, coordinates } = await refreshTokenSchema.validate(args);
 
   if (!authUserId) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
@@ -247,7 +272,7 @@ const impersonateStop = async (req: Request, res: Response, args: unknown): Prom
     token.revokeCurrent(userId, refreshToken),
     AuthEvent.log(userId, 'impersonateStop', req.ua, req.ip, coordinates, remark),
     AuthEvent.log(authUserId, 'impersonateStop', req.ua, req.ip, coordinates, remark),
-    notifySync('LOAD-AUTH', { userIds: [userId] }, {}), // effectively, force other tabs (in same browser) to reload tokens from localStorage
+    notifySync(null, { userIds: [userId], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
   res.clearCookie(JWT_COOKIE);
@@ -292,7 +317,11 @@ const login = async (req: Request, res: Response, args: unknown): Promise<AuthRe
     token.generate(user, { isPublic, force, ip: req.ip, ua: req.ua }),
     clearExpiredUserSuspension(user),
     AuthEvent.log(user._id, 'login', req.ua, req.ip, coordinates),
-    notifySync('LOGIN', { userIds: [user] }, {}, { msg: extract(loginMsg(req.ip), user.locale) }),
+    notifySync(
+      user.tenants[0] || null,
+      { userIds: [user._id], event: 'AUTH-LOGIN', msg: loginMsg(user.locale, req.ip) },
+      null,
+    ),
   ]);
 
   updatedUser.password = '*'.repeat(password.length); // remove password information
@@ -301,18 +330,6 @@ const login = async (req: Request, res: Response, args: unknown): Promise<AuthRe
     : res.clearCookie(JWT_COOKIE);
   return { ...tokensResponse, user: updatedUser };
 };
-
-// const loginRestApi: RequestHandler = async (req, res, next) => {
-//   // ! keep express-validator code below for reference
-//   // const errors = validationResult(req);
-//   // if (!errors.isEmpty()) return next({  expValidErrors: errors.array() });
-
-//   try {
-//     res.status(200).json({ data: await login(req, res, req.body) });
-//   } catch (error) {
-//     next(error);
-//   }
-// };
 
 /**
  * Login User (with student ID)
@@ -338,7 +355,11 @@ const loginWithStudentId = async (req: Request, res: Response, args: unknown): P
     token.generate(user, { isPublic, force, ip: req.ip, ua: req.ua }),
     clearExpiredUserSuspension(user),
     AuthEvent.log(user._id, 'login', req.ua, req.ip, coordinates),
-    notifySync('LOGIN', { userIds: [user] }, {}, { msg: extract(loginMsg(req.ip), user.locale) }),
+    notifySync(
+      user.tenants[0] || null,
+      { userIds: [user._id], event: 'AUTH-LOGIN', msg: loginMsg(user.locale, req.ip) },
+      null,
+    ),
   ]);
 
   updatedUser.password = '*'.repeat(password.length); // remove password information
@@ -353,7 +374,7 @@ const loginWithStudentId = async (req: Request, res: Response, args: unknown): P
  * Generate one-time Login Token
  * ! only "school" tenantAdmin could generate login-token for their user
  */
-const loginToken = async (req: Request, _res: Response, args: unknown): Promise<string> => {
+const loginToken = async (req: Request, args: unknown): Promise<string> => {
   const { userId: tenantAdminId } = auth(req);
 
   const {
@@ -363,17 +384,16 @@ const loginToken = async (req: Request, _res: Response, args: unknown): Promise<
   } = await optionalExpiresInSchema.concat(tenantIdSchema).concat(userIdSchema).validate(args);
 
   const [user, tenant] = await Promise.all([
-    User.findOneActive({ _id: userId }),
+    User.findOneActive({ _id: userId, tenants: tenantId }),
     Tenant.findByTenantId(tenantId, tenantAdminId),
   ]);
 
-  if (!user || !idsToString(user.tenants).includes(tenantId))
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
   if (!tenant.school) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
   const [loginToken] = await Promise.all([
     token.signStrings([LOGIN_TOKEN_PREFIX, userId], expiresIn),
-    DatabaseEvent.log(tenantAdminId, `/users/${userId}`, 'loginToken', { user: userId, tenantAdminId }),
+    DatabaseEvent.log(tenantAdminId, `/users/${userId}`, 'loginToken', { userId, tenantAdminId }),
   ]);
 
   return loginToken;
@@ -395,7 +415,11 @@ const loginWithToken = async (req: Request, res: Response, args: unknown): Promi
     token.generate(user, { isPublic: true, force: true, ip: req.ip, ua: req.ua }),
     clearExpiredUserSuspension(user),
     AuthEvent.log(user._id, 'loginToken', req.ua, req.ip, coordinates),
-    notifySync('LOGIN', { userIds: [user] }, {}, { msg: extract(loginMsg(req.ip), user.locale) }),
+    notifySync(
+      user.tenants[0] || null,
+      { userIds: [user._id], event: 'AUTH-LOGIN', msg: loginMsg(user.locale, req.ip) },
+      null,
+    ),
   ]);
 
   res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
@@ -408,13 +432,12 @@ const loginWithToken = async (req: Request, res: Response, args: unknown): Promi
  */
 const logout = async (req: Request, res: Response, args: unknown): Promise<StatusResponse> => {
   const { userId } = auth(req);
-  const { refreshToken, coordinates, clientHash } = await refreshTokenSchema.validate(args);
-  await authenticateClient(clientHash);
+  const { refreshToken, coordinates } = await refreshTokenSchema.validate(args);
 
   await Promise.all([
     token.revokeCurrent(userId, refreshToken),
     AuthEvent.log(userId, 'logout', req.ua, req.ip, coordinates),
-    notifySync('LOAD-AUTH', { userIds: [userId] }, {}), // effectively, force other tabs (in same browser) to reload tokens from localStorage
+    notifySync(null, { userIds: [userId], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
   res.clearCookie(JWT_COOKIE);
@@ -422,18 +445,21 @@ const logout = async (req: Request, res: Response, args: unknown): Promise<Statu
 };
 
 /**
- * Logout this Session (device)
+ * Logout Other Session (including satellite)
  * invalidate (remove) current JWT
  */
 const logoutOther = async (req: Request, args: unknown): Promise<StatusResponse & { count: number }> => {
-  const { userId } = auth(req);
-  const { refreshToken, coordinates, clientHash } = await refreshTokenSchema.validate(args);
-  await authenticateClient(clientHash);
+  const { userId, userTenants } = auth(req);
+  const { refreshToken, coordinates } = await refreshTokenSchema.validate(args);
 
   const [revokedCount] = await Promise.all([
     token.revokeOthers(userId, refreshToken),
     AuthEvent.log(userId, 'logoutOther', req.ua, req.ip, coordinates),
-    notifySync('RENEW-TOKEN', { userIds: [userId] }, {}), // force other clients to renew (logout)
+    notifySync(
+      userTenants[0] ? mongoId(userTenants[0]) : null,
+      { userIds: [userId], event: 'AUTH-RENEW-TOKEN' },
+      { extra: { revokeAllTokensByUserId: userId } },
+    ), // force other clients to renew (logout), also kick out in satellite
   ]);
 
   return { code: MSG_ENUM.COMPLETED, count: revokedCount };
@@ -446,8 +472,13 @@ const logoutOther = async (req: Request, args: unknown): Promise<StatusResponse 
 const oAuth2 = async (req: Request, res: Response, args: unknown): Promise<AuthResponse> => {
   hubModeOnly();
   guest(req);
-  const { provider, code, isPublic, force, coordinates, clientHash } = await oAuth2Schema.validate(args);
-  const [oAuthPayload] = await Promise.all([oAuth2Decode(code, provider), authenticateClient(clientHash)]);
+  const { provider, code, isPublic, force, coordinates, clientHash } = await loginCommon
+    .concat(oAuth2Schema)
+    .validate(args);
+
+  if (!Object.keys(USER.OAUTH2.PROVIDER).includes(provider)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  const [oAuthPayload] = await Promise.all([oAuth2Decode(provider, code), authenticateClient(clientHash)]);
 
   const oAuthId = `${provider}#${oAuthPayload.subId}`;
   const existingUser = await User.findOneActive({ oAuth2s: oAuthId }, userNormalSelect);
@@ -458,7 +489,11 @@ const oAuth2 = async (req: Request, res: Response, args: unknown): Promise<AuthR
       token.generate(existingUser, { isPublic, force, ip: req.ip, ua: req.ua }),
       clearExpiredUserSuspension(existingUser),
       AuthEvent.log(existingUser._id, 'oauth', req.ua, req.ip, coordinates, `oauth login ${oAuthId}`),
-      notifySync('LOGIN', { userIds: [existingUser] }, {}, { msg: extract(loginMsg(req.ip), existingUser.locale) }),
+      notifySync(
+        existingUser.tenants[0] || null,
+        { userIds: [existingUser._id], event: 'AUTH-LOGIN', msg: loginMsg(existingUser.locale, req.ip) },
+        null,
+      ),
     ]);
 
     'accessToken' in tokensResponse
@@ -472,13 +507,15 @@ const oAuth2 = async (req: Request, res: Response, args: unknown): Promise<AuthR
   if (isOAuthTaken) throw { statusCode: 400, code: MSG_ENUM.AUTH_OAUTH_ALREADY_REGISTERED };
 
   // if user does not exists, create new user
+  const downloadedAvatarUrl =
+    !!oAuthPayload.avatarUrl && (await storage.downloadFromUrlAndSave(oAuthPayload.avatarUrl));
   const createdUser = new User<Partial<UserDocument>>({
-    name: '',
-    emails: oAuthPayload.email ? [oAuthPayload.email.toLowerCase()] : [],
-    oAuth2s: [`${provider}#${oAuthPayload.subId}`],
-    ...(oAuthPayload.avatarUrl && { avatarUrl: await storage.fetchToLocal(oAuthPayload.avatarUrl) }),
-    password: User.genValidPassword(), // generate a valid , but random password
+    name: oAuthPayload.email?.split('@')[0] || 'New User',
     flags: DEFAULTS.USER.FLAGS,
+    emails: oAuthPayload.email ? [oAuthPayload.email.toLowerCase()] : [],
+    password: User.genValidPassword(), // generate a valid , but random password
+    oAuth2s: [`${provider}#${oAuthPayload.subId}`],
+    ...(downloadedAvatarUrl && { avatarUrl: downloadedAvatarUrl }),
     tenants: [], // non school-created users has no tenants
   });
   await createdUser.save();
@@ -491,82 +528,6 @@ const oAuth2 = async (req: Request, res: Response, args: unknown): Promise<AuthR
 
   res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
   return { ...tokensResponse, user: registeredUser! };
-};
-
-/**
- * Connect OAuth2
- */
-const oAuth2Link = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
-  hubModeOnly();
-  const { userId } = auth(req);
-  const { provider, code, coordinates, clientHash } = await oAuth2Schema.validate(args);
-
-  const [user, oAuthPayload] = await Promise.all([
-    authGetUser(req),
-    oAuth2Decode(code, provider),
-    authenticateClient(clientHash),
-  ]);
-  const oAuthId = `${provider}#${oAuthPayload.subId}`;
-  const isOAuthTaken = await User.exists({ _id: { $ne: userId }, oAuth2s: oAuthId });
-
-  if (!user.oAuth2s.includes(oAuthId)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // oAuth already set
-  if (isOAuthTaken) throw { statusCode: 400, code: MSG_ENUM.AUTH_OAUTH_ALREADY_REGISTERED };
-
-  // download avatar from external URL to localStorage
-  const avatarUrl =
-    !user.avatarUrl && oAuthPayload.avatarUrl ? await storage.fetchToLocal(oAuthPayload.avatarUrl) : null;
-
-  const [updatedUser] = await Promise.all([
-    User.findByIdAndUpdate(
-      userId,
-      {
-        ...(oAuthPayload.email && {
-          emails: Array.from(
-            new Set([
-              ...user.emails.map(
-                email => (email.toLowerCase() === oAuthPayload.email?.toLowerCase() ? email.toLowerCase() : email), // verify email
-              ),
-              oAuthPayload.email.toLowerCase(),
-            ]),
-          ),
-        }),
-        ...(avatarUrl && { avatarUrl }),
-        $push: { oAuth2s: oAuthId },
-      },
-      { fields: userNormalSelect, new: true },
-    ).lean(),
-    AuthEvent.log(userId, 'oauthConnect', req.ua, req.ip, coordinates, `oAuthId: ${oAuthId}`),
-    notifySync(
-      'RENEW-TOKEN',
-      { userIds: [userId] },
-      { userIds: [userId], ...(avatarUrl && { minioAddItems: [avatarUrl] }) },
-    ),
-  ]);
-  return updatedUser!;
-};
-
-/**
- * Disconnect OAuth2
- */
-const oAuth2Unlink = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
-  hubModeOnly();
-  const { userId } = auth(req);
-  const { oAuthId, coordinates, clientHash } = await oAuth2UnlinkSchema.validate(args);
-  await authenticateClient(clientHash);
-
-  const user = await User.findOneAndUpdate(
-    { _id: userId, oAuth2s: oAuthId },
-    { $pull: { oAuth2s: oAuthId } },
-    { fields: userNormalSelect, new: true },
-  ).lean();
-  if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  await Promise.all([
-    AuthEvent.log(userId, 'oauthDisconnect', req.ua, req.ip, coordinates, `oAuthId: ${oAuthId}`),
-    notifySync('RENEW-TOKEN', { userIds: [userId] }, { userIds: [userId] }),
-  ]);
-
-  return user;
 };
 
 /**
@@ -588,9 +549,9 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
   // create a new user & store into database, password encryption is achieved in model hook
   const createdUser = await User.create<Partial<UserDocument>>({
     name,
+    flags: DEFAULTS.USER.FLAGS,
     emails: [email.toUpperCase()], // email not yet verified
     password,
-    flags: DEFAULTS.USER.FLAGS,
     roles: [],
     tenants: [], // non school-created users has no tenants
   });
@@ -598,30 +559,18 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
   const [tokensResponse, createdUserReadBack] = await Promise.all([
     token.generate(createdUser, { isPublic, force: true, ip: req.ip, ua: req.ua }),
     User.findOneActive({ _id: createdUser }, userNormalSelect), // read back with proper selected fields
-    mail.confirmEmail(name, createdUser.locale, email), // send registration confirmation email
     AuthEvent.log(createdUser._id, 'register', req.ua, req.ip, coordinates),
   ]);
+  mail.confirmEmail(name, createdUser.locale, email); // no need to wait, sending email takes time
 
   if (!createdUserReadBack) {
-    log('error', `questionController:register()`, { id: createdUser._id.toString() });
+    log('error', 'authController:register()', args, createdUser._id);
     throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
   }
 
   res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
   return { ...tokensResponse, user: createdUserReadBack };
 };
-
-// const registerRestApi: RequestHandler = async (req, res, next) => {
-//   // ! keep express-validator code below for reference
-//   // const errors = validationResult(req);
-//   // if (!errors.isEmpty()) return next({ expValidErrors: errors.array() });
-
-//   try {
-//     res.status(201).json({ data: await register(req, res, req.body) });
-//   } catch (error) {
-//     next(error);
-//   }
-// };
 
 /**
  * Renew Tokens (access & refresh)
@@ -642,7 +591,7 @@ const renewToken = async (req: Request, res: Response, args: unknown): Promise<A
   const [updatedUser] = await Promise.all([
     clearExpiredUserSuspension(user),
     AuthEvent.log(user._id, 'renew', req.ua, req.ip, coordinates, remark),
-    notifySync('LOAD-AUTH', { userIds: [userId] }, {}), // effectively, force other tabs (in same browser) to reload tokens from localStorage
+    notifySync(null, { userIds: [userId], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
   res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions);
@@ -650,96 +599,27 @@ const renewToken = async (req: Request, res: Response, args: unknown): Promise<A
   return { ...tokensResponse, user: updatedUser };
 };
 
-const update = async (req: Request, args: unknown, action?: Action): Promise<UserDocument & Id> => {
-  const { userId } = auth(req);
-
-  const updateAndNotify = async (updateQuery: UpdateQuery<UserDocument>, event: Record<string, unknown>) => {
-    const [updatedUser] = await Promise.all([
-      User.findByIdAndUpdate(userId, updateQuery, { fields: userNormalSelect, new: true }).lean(),
-      DatabaseEvent.log(userId, `/users/${userId}`, action || 'update', event),
-      notifySync('RENEW-TOKEN', { userIds: [userId] }, { userIds: [userId] }), // renew-token to reload updated user
-    ]);
-    if (updatedUser) return updatedUser;
-    log('error', `authController:${action}()`, { userId, action }, userId);
-    throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
-  };
-
-  if (action === 'addApiKey') {
-    const fields = await userApiKeySchema.validate(args);
-    return updateAndNotify({ $push: { value: randomString(), ...fields } }, { ...fields });
-  } else if (action === 'addPaymentMethod') {
-    const fields = await userPaymentMethodsSchema.validate(args);
-    return updateAndNotify({ $push: { paymentMethods: fields } }, fields);
-  } else if (action === 'removeApiKey') {
-    const { id } = await idSchema.validate(args);
-    return updateAndNotify({ $pull: { apiKeys: { _id: id } } }, { id });
-  } else if (action === 'removePaymentMethod') {
-    const [original, { id }] = await Promise.all([authGetUser(req), idSchema.validate(args)]);
-
-    const originalPaymentMethod = original.paymentMethods.find(p => p._id?.toString() === id);
-    if (!originalPaymentMethod) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-    return updateAndNotify({ $pull: { paymentMethods: { _id: id } } }, { originalPaymentMethod });
-  } else if (action === 'updateLocale') {
-    const [user, { locale }] = await Promise.all([authGetUser(req), userLocaleSchema.validate(args)]);
-    if (!Object.keys(SYSTEM.LOCALE).includes(locale)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // re-verify locale value (YUP has verified already)
-    return updateAndNotify({ locale }, { original: user.locale, new: locale });
-  } else if (action === 'updateNetworkStatus') {
-    const { networkStatus } = await userNetworkStatusSchema.validate(args);
-    if (!Object.keys(USER.NETWORK_STATUS).includes(networkStatus) || networkStatus === USER.NETWORK_STATUS.OFFLINE)
-      throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // make no sense to set OFFLINE (auto-detected by socket-server)
-
-    return networkStatus === USER.NETWORK_STATUS.ONLINE
-      ? updateAndNotify({ $unset: { networkStatus: 1 } }, { networkStatus })
-      : updateAndNotify({ networkStatus }, { networkStatus });
-  } else {
-    const [user, { avatarUrl, ...fields }] = await Promise.all([authGetUser(req), userProfileSchema.validate(args)]);
-
-    if (user.avatarUrl !== avatarUrl)
-      await Promise.all([
-        avatarUrl && storage.validateObject(avatarUrl, userId, avatarUrl.startsWith('avatarUrl-')), // only need to validate NEW avatarUrl, skip ownership check for built-in avatar
-        user.avatarUrl && !user.avatarUrl.startsWith('avatarUrl-') && storage.removeObject(user.avatarUrl), // remove old avatarUrl from minio if exists and is different from new avatarUrl (& non built-in avatar)
-      ]);
-
-    return updateAndNotify(
-      { ...fields, ...(avatarUrl ? { avatarUrl } : { $unset: { avatarUrl: 1 } }) },
-      { original: user, update: { avatarUrl, ...fields } },
-    );
-  }
-};
-
-/**
- * Update by ID (RESTful)
- */
-const updateById: RequestHandler<{ action?: Action }> = async (req, res, next) => {
-  const { action } = req.params;
-  try {
-    switch (action) {
-      case 'oAuth2Link':
-        return res.status(200).json(await oAuth2Link(req, req.body));
-      case 'oAuth2Unlink':
-        return res.status(200).json(await oAuth2Unlink(req, req.body));
-      default:
-        return res.status(200).json({ data: await update(req, req.body, action) });
-    }
-  } catch (error) {
-    next(error);
-  }
-};
-
 /**
  * Get Action (RESTful)
  */
-const getAction: RequestHandler<{ action: GetAction }> = async (req, res, next) => {
-  const { action } = req.params;
+const getHandler: RequestHandler<{ action: GetAction; extra?: string }> = async (req, res, next) => {
+  const { action, extra } = req.params;
   try {
     switch (action) {
+      case 'authServiceToken':
+        // eslint-disable-next-line no-case-declarations
+        const { clientId, token, redirectUri } = await authServiceToken(req, { client: extra });
+        return res.redirect(200, `${redirectUri}?clientId=${clientId}&token=${token}`);
+      case 'authServiceUserInfo':
+        return res.status(200).json({ data: await authServiceUserInfo(req, { token: extra }) });
       case 'listSockets':
         return res.status(200).json({ data: await listSockets(req) });
       case 'listTokens':
         return res.status(200).json({ data: await listTokens(req) });
       case 'loginToken':
-        return res.status(200).json({ data: await loginToken(req, res, req.body) });
+        return res.status(200).json({ data: await loginToken(req, req.body) });
+      case 'isEmailAvailable':
+        return res.status(200).json({ data: await isEmailAvailable(req, { email: extra }) });
       default:
         assertUnreachable(action);
     }
@@ -751,7 +631,7 @@ const getAction: RequestHandler<{ action: GetAction }> = async (req, res, next) 
 /**
  * Post Action (RESTful)
  */
-const postAction: RequestHandler<{ action: PostAction }> = async (req, res, next) => {
+const postHandler: RequestHandler<{ action: PostAction }> = async (req, res, next) => {
   const { action } = req.params;
   try {
     switch (action) {
@@ -777,6 +657,10 @@ const postAction: RequestHandler<{ action: PostAction }> = async (req, res, next
         return res.status(201).json({ data: await register(req, res, req.body) });
       case 'renewToken':
         return res.status(200).json({ data: await renewToken(req, res, req.body) });
+      case 'sendEmailVerification':
+        return res.status(200).json(await sendEmailVerification(req, req.body));
+      case 'sendMessengerVerification':
+        return res.status(200).json(await sendMessengerVerification(req, req.body));
       default:
         assertUnreachable(action);
     }
@@ -786,8 +670,11 @@ const postAction: RequestHandler<{ action: PostAction }> = async (req, res, next
 };
 
 export default {
-  getAction,
+  authServiceToken,
+  authServiceUserInfo,
+  getHandler,
   deregister,
+  isEmailAvailable,
   impersonateStart,
   impersonateStop,
   listSockets,
@@ -799,11 +686,12 @@ export default {
   logout,
   logoutOther,
   oAuth2,
-  oAuth2Link,
-  oAuth2Unlink,
-  postAction,
+  postHandler,
   register,
   renewToken,
+  sendEmailVerification,
+  sendMessengerVerification,
   update,
-  updateById,
+  updateHandler,
+  verifyEmail,
 };

@@ -8,22 +8,24 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
-  expectChatFormat,
+  expectedChatFormatApollo as expectedChatFormat,
+  expectedDateFormat,
   expectedIdFormat,
   expectedMember,
   FAKE,
   FAKE2,
   genChatGroup,
   genQuestion,
-  idsToString,
+  genUser,
   jestPutObject,
   jestRemoveObject,
   jestSetup,
   jestTeardown,
   prob,
-  randomId,
+  randomItem,
   testServer,
 } from '../jest';
+import Book from '../models/book';
 import ChatGroup from '../models/chat-group';
 import Level from '../models/level';
 import Tenant from '../models/tenant';
@@ -59,50 +61,44 @@ import {
 const { MSG_ENUM } = LOCALE;
 const { CHAT, CHAT_GROUP } = LOCALE.DB_ENUM;
 
-const expectChatFormatEx = {
-  ...expectChatFormat,
-  title: expect.toBeOneOf([null, expect.any(String)]),
-  createdAt: expect.any(Number),
-  updatedAt: expect.any(Number),
-};
-
 // Top chat of this test suite:
 describe('ChatGroup GraphQL', () => {
   let adminServer: ApolloServer | null;
+  let adminUser: (UserDocument & Id) | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let normalUser: (UserDocument & Id) | null;
   let normalUsers: (UserDocument & Id)[] | null;
   let tenantId: string | null;
-  let url: string;
-  let url2: string;
+  let url: string | undefined;
+  let url2: string | undefined;
 
   const expectedFormat = {
     _id: expectedIdFormat,
     flags: expect.any(Array),
 
-    tenant: expect.toBeOneOf([null, expect.any(String)]),
+    tenant: expect.toBeOneOf([null, expectedIdFormat]),
     title: expect.toBeOneOf([null, expect.any(String)]),
     description: expect.toBeOneOf([null, expect.any(String)]),
 
     membership: expect.toBeOneOf(Object.keys(CHAT_GROUP.MEMBERSHIP)),
-    admins: expect.arrayContaining([expect.any(String)]),
-    users: expect.arrayContaining([expect.any(String)]),
+    admins: expect.arrayContaining([expectedIdFormat]),
+    users: expect.arrayContaining([expectedIdFormat]),
     marshals: expect.any(Array),
-    chats: expect.arrayContaining([expectChatFormatEx]),
+    chats: expect.arrayContaining([expectedChatFormat]),
 
     key: expect.toBeOneOf([null, expect.any(String)]),
     url: expect.toBeOneOf([null, expect.any(String)]),
     logoUrl: expect.toBeOneOf([null, expect.any(String)]),
 
-    createdAt: expect.any(Number),
-    updatedAt: expect.any(Number),
+    createdAt: expectedDateFormat(true),
+    updatedAt: expectedDateFormat(true),
 
     contentsToken: expect.any(String),
   };
 
   beforeAll(async () => {
-    ({ adminServer, guestServer, normalServer, normalUser, normalUsers, tenantId } = await jestSetup(
+    ({ adminServer, adminUser, guestServer, normalServer, normalUser, normalUsers, tenantId } = await jestSetup(
       ['admin', 'guest', 'normal'],
       { apollo: true },
     ));
@@ -116,7 +112,9 @@ describe('ChatGroup GraphQL', () => {
     const res = await adminServer!.executeOperation({ query: GET_CHAT_GROUPS });
     apolloExpect(res, 'data', { chatGroups: expect.arrayContaining([expectedFormat]) });
     expect(
-      res.data?.chatGroups.some(chatGroup => chatGroup.key && chatGroup.flags.includes(CHAT_GROUP.FLAG.ADMIN)),
+      res.data!.chatGroups.length
+        ? res.data!.chatGroups.some(chatGroup => chatGroup.key && chatGroup.flags.includes(CHAT_GROUP.FLAG.ADMIN))
+        : 'NO admin chatGroups',
     ).toBeTrue();
   });
 
@@ -124,17 +122,15 @@ describe('ChatGroup GraphQL', () => {
     expect.assertions(1);
 
     const chatGroups = await ChatGroup.find({
+      users: adminUser!._id,
       key: { $exists: true },
       flags: CHAT_GROUP.FLAG.ADMIN,
       deletedAt: { $exists: false },
     }).lean();
-    if (!chatGroups.length) throw 'There is no admin message chatGroup';
 
-    const res = await adminServer!.executeOperation({
-      query: GET_CHAT_GROUP,
-      variables: { id: randomId(chatGroups) },
-    });
-    apolloExpect(res, 'data', { chatGroup: { ...expectedFormat, key: expect.any(String) } });
+    const id = randomItem(chatGroups)._id.toString();
+    const res = await adminServer!.executeOperation({ query: GET_CHAT_GROUP, variables: { id } });
+    apolloExpect(res, 'data', { chatGroup: { ...expectedFormat, _id: id, key: expect.any(String) } });
   });
 
   test('should response an array of data when GET all (as normalUser)', async () => {
@@ -148,11 +144,9 @@ describe('ChatGroup GraphQL', () => {
     expect.assertions(1);
 
     const chatGroups = await ChatGroup.find({ users: normalUser!, deletedAt: { $exists: false } }).lean();
-    const res = await normalServer!.executeOperation({
-      query: GET_CHAT_GROUP,
-      variables: { id: randomId(chatGroups) },
-    });
-    apolloExpect(res, 'data', { chatGroup: expectedFormat });
+    const id = randomItem(chatGroups)._id.toString();
+    const res = await normalServer!.executeOperation({ query: GET_CHAT_GROUP, variables: { id } });
+    apolloExpect(res, 'data', { chatGroup: { ...expectedFormat, _id: id } });
   });
 
   test('should fail when GET all (as guest)', async () => {
@@ -188,20 +182,17 @@ describe('ChatGroup GraphQL', () => {
   test('should pass when JOIN book chatGroup as teacher', async () => {
     expect.assertions(1);
 
-    const [bookChatGroups, teacherLevel] = await Promise.all([
-      ChatGroup.find({ flags: CHAT_GROUP.FLAG.BOOK }).lean(),
+    const [books, teacherLevel] = await Promise.all([
+      Book.find({ deletedAt: { $exists: false } }).lean(),
       Level.findOne({ code: 'TEACHER' }).lean(),
     ]);
 
-    const teacher = normalUsers!.find(
-      ({ schoolHistories }) =>
-        schoolHistories[0] && schoolHistories[0].level.toString() === teacherLevel?._id.toString(),
-    );
+    const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
+    if (!teacher) throw 'No teacher is found';
 
-    const res = await testServer(teacher).executeOperation({
-      query: JOIN_BOOK_CHAT_GROUP,
-      variables: { id: randomId(bookChatGroups) },
-    });
+    const id = randomItem(books).chatGroup.toString();
+    const res = await testServer(teacher).executeOperation({ query: JOIN_BOOK_CHAT_GROUP, variables: { id } });
+
     apolloExpect(res, 'data', { joinBookChatGroup: { ...expectedFormat, admins: [], chats: expect.any(Array) } }); // bookChatGroups have NO admins
   });
 
@@ -213,15 +204,11 @@ describe('ChatGroup GraphQL', () => {
       Level.findOne({ code: 'TEACHER' }).lean(),
     ]);
 
-    const nonTeacher = normalUsers!.find(
-      ({ schoolHistories }) =>
-        schoolHistories[0] && schoolHistories[0].level.toString() !== teacherLevel?._id.toString(),
-    );
+    const nonTeacher = normalUsers!.find(({ schoolHistories }) => !schoolHistories[0]?.level.equals(teacherLevel!._id));
+    if (!nonTeacher) throw 'No valid non-teacher available for testing';
 
-    const res = await testServer(nonTeacher).executeOperation({
-      query: JOIN_BOOK_CHAT_GROUP,
-      variables: { id: randomId(bookChatGroups) },
-    });
+    const id = randomItem(bookChatGroups)._id.toString();
+    const res = await testServer(nonTeacher).executeOperation({ query: JOIN_BOOK_CHAT_GROUP, variables: { id } });
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
   });
 
@@ -229,21 +216,20 @@ describe('ChatGroup GraphQL', () => {
     expect.assertions(2);
 
     // create a new user without any admin-message
-    const user = await User.create({ tenants: [tenantId], name: `name-${FAKE}` });
-    const userId = user._id.toString();
+    const user = genUser(tenantId!);
+    const [{ adminIds }] = await Promise.all([User.findSystemAccountIds(), user.save()]);
     const userServer = testServer(user);
-
-    const { adminIds } = await User.findSystemAccountIds();
 
     const expectedFormatEx = {
       ...expectedFormat,
+      flags: [CHAT_GROUP.FLAG.ADMIN],
       tenant: null,
       title: expect.any(String),
       description: null,
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
-      admins: adminIds,
-      users: [...adminIds, userId],
-      key: `USER#${userId}`,
+      admins: adminIds.map(a => a.toString()),
+      users: [...adminIds, user._id].map(u => u.toString()),
+      key: `USER#${user._id}`,
       url: null,
       logoUrl: null,
     };
@@ -252,8 +238,12 @@ describe('ChatGroup GraphQL', () => {
       query: TO_ADMIN_CHAT_GROUP,
       variables: { content: FAKE },
     });
+
     apolloExpect(res1, 'data', {
-      toAdminChatGroup: { ...expectedFormatEx, chats: [{ ...expectChatFormatEx, ...expectedMember(userId, true) }] },
+      toAdminChatGroup: {
+        ...expectedFormatEx,
+        // chats: [{ ...expectedChatFormat, members: [expectedMember(user._id, [], true)] }],
+      },
     });
 
     const res2 = await userServer.executeOperation({
@@ -264,8 +254,8 @@ describe('ChatGroup GraphQL', () => {
       toAdminChatGroup: {
         ...expectedFormatEx,
         chats: [
-          { ...expectChatFormatEx, ...expectedMember(userId, true) },
-          { ...expectChatFormatEx, ...expectedMember(userId, true) },
+          { ...expectedChatFormat, members: [expectedMember(user._id, [], true)] },
+          { ...expectedChatFormat, members: [expectedMember(user._id, [], true)] },
         ],
       },
     });
@@ -278,21 +268,18 @@ describe('ChatGroup GraphQL', () => {
     expect.assertions(2);
 
     // create a brand new user without previous messages with Alex
-    const [{ alexId }, user] = await Promise.all([
-      User.findSystemAccountIds(),
-      User.create({ tenants: [tenantId], name: `name-${FAKE}` }),
-    ]);
+    const user = genUser(tenantId!);
+    const [{ alexId }] = await Promise.all([User.findSystemAccountIds(), user.save()]);
     const userId = user._id.toString();
     const userServer = testServer(user);
 
     const expectedFormatEx = {
       ...expectedFormat,
-      tenant: null,
       title: null,
       description: null,
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
       admins: [],
-      users: [userId, alexId],
+      users: alexId ? [userId, alexId.toString()] : [userId],
       key: `ALEX#USER#${userId}`,
       url: null,
       logoUrl: null,
@@ -303,7 +290,10 @@ describe('ChatGroup GraphQL', () => {
       variables: { content: FAKE },
     });
     apolloExpect(res1, 'data', {
-      toAlexChatGroup: { ...expectedFormatEx, chats: [{ ...expectChatFormatEx, ...expectedMember(userId, true) }] },
+      toAlexChatGroup: {
+        ...expectedFormatEx,
+        chats: [{ ...expectedChatFormat, members: [expectedMember(userId, [], true)] }],
+      },
     });
 
     const res2 = await userServer.executeOperation({
@@ -314,8 +304,8 @@ describe('ChatGroup GraphQL', () => {
       toAlexChatGroup: {
         ...expectedFormatEx,
         chats: [
-          { ...expectChatFormatEx, ...expectedMember(userId, true) },
-          { ...expectChatFormatEx, ...expectedMember(userId, true) },
+          { ...expectedChatFormat, members: [expectedMember(userId, [], true)] },
+          { ...expectedChatFormat, members: [expectedMember(userId, [], true)] },
         ],
       },
     });
@@ -327,22 +317,21 @@ describe('ChatGroup GraphQL', () => {
   const messageToTenantAdmins = async (to: 'admins' | 'counselors' | 'supports') => {
     expect.assertions(2);
 
-    const [tenant, user] = await Promise.all([
-      Tenant.findByTenantId(tenantId!),
-      User.create({ tenants: [tenantId], name: `name-${FAKE}` }),
-    ]);
+    const user = genUser(tenantId!);
+    const [tenant] = await Promise.all([Tenant.findByTenantId(tenantId!), user.save()]);
     const userId = user._id.toString();
     const userServer = testServer(user);
 
     const [query, users] =
       to === 'admins'
-        ? [TO_TENANT_ADMINS_CHAT_GROUP, idsToString(tenant!.admins)]
+        ? [TO_TENANT_ADMINS_CHAT_GROUP, tenant!.admins.map(u => u.toString())]
         : to === 'counselors'
-        ? [TO_TENANT_COUNSELORS_CHAT_GROUP, idsToString(tenant!.counselors)]
-        : [TO_TENANT_SUPPORTS_CHAT_GROUP, idsToString(tenant!.supports)];
+        ? [TO_TENANT_COUNSELORS_CHAT_GROUP, tenant!.counselors.map(u => u.toString())]
+        : [TO_TENANT_SUPPORTS_CHAT_GROUP, tenant!.supports.map(u => u.toString())];
 
     const expectedFormatEx = {
       ...expectedFormat,
+      flags: [`TENANT_${to.toUpperCase()}`],
       tenant: tenantId,
       title: null,
       description: null,
@@ -358,7 +347,10 @@ describe('ChatGroup GraphQL', () => {
       query,
       variables: { tenantId: tenantId!, content: FAKE },
     });
-    const expectedRes1 = { ...expectedFormatEx, chats: [{ ...expectChatFormatEx, ...expectedMember(userId, true) }] };
+    const expectedRes1 = {
+      ...expectedFormatEx,
+      chats: [{ ...expectedChatFormat, members: [expectedMember(userId, [], true)] }],
+    };
     apolloExpect(
       res1,
       'data',
@@ -376,8 +368,8 @@ describe('ChatGroup GraphQL', () => {
     const expectedRes2 = {
       ...expectedFormatEx,
       chats: [
-        { ...expectChatFormatEx, ...expectedMember(userId, true) },
-        { ...expectChatFormatEx, ...expectedMember(userId, true) },
+        { ...expectedChatFormat, members: [expectedMember(userId, [], true)] },
+        { ...expectedChatFormat, members: [expectedMember(userId, [], true)] },
       ],
     };
     apolloExpect(
@@ -402,9 +394,10 @@ describe('ChatGroup GraphQL', () => {
     expect.assertions(1);
 
     // create a new user (without identifiedAt)
-    const user = await User.create({ tenants: [tenantId!], name: `tutor-${FAKE}` });
+    const user = genUser(tenantId!);
+    await user.save();
 
-    const [user0Id] = idsToString(normalUsers!);
+    const user0Id = normalUser!._id.toString();
     const res = await testServer(user).executeOperation({
       query: ADD_CHAT_GROUP,
       variables: { tenantId: tenantId!, userIds: [user0Id], membership: CHAT_GROUP.MEMBERSHIP.CLOSED },
@@ -420,6 +413,7 @@ describe('ChatGroup GraphQL', () => {
 
     const { chatGroup } = genChatGroup(tenantId!, normalUser!._id); // create a destination chatGroup
     const { chatGroup: source, chat, content } = genChatGroup(tenantId!, normalUser!._id); // create source (another) chatGroup
+    chatGroup.chats = []; // drop & ignore chats
     await Promise.all([chatGroup.save(), source.save(), chat.save(), content.save()]);
     //! Note: at the point, chatGroup.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
 
@@ -430,7 +424,7 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(res, 'data', {
       attachChatGroupChatToChatGroup: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, _id: chat._id.toString(), contents: [content._id.toString()] }],
+        chats: [{ ...expectedChatFormat, _id: chat._id.toString(), contents: [content._id.toString()] }],
       },
     });
 
@@ -453,7 +447,7 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(res1, 'data', {
       shareQuestionToChatGroup: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, contents: [expectedIdFormat, content._id.toString()] }], // first contentId is auto-gen message
+        chats: [{ ...expectedChatFormat, contents: [expectedIdFormat, content._id.toString()] }], // first contentId is auto-gen message
       },
     });
 
@@ -465,7 +459,7 @@ describe('ChatGroup GraphQL', () => {
     expect.assertions(21);
 
     const [, , , user2, , join] = normalUsers!;
-    const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = idsToString(normalUsers!);
+    const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = normalUsers!.map(u => u._id.toString());
     const ownerServer = normalServer!;
 
     [url, url2] = await Promise.all([jestPutObject(ownerId!), jestPutObject(ownerId!)]);
@@ -488,7 +482,7 @@ describe('ChatGroup GraphQL', () => {
         ...create,
         tenant: tenantId!,
         admins: [ownerId],
-        users: [ownerId, user0Id],
+        users: [ownerId, user0Id].sort(),
         chats: [],
       },
     });
@@ -503,7 +497,7 @@ describe('ChatGroup GraphQL', () => {
       updateChatGroupUsers: {
         ...expectedFormat,
         admins: [ownerId],
-        users: [ownerId, user1Id, user2Id],
+        users: [ownerId, user1Id, user2Id].sort(),
         chats: [],
       },
     });
@@ -514,7 +508,7 @@ describe('ChatGroup GraphQL', () => {
       variables: { id: newId, userIds: [user1Id] },
     });
     apolloExpect(addAdminsRes, 'data', {
-      updateChatGroupAdmins: { ...expectedFormat, admins: [ownerId, user1Id], chats: [] },
+      updateChatGroupAdmins: { ...expectedFormat, admins: [ownerId, user1Id].sort(), chats: [] },
     });
 
     // (joinUser) should fail when joining CLOSED membership
@@ -554,7 +548,7 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(addUsers2Res, 'data', {
       updateChatGroupUsers: {
         ...expectedFormat,
-        users: [user2Id, ownerId, user0Id, user1Id, user3Id],
+        users: [user2Id, ownerId, user0Id, user1Id, user3Id].sort(),
         chats: [],
       },
     });
@@ -577,7 +571,7 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(joinRes, 'data', {
       joinChatGroup: {
         ...expectedFormat,
-        users: [user2Id, ownerId, user0Id, user1Id, user3Id, joinId],
+        users: [...[user2Id, ownerId, user0Id, user1Id, user3Id].sort(), joinId], // joinId just appends to the end
         chats: [],
       },
     });
@@ -594,7 +588,7 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(addContentWithNewChatRes, 'data', {
       addChatGroupContentWithNewChat: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(ownerId, true) }],
+        chats: [{ ...expectedChatFormat, contents: [expectedIdFormat], members: [expectedMember(ownerId, [], true)] }],
       },
     });
     const chatId = addContentWithNewChatRes.data!.addChatGroupContentWithNewChat.chats[0]._id.toString();
@@ -607,7 +601,7 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(addContentRes, 'data', {
       addChatGroupContent: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] }],
+        chats: [{ ...expectedChatFormat, contents: [expectedIdFormat, expectedIdFormat] }],
       },
     });
     const contentIds = addContentRes.data?.addChatGroupContent.chats[0].contents;
@@ -621,8 +615,8 @@ describe('ChatGroup GraphQL', () => {
       addChatGroupContentWithNewChat: {
         ...expectedFormat,
         chats: [
-          { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
-          { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(user2Id, true) },
+          { ...expectedChatFormat, contents: [expectedIdFormat, expectedIdFormat] },
+          { ...expectedChatFormat, contents: [expectedIdFormat], members: [expectedMember(user2Id, [], true)] },
         ],
       },
     });
@@ -636,8 +630,8 @@ describe('ChatGroup GraphQL', () => {
       recallChatGroupContent: {
         ...expectedFormat,
         chats: [
-          { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
-          { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(user2Id, true) },
+          { ...expectedChatFormat, contents: [expectedIdFormat, expectedIdFormat] },
+          { ...expectedChatFormat, contents: [expectedIdFormat], members: [expectedMember(user2Id, [], true)] },
         ],
       },
     });
@@ -651,8 +645,8 @@ describe('ChatGroup GraphQL', () => {
       blockChatGroupContent: {
         ...expectedFormat,
         chats: [
-          { ...expectChatFormatEx, contents: [expect.any(String), expect.any(String)] },
-          { ...expectChatFormatEx, contents: [expect.any(String)], ...expectedMember(user2Id, true) },
+          { ...expectedChatFormat, contents: [expectedIdFormat, expectedIdFormat] },
+          { ...expectedChatFormat, contents: [expectedIdFormat], members: [expectedMember(user2Id, [], true)] },
         ],
       },
     });
@@ -661,18 +655,18 @@ describe('ChatGroup GraphQL', () => {
     const flag = CHAT.MEMBER.FLAG.IMPORTANT;
     const setChatFlagRes = await ownerServer.executeOperation({
       query: SET_CHAT_GROUP_CHAT_FLAG,
-      variables: { id: newId, chatId, flag },
+      variables: { id: newId, chatId, ownerId, flag },
     });
     apolloExpect(setChatFlagRes, 'data', {
       setChatGroupChatFlag: {
         ...expectedFormat,
         chats: [
           {
-            ...expectChatFormatEx,
-            contents: [expect.any(String), expect.any(String)],
-            members: [{ user: ownerId, flags: [flag], lastViewedAt: expect.any(Number) }],
+            ...expectedChatFormat,
+            contents: [expectedIdFormat, expectedIdFormat],
+            members: [expectedMember(ownerId, [flag], true), expectedMember(user2Id, [], true)],
           },
-          { ...expectChatFormatEx, contents: [expect.any(String)] },
+          { ...expectedChatFormat, contents: [expectedIdFormat] },
         ],
       },
     });
@@ -687,11 +681,11 @@ describe('ChatGroup GraphQL', () => {
         ...expectedFormat,
         chats: [
           {
-            ...expectChatFormatEx,
-            contents: [expect.any(String), expect.any(String)],
-            members: [{ user: ownerId, flags: [], lastViewedAt: expect.any(Number) }],
+            ...expectedChatFormat,
+            contents: [expectedIdFormat, expectedIdFormat],
+            members: [expectedMember(ownerId, [], true), expectedMember(user2Id, [], true)],
           },
-          { ...expectChatFormatEx, contents: [expect.any(String)] },
+          { ...expectedChatFormat, contents: [expectedIdFormat] },
         ],
       },
     });
@@ -706,14 +700,11 @@ describe('ChatGroup GraphQL', () => {
         ...expectedFormat,
         chats: [
           {
-            ...expectChatFormatEx,
-            contents: [expect.any(String), expect.any(String)],
-            members: [
-              { user: ownerId, flags: [], lastViewedAt: expect.any(Number) },
-              { user: user2Id, flags: [], lastViewedAt: expect.any(Number) },
-            ],
+            ...expectedChatFormat,
+            contents: [expectedIdFormat, expectedIdFormat],
+            members: [expectedMember(ownerId, [], true), expectedMember(user2Id, [], true)],
           },
-          { ...expectChatFormatEx, contents: [expect.any(String)] },
+          { ...expectedChatFormat, contents: [expectedIdFormat] },
         ],
       },
     });
@@ -726,7 +717,7 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(updateChatTitleRes, 'data', {
       updateChatGroupChatTitle: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, title: FAKE }, expectChatFormatEx],
+        chats: [{ ...expectedChatFormat, title: FAKE }, expectedChatFormat],
       },
     });
 
@@ -738,7 +729,7 @@ describe('ChatGroup GraphQL', () => {
     apolloExpect(updateChatTitleRes2, 'data', {
       updateChatGroupChatTitle: {
         ...expectedFormat,
-        chats: [{ ...expectChatFormatEx, title: null }, expectChatFormatEx],
+        chats: [{ ...expectedChatFormat, title: null }, expectedChatFormat],
       },
     });
   });

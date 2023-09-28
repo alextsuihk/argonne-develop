@@ -37,7 +37,7 @@ router.post('/', async (req, res, next): Promise<void> => {
   //   ? PriorityEnum.High
   //   : PriorityEnum.Normal;
 
-  // const job = await Job.create({
+  // const job = await Job.create<Partial<JobDocument>>({
   //   status: 'queueu', //  TASK.STATUS.QUEUED,
   //   flags: ['alex'],
   //   tags: ['a'],

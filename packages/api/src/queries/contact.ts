@@ -14,8 +14,9 @@ const CONTACT_FIELDS = gql`
     avatarUrl
     name
     identifiedAt
-    status
+    availability
     tenants
+    updatedAt
   }
 `;
 

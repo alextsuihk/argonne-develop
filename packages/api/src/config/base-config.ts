@@ -35,7 +35,7 @@ const minioUrl = (url: string): { endPoint: string; port: number; useSSL: boolea
 const minioServerUrl = process.env.APP_URL || 'http://localhost:9000';
 
 const config = {
-  mode: (process.env.SATELLITE_API_KEY ? 'SATELLITE' : 'HUB') as MODE,
+  mode: (process.env.MODE === 'HUB' ? 'HUB' : 'SATELLITE') as MODE,
   // restfulFullAccess: !!(!isProdMode || (process.env.MODE === 'HUB' && process.env.RESTFUL_FULL_ACCESS)),
   restfulFullAccess: !isProdMode,
 
@@ -45,8 +45,6 @@ const config = {
   jwtSecret: isDevMode || isTestMode ? randomString() : process.env.JWT_SECRET ?? terminate('JWT_SECRET is required'),
 
   loggerApiKey: process.env.LOGGER_API_KEY,
-
-  satelliteApiKey: process.env.SATELLITE_API_KEY,
 
   server: {
     amqp: { url: process.env.MQTT_URL || 'amqp://localhost' },
@@ -77,8 +75,8 @@ const config = {
 
   compatibleClients: process.env.COMPATIBLE_CLIENT_VERSIONS?.split(', ') ?? ['0.0.0-develop'],
 
-  // Messaging
-  message: {
+  // Messenger
+  messenger: {
     // Slack communication
     slack: {
       accessToken: process.env.SLACK_ACCESS_TOKEN,

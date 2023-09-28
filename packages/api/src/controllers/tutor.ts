@@ -7,8 +7,7 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import { addYears } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import type { Types } from 'mongoose';
-import mongoose from 'mongoose';
+import mongoose, { Types, UpdateQuery } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import DatabaseEvent from '../models/event/database';
@@ -19,8 +18,9 @@ import type { Id, TutorDocument } from '../models/tutor';
 import Tutor, { searchableFields } from '../models/tutor';
 import User from '../models/user';
 import { startChatGroup } from '../utils/chat';
-import { idsToString } from '../utils/helper';
+import { mongoId } from '../utils/helper';
 import log from '../utils/log';
+import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
@@ -60,7 +60,7 @@ const transform = (tutor: TutorDocument & Id, userId: string | Types.ObjectId, i
 
   credentials: tutor.credentials.map(({ proofs, ...rest }) => ({
     ...rest,
-    proofs: isAdmin || tutor.user.toString() === userId.toString() ? proofs : [], // show only to owner (or admin)
+    proofs: isAdmin || tutor.user.equals(userId) ? proofs : [], // show only to owner (or admin)
   })),
 
   specialties: tutor.specialties.filter(s => !s.deletedAt),
@@ -81,17 +81,18 @@ const addRemark = async (req: Request, args: unknown): Promise<TutorDocument & I
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
   const { admins } = await Tenant.findByTenantId(original.tenant, userId);
 
+  const update: UpdateQuery<TutorDocument> = { $push: { remarks: { t: new Date(), u: userId, m: remark } } };
   const [tutor] = await Promise.all([
-    Tutor.findByIdAndUpdate(
-      id,
-      { $push: { remarks: { t: new Date(), u: userId, m: remark } } },
-      { fields: select([USER.ROLE.ADMIN]), new: true },
-    ).lean(),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'REMARK', { remark }),
-    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, original.user] }, { tutorIds: [id] }),
+    Tutor.findByIdAndUpdate(id, update, { fields: select([USER.ROLE.ADMIN]), new: true }).lean(),
+    DatabaseEvent.log(userId, `/tutors/${id}`, 'REMARK', { args }),
+    notifySync(
+      original.tenant,
+      { userIds: [...admins, original.user], event: 'TUTOR' },
+      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
+    ),
   ]);
   if (tutor) return transform(tutor, userId, true);
-  log('error', 'tutorController:addRemark()', { id, remark }, userId);
+  log('error', 'tutorController:addRemark()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -120,7 +121,7 @@ const create = async (req: Request, args: unknown): Promise<TutorDocument & Id> 
   if (!tenant.services.includes(TENANT.SERVICE.TUTOR)) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
   if (!tutorUser) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const newTutor = new Tutor<Partial<TutorDocument>>({ user: tutorUserId, tenant: tenantId });
+  const newTutor = new Tutor<Partial<TutorDocument>>({ user: tutorUser._id, tenant: tenant._id });
   const tutorId = (existingTutor ?? newTutor)._id;
 
   const msg = {
@@ -129,25 +130,36 @@ const create = async (req: Request, args: unknown): Promise<TutorDocument & Id> 
     zhHK: `${tutorUser.name},你已成為${tenant.name.zhHK}的導師。`,
   };
 
+  const update: UpdateQuery<TutorDocument> = existingTutor
+    ? {
+        $unset: { deletedAt: 1 },
+        specialties: existingTutor.specialties.map(({ deletedAt: _, ...specialty }) => specialty),
+      }
+    : {};
   const [updatedTutor] = await Promise.all([
     existingTutor &&
-      Tutor.findByIdAndUpdate(
-        existingTutor,
-        {
-          $unset: { deletedAt: 1 },
-          specialties: existingTutor.specialties.map(({ deletedAt: _, ...specialty }) => specialty),
-        },
-        { fields: select([USER.ROLE.ADMIN]), new: true },
-      ).lean(),
+      Tutor.findByIdAndUpdate(existingTutor, update, { fields: select([USER.ROLE.ADMIN]), new: true }).lean(),
     !existingTutor && newTutor.save(), // save as new tutor if not previously exists
-    startChatGroup(tenantId, msg, [...tenant.admins, tutorUserId], userLocale, `TUTOR#${tutorId}`),
-    DatabaseEvent.log(userId, `/tutors/${tutorId}`, 'CREATE', { tenantId, tutorUserId }),
-    notifySync('TUTOR', { tenantId, userIds: [...tenant.admins, tutorUserId] }, { tutorIds: [tutorId] }),
+    startChatGroup(tenant._id, msg, [...tenant.admins, tutorUserId], userLocale, `TUTOR#${tutorId}`),
+    DatabaseEvent.log(userId, `/tutors/${tutorId}`, 'CREATE', { args }),
+    notifySync(
+      tenant._id,
+      { userIds: [...tenant.admins, tutorUserId], event: 'TUTOR' },
+      {
+        bulkWrite: {
+          tutors: [
+            existingTutor
+              ? { updateOne: { filter: { _id: existingTutor._id }, update } }
+              : { insertOne: { document: newTutor.toObject() } },
+          ] satisfies BulkWrite<TutorDocument>,
+        },
+      },
+    ),
   ]);
 
-  if (!existingTutor) return transform(newTutor.toObject(), userId, true);
   if (updatedTutor) return transform(updatedTutor, userId, true);
-  log('error', 'tutorController:create()', { tenantId, tutorUserId }, userId);
+  if (!existingTutor) return transform(newTutor.toObject(), userId, true);
+  log('error', 'tutorController:create()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -168,11 +180,12 @@ const findCommonFilter = async (req: Request, args: unknown) => {
   const [{ query }, levels, adminTenants] = await Promise.all([
     querySchema.validate(args),
     Level.find({ deletedAt: { $exists: false } }).lean(),
-    Tenant.find({ _id: { $in: userTenants }, admins: userId, deletedAt: { $exists: false } }).lean(),
+    Tenant.findAdminTenants(userId, userTenants),
   ]);
 
-  const teacherLevelId = levels.find(({ code }) => code === 'TEACHER')?._id.toString();
-  const naLevelId = levels.find(({ code }) => code === 'NA')?._id.toString();
+  const teacherLevelId = levels.find(({ code }) => code === 'TEACHER')?._id;
+  const naLevelId = levels.find(({ code }) => code === 'NA')?._id;
+  const adminTenantIds = adminTenants.map(t => t._id.toString()); // cast toString() because of merge.all() limitation
   if (!teacherLevelId || !naLevelId) throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 
   const extra: Record<'$or', Record<string, unknown>[]> = {
@@ -181,15 +194,17 @@ const findCommonFilter = async (req: Request, args: unknown) => {
       {
         tenant: { $in: userTenants },
         'specialties.level':
-          !!userExtra?.level && userExtra.level !== teacherLevelId ? { $in: [userExtra.level, naLevelId] } : naLevelId,
+          !!userExtra?.level && !teacherLevelId.equals(userExtra.level)
+            ? { $in: [userExtra.level.toString(), naLevelId.toString()] } // cast toString() because of merge.all() limitation in searchFilter() [merge.all cannot handle ObjectId()]
+            : naLevelId.toString(), // cast toString() because of merge.all() limitation in searchFilter()
       },
+      ...(adminTenantIds.length ? [{ tenant: { $in: adminTenantIds } }] : []), // tenantAdmin could get all tutors of his/her tenants
     ],
   };
 
   // tenantAdmin could get all tutors of his/her tenants
-  if (adminTenants.length) extra.$or = [...extra.$or, { tenant: { $in: idsToString(adminTenants) } }];
-
-  return { filter: searchFilter<TutorDocument>(searchableFields, { query }, extra), adminTenants };
+  // if (adminTenantIds.length) extra.$or = [...extra.$or, { tenant: { $in: adminTenantIds } }];
+  return { filter: searchFilter<TutorDocument>(searchableFields, { query }, extra), adminTenantIds };
 };
 
 /**
@@ -197,10 +212,17 @@ const findCommonFilter = async (req: Request, args: unknown) => {
  */
 const find = async (req: Request, args: unknown): Promise<(TutorDocument & Id)[]> => {
   const { userId } = auth(req);
-  const { filter, adminTenants } = await findCommonFilter(req, args);
+  const { filter, adminTenantIds } = await findCommonFilter(req, args);
 
   const tutors = await Tutor.find(filter, select([USER.ROLE.ADMIN])).lean();
-  return tutors.map(tutor => transform(tutor, userId, idsToString(adminTenants).includes(tutor.tenant.toString())));
+
+  return tutors.map(tutor =>
+    transform(
+      tutor,
+      userId,
+      adminTenantIds.some(tid => tutor.tenant.equals(tid)),
+    ),
+  );
 };
 
 /**
@@ -209,7 +231,7 @@ const find = async (req: Request, args: unknown): Promise<(TutorDocument & Id)[]
 const findMany: RequestHandler = async (req, res, next) => {
   try {
     const { userId } = auth(req);
-    const { filter, adminTenants } = await findCommonFilter(req, { query: req.query });
+    const { filter, adminTenantIds } = await findCommonFilter(req, { query: req.query });
     const options = paginateSort(req.query);
 
     const [total, tutors] = await Promise.all([
@@ -219,7 +241,13 @@ const findMany: RequestHandler = async (req, res, next) => {
 
     res.status(200).json({
       meta: { total, ...options },
-      data: tutors.map(tutor => transform(tutor, userId, idsToString(adminTenants).includes(tutor.tenant.toString()))),
+      data: tutors.map(tutor =>
+        transform(
+          tutor,
+          userId,
+          adminTenantIds.some(tid => tutor.tenant.equals(tid)),
+        ),
+      ),
     });
   } catch (error) {
     next(error);
@@ -235,11 +263,18 @@ const findOne = async (req: Request, args: unknown): Promise<(TutorDocument & Id
 
   const filter = searchFilter<TutorDocument>(searchableFields, { query }, { _id: id, tenant: { $in: userTenants } });
   const [adminTenants, tutor] = await Promise.all([
-    Tenant.find({ admins: userId, deletedAt: { $exists: false } }).lean(),
+    Tenant.findAdminTenants(userId, userTenants),
     Tutor.findOne(filter, select([USER.ROLE.ADMIN])).lean(),
   ]);
 
-  return tutor && transform(tutor, userId, idsToString(adminTenants).includes(tutor.tenant.toString()));
+  return (
+    tutor &&
+    transform(
+      tutor,
+      userId,
+      adminTenants.some(t => t._id.equals(tutor.tenant.toString())),
+    )
+  );
 };
 
 /**
@@ -263,18 +298,20 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
 const addCredential = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req);
-  const { id, ...fields } = await idSchema.concat(tutorCredentialSchema).validate(args);
+  const { id, ...inputFields } = await idSchema.concat(tutorCredentialSchema).validate(args);
 
-  const tutor = await Tutor.findOneAndUpdate(
-    { _id: id, user: userId, deletedAt: { $exists: false } },
-    { $push: { credentials: { ...fields, updatedAt: new Date() } } },
-    { fields: select(), new: true },
-  ).lean();
+  const update: UpdateQuery<TutorDocument> = {
+    $push: { credentials: { _id: mongoId(), ...inputFields, updatedAt: new Date() } },
+  };
+  const tutor = await Tutor.findOneAndUpdate({ _id: id, user: userId, deletedAt: { $exists: false } }, update, {
+    fields: select(),
+    new: true,
+  }).lean();
   if (!tutor) throw { statusCode: 422, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
   const { admins } = await Tenant.findByTenantId(tutor.tenant);
 
-  const { title } = fields;
+  const { title } = inputFields;
   const msg = {
     enUS: `A new user credential is added: ${title}, please provide proofs for manual verification`,
     zhCN: `刚上传学历资料：${title}，请提供证明文伴，等待人工审核。`,
@@ -282,13 +319,22 @@ const addCredential = async (req: Request, args: unknown): Promise<TutorDocument
   };
 
   const credentialId = tutor.credentials.find(c => c.title === title)?._id.toString();
-  await Promise.all([
+  const [transformed] = await Promise.all([
+    transform(
+      tutor,
+      userId,
+      admins.some(admin => admin.equals(userId)),
+    ),
     startChatGroup(tutor.tenant, msg, [...admins, userId], userLocale, `TUTOR#${id}`),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'addCredential', { credentialId, ...fields }),
-    notifySync('TUTOR', { tenantId: tutor.tenant, userIds: [...admins, userId] }, { tutorIds: [id] }),
+    DatabaseEvent.log(userId, `/tutors/${id}`, 'addCredential', { args, credentialId }),
+    notifySync(
+      tutor.tenant,
+      { userIds: [...admins, userId], event: 'TUTOR' },
+      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
+    ),
   ]);
 
-  return transform(tutor, userId, idsToString(admins).includes(userId));
+  return transformed;
 };
 
 /**
@@ -310,21 +356,29 @@ const removeCredential = async (req: Request, args: unknown): Promise<TutorDocum
 
   const { admins } = await Tenant.findByTenantId(original.tenant);
 
+  const update: UpdateQuery<TutorDocument> = {
+    credentials: original.credentials.filter(c => !c._id.equals(credentialId)),
+  };
   const [tutor] = await Promise.all([
-    Tutor.findByIdAndUpdate(
-      id,
-      { credentials: original.credentials.filter(c => c._id.toString() !== credentialId) },
-      { field: select(), new: true },
-    ).lean(),
+    Tutor.findByIdAndUpdate(id, update, { field: select(), new: true }).lean(),
     DatabaseEvent.log(userId, `/tutors/${id}`, 'removeCredential', {
-      credentialId,
-      originalCredential: original.credentials.find(c => c._id.toString() === credentialId),
+      args,
+      originalCredential: original.credentials.find(c => c._id.equals(credentialId)),
     }),
-    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, original.user] }, { tutorIds: [id] }),
+    notifySync(
+      original.tenant,
+      { userIds: [...admins, userId], event: 'TUTOR' },
+      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
+    ),
   ]);
 
-  if (tutor) return transform(tutor, userId, idsToString(admins).includes(userId));
-  log('error', 'tutorController:removeCredential()', { id, credentialId }, userId);
+  if (tutor)
+    return transform(
+      tutor,
+      userId,
+      admins.some(admin => admin.equals(userId)),
+    );
+  log('error', 'tutorController:removeCredential()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -339,7 +393,7 @@ const verifyCredential = async (req: Request, args: unknown): Promise<TutorDocum
 
   // only tenantAdmin could verify credentials
   const original = await Tutor.findOne({ _id: id, 'credentials._id': credentialId, deletedAt: { $exists: false } });
-  const credential = original?.credentials.find(c => c._id.toString() === credentialId);
+  const credential = original?.credentials.find(c => c._id.equals(credentialId));
 
   if (!original || !credential) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
   const { admins } = await Tenant.findByTenantId(original.tenant, userId);
@@ -356,12 +410,27 @@ const verifyCredential = async (req: Request, args: unknown): Promise<TutorDocum
       { fields: select([USER.ROLE.ADMIN]), new: true },
     ).lean(),
     startChatGroup(original.tenant, msg, [...admins, original.user], userLocale, `TUTOR#${id}`),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'verifyCredential', { credentialId }),
-    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, original.user] }, { tutorIds: [id] }),
+    DatabaseEvent.log(userId, `/tutors/${id}`, 'verifyCredential', { args }),
+    notifySync(
+      original.tenant,
+      { userIds: [...admins, userId], event: 'TUTOR' },
+      {
+        bulkWrite: {
+          tutors: [
+            {
+              updateOne: {
+                filter: { _id: id, 'credentials._id': credentialId },
+                update: { $set: { 'credentials.$.verifiedAt': new Date() } },
+              },
+            },
+          ] satisfies BulkWrite<TutorDocument>,
+        },
+      },
+    ),
   ]);
 
   if (tutor) return transform(tutor, userId, true);
-  log('error', 'tutorController:verifyCredential()', { id, credentialId }, userId);
+  log('error', 'tutorController:verifyCredential()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -372,18 +441,18 @@ const verifyCredential = async (req: Request, args: unknown): Promise<TutorDocum
 const addSpecialty = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req);
-  const { id, ...fields } = await idSchema.concat(tutorSpecialtySchema).validate(args);
+  const { id, ...inputFields } = await idSchema.concat(tutorSpecialtySchema).validate(args);
 
   const [original, level, subject] = await Promise.all([
     Tutor.findOne({ _id: id, user: userId, deletedAt: { $exists: false } }).lean(),
-    Level.findOne({ _id: fields.level, deletedAt: { $exists: false } }).lean(),
-    Subject.findOne({ _id: fields.subject, levels: fields.level, deletedAt: { $exists: false } }).lean(),
+    Level.findOne({ _id: inputFields.level, deletedAt: { $exists: false } }).lean(),
+    Subject.findOne({ _id: inputFields.subject, levels: inputFields.level, deletedAt: { $exists: false } }).lean(),
   ]);
-  if (!Object.keys(QUESTION.LANG).includes(fields.lang) || !original || !level || !subject)
+  if (!Object.keys(QUESTION.LANG).includes(inputFields.lang) || !original || !level || !subject)
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const specialtyId = original.specialties.find(
-    s => s.subject.toString() == fields.subject && s.level.toString() === fields.level && s.lang === fields.lang,
+    s => s.subject.equals(inputFields.subject) && s.level.equals(inputFields.level) && s.lang === inputFields.lang,
   )?._id;
 
   const { admins } = await Tenant.findByTenantId(original.tenant);
@@ -394,30 +463,63 @@ const addSpecialty = async (req: Request, args: unknown): Promise<TutorDocument 
     zhHK: `剛上傳專長資料：${level.name.zhHK}-${subject.name.zhHK}。`,
   };
 
+  const update: UpdateQuery<TutorDocument> = {
+    $push: {
+      specialties: {
+        _id: mongoId(),
+        ...inputFields,
+        level: level._id,
+        subject: subject._id,
+        priority: 0,
+        ranking: { updatedAt: new Date() },
+      },
+    },
+  };
   const [tutor] = await Promise.all([
     specialtyId
       ? // un-delete specialty
         await Tutor.findOneAndUpdate(
           { _id: id, 'specialties._id': specialtyId },
           {
-            $set: { 'specialties.$.note': fields.note },
+            $set: { 'specialties.$.note': inputFields.note },
             $unset: { 'specialties.$.deletedAt': 1 },
           },
           { fields: select(), new: true },
         ).lean()
       : // add a new specialty
-        await Tutor.findOneAndUpdate(
-          { _id: id },
-          { $push: { specialties: { ...fields, priority: 0, ranking: { updatedAt: new Date() } } } },
-          { fields: select(), new: true },
-        ).lean(),
+        await Tutor.findOneAndUpdate({ _id: id }, update, { fields: select(), new: true }).lean(),
     startChatGroup(original.tenant, msg, [...admins, userId], userLocale, `TUTOR#${id}`),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'addSpecialty', { specialtyId, ...fields }),
-    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, userId] }, { tutorIds: [id] }),
+    DatabaseEvent.log(userId, `/tutors/${id}`, 'addSpecialty', { args, specialtyId }),
+    notifySync(
+      original.tenant,
+      { userIds: [...admins, userId], event: 'TUTOR' },
+      {
+        bulkWrite: {
+          tutors: [
+            {
+              updateOne: specialtyId
+                ? {
+                    filter: { _id: id, 'specialties._id': specialtyId },
+                    update: {
+                      $set: { 'specialties.$.note': inputFields.note },
+                      $unset: { 'specialties.$.deletedAt': 1 },
+                    },
+                  }
+                : { filter: { _id: id }, update },
+            },
+          ] satisfies BulkWrite<TutorDocument>,
+        },
+      },
+    ),
   ]);
 
-  if (tutor) return transform(tutor, userId, idsToString(admins).includes(userId));
-  log('error', 'tutorController:addSpecialty()', { id, ...fields }, userId);
+  if (tutor)
+    return transform(
+      tutor,
+      userId,
+      admins.some(admin => admin.equals(userId)),
+    );
+  log('error', 'tutorController:addSpecialty()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
@@ -439,11 +541,30 @@ const removeSpecialty = async (req: Request, args: unknown): Promise<TutorDocume
 
   const { admins } = await Tenant.findByTenantId(tutor.tenant);
   await Promise.all([
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'removeSpecialty', { specialtyId }),
-    notifySync('TUTOR', { tenantId: tutor.tenant, userIds: [...admins, userId] }, { tutorIds: [id] }),
+    DatabaseEvent.log(userId, `/tutors/${id}`, 'removeSpecialty', { args }),
+    notifySync(
+      tutor.tenant,
+      { userIds: [...admins, userId], event: 'TUTOR' },
+      {
+        bulkWrite: {
+          tutors: [
+            {
+              updateOne: {
+                filter: { _id: id, 'specialties._id': specialtyId },
+                update: { $set: { 'specialties.$.deletedAt': new Date() } },
+              },
+            },
+          ] satisfies BulkWrite<TutorDocument>,
+        },
+      },
+    ),
   ]);
 
-  return transform(tutor, userId, idsToString(admins).includes(userId));
+  return transform(
+    tutor,
+    userId,
+    admins.some(admin => admin.equals(userId)),
+  );
 };
 
 /**
@@ -461,19 +582,21 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
   const { admins } = await Tenant.findByTenantId(original.tenant, userId);
 
+  const update: UpdateQuery<TutorDocument> = {
+    $unset: { intro: 1, officeHour: 1 },
+    credentials: [],
+    specialties: original.specialties.map(specialty => ({ ...specialty, deletedAt: new Date() })),
+    deletedAt: new Date(),
+    ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
+  };
   await Promise.all([
-    Tutor.updateOne(
-      { _id: id },
-      {
-        $unset: { intro: 1, officeHour: 1 },
-        credentials: [],
-        specialties: original.specialties.map(specialty => ({ ...specialty, deletedAt: new Date() })),
-        deletedAt: new Date(),
-        ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-      },
+    Tutor.updateOne({ _id: id }, update),
+    DatabaseEvent.log(userId, `/tutors/${id}`, 'DELETE', { args, original }),
+    notifySync(
+      original.tenant,
+      { userIds: [...admins, original.user], event: 'TUTOR' },
+      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
     ),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'DELETE', { remark, original }),
-    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, original.user] }, { tutorIds: [id] }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -498,24 +621,37 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 const update = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
   hubModeOnly();
   const { userId } = auth(req);
-  const { id, ...fields } = await idSchema.concat(tutorSchema).validate(args);
+  const { id, intro, officeHour } = await idSchema.concat(tutorSchema).validate(args);
 
   const original = await Tutor.findOne({ _id: id, user: userId, deleted: { $exists: false } }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
   const { admins } = await Tenant.findByTenantId(original.tenant);
 
+  const update: UpdateQuery<TutorDocument> = {
+    intro,
+    ...(officeHour ? { officeHour } : { $unset: { officeHour: 1 } }),
+  };
   const [tutor] = await Promise.all([
-    Tutor.findByIdAndUpdate(id, fields, { fields: select(), new: true }).lean(),
+    Tutor.findByIdAndUpdate(id, update, { fields: select(), new: true }).lean(),
     DatabaseEvent.log(userId, `/tutors/${id}`, 'UPDATE', {
+      args,
       intro: original.intro,
       officeHour: original.officeHour,
-      update: fields,
     }),
-    notifySync('TUTOR', { tenantId: original.tenant, userIds: [...admins, userId] }, { tutorIds: [id] }),
+    notifySync(
+      original.tenant,
+      { userIds: [...admins, userId], event: 'TUTOR' },
+      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
+    ),
   ]);
 
-  if (tutor) return transform(tutor, userId, idsToString(admins).includes(userId));
-  log('error', 'tutorController:update()', { id, ...fields }, userId);
+  if (tutor)
+    return transform(
+      tutor,
+      userId,
+      admins.some(admin => admin.equals(userId)),
+    );
+  log('error', 'tutorController:update()', args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 

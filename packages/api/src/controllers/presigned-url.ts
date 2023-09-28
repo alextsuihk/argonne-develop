@@ -3,13 +3,14 @@
  *
  */
 
-import { yupSchema } from '@argonne/common';
+import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
 
 import type { PresignedUrlWithExpiry } from '../utils/storage';
 import storage from '../utils/storage';
 import common from './common';
 
+const { MSG_ENUM } = LOCALE;
 const { auth } = common;
 const { presignedUrlSchema } = yupSchema;
 
@@ -20,7 +21,14 @@ const create = async (req: Request, args: unknown): Promise<PresignedUrlWithExpi
   const { userId } = auth(req);
   const { bucketType, ext } = await presignedUrlSchema.validate(args);
 
-  return storage.presignedPutObject(bucketType, ext, userId);
+  switch (bucketType) {
+    case 'private':
+      return storage.presignedPutObject('private', ext, userId);
+    case 'public':
+      return storage.presignedPutObject('public', ext, userId);
+    default:
+      throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  }
 };
 
 /**

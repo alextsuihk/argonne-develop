@@ -4,6 +4,7 @@
  */
 
 import {
+  expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
@@ -27,8 +28,8 @@ const route = 'publishers';
 describe(`${route.toUpperCase()} API Routes`, () => {
   let adminUser: (UserDocument & Id) | null;
   let normalUser: (UserDocument & Id) | null;
-  let url: string;
-  let url2: string;
+  let url: string | undefined;
+  let url2: string | undefined;
 
   // expected MINIMUM single publisher format
   const expectedMinFormat = {
@@ -37,12 +38,15 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     name: expectedLocaleFormat,
     admins: expect.any(Array),
     phones: expect.any(Array),
+
+    createdAt: expectedDateFormat(),
+    updatedAt: expectedDateFormat(),
   };
 
   beforeAll(async () => {
     ({ adminUser, normalUser } = await jestSetup(['admin', 'normal']));
   });
-  afterAll(async () => Promise.all([jestRemoveObject(url), jestRemoveObject(url2), jestTeardown()]));
+  afterAll(async () => Promise.all([url && jestRemoveObject(url), url2 && jestRemoveObject(url2), jestTeardown()]));
 
   test('should pass when getMany & getById', async () =>
     getMany(route, {}, expectedMinFormat, { testGetById: true, testInvalidId: true, testNonExistingId: true }));

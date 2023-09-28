@@ -40,6 +40,12 @@ export default gql`
     skipDeleted: Boolean
   }
 
+  type Bid {
+    bidder: String!
+    price: Int
+    contents: [String!]!
+  }
+
   type Chat {
     _id: ID!
     flags: [String!]!
@@ -54,7 +60,7 @@ export default gql`
   type Member {
     user: String!
     flags: [String!]!
-    lastViewedAt: Float
+    lastViewedAt: Float!
     ranking: Int
   }
 
@@ -70,7 +76,6 @@ export default gql`
   }
 
   type Remark {
-    _id: ID!
     t: Float!
     u: String
     m: String!

@@ -18,7 +18,7 @@ import { baseDefinition, localeDefinition } from './common';
 export type { Id } from './common';
 
 export interface MerchandiseDocument extends BaseDocument {
-  owner: string | Types.ObjectId;
+  owner: Types.ObjectId;
   name: Locale;
 
   amount: number;

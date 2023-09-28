@@ -5,17 +5,9 @@
 
 import { LOCALE } from '@argonne/common';
 
-import {
-  apolloExpect,
-  ApolloServer,
-  expectedIdFormat,
-  idsToString,
-  jestSetup,
-  jestTeardown,
-  shuffle,
-  testServer,
-} from '../jest';
+import { apolloExpect, ApolloServer, expectedIdFormat, jestSetup, jestTeardown, randomItem, testServer } from '../jest';
 import Tutor from '../models/tutor';
+import type { Id } from '../models/tutor-ranking';
 import { GET_TUTOR_RANKING, GET_TUTOR_RANKINGS } from '../queries/tutor-ranking';
 
 const { MSG_ENUM } = LOCALE;
@@ -47,8 +39,7 @@ describe('Tutor-Ranking GraphQL', () => {
 
     const res = await tutorServer.executeOperation({ query: GET_TUTOR_RANKINGS });
     apolloExpect(res, 'data', { tutorRankings: expect.arrayContaining([expectedFormat]) });
-
-    const [studentId] = idsToString(res.data!.tutorRankings).sort(shuffle);
+    const studentId = randomItem(res.data!.tutorRankings as Id[])._id.toString();
     const res2 = await tutorServer.executeOperation({ query: GET_TUTOR_RANKING, variables: { id: studentId } });
     apolloExpect(res2, 'data', { tutorRanking: { ...expectedFormat, _id: studentId } });
   });

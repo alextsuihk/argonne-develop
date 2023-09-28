@@ -35,6 +35,6 @@ router.post('/:action?', createNew);
  * @desc    tenantAdmin (school only) & user himself could update
  *
  */
-router.patch('/:id/:action?', updateById);
+router.patch('/:id/:action', updateById);
 
 export default router;

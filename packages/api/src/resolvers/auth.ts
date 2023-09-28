@@ -5,12 +5,14 @@
 
 import type { Ctx } from '../apollo';
 import authController from '../controllers/auth';
+import { authServiceToken } from '../controllers/auth-service';
 import { tryCatch } from './root';
 
 type unk = unknown;
 
 const {
   deregister,
+  isEmailAvailable,
   impersonateStart,
   impersonateStop,
   listSockets,
@@ -22,31 +24,27 @@ const {
   logout,
   logoutOther,
   oAuth2,
-  oAuth2Link,
-  oAuth2Unlink,
   register,
   renewToken,
+  sendEmailVerification,
+  sendMessengerVerification,
   update,
+  verifyEmail,
 } = authController;
 
 export default {
   Query: {
-    listSockets: async (_: unk, args: unk, { req }: Ctx) => listSockets(req),
-    listTokens: async (_: unk, __: unk, { req }: Ctx) => tryCatch(() => listTokens(req), true),
+    authServiceToken: (_: unk, args: unk, { req }: Ctx) => tryCatch(() => authServiceToken(req, args)),
+    isEmailAvailable: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => isEmailAvailable(req, args)),
+    listSockets: async (_: unk, __: unk, { req }: Ctx) => listSockets(req),
+    listTokens: async (_: unk, __: unk, { req }: Ctx) => tryCatch(() => listTokens(req)),
+    loginToken: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => loginToken(req, args)),
   },
 
   Mutation: {
-    addApiKey: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addApiKey')),
-    // TODO
-    // addPaymentMethod: async (_: unk, args: unk, { req, res }: Ctx) =>
-    //   tryCatch(() => update(req, args, 'addPaymentMethod')),
+    // login, logout, register, etc
     deregister: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => deregister(req, res, args), true),
-    impersonateStart: async (_: unk, args: unk, { req, res }: Ctx) =>
-      tryCatch(() => impersonateStart(req, res, args), true),
-    impersonateStop: async (_: unk, args: unk, { req, res }: Ctx) =>
-      tryCatch(() => impersonateStop(req, res, args), true),
     login: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => login(req, res, args), true),
-    loginToken: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => loginToken(req, res, args), true),
     loginWithStudentId: async (_: unk, args: unk, { req, res }: Ctx) =>
       tryCatch(() => loginWithStudentId(req, res, args), true),
     loginWithToken: async (_: unk, args: unk, { req, res }: Ctx) =>
@@ -54,16 +52,42 @@ export default {
     logout: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => logout(req, res, args), true),
     logoutOther: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => logoutOther(req, args), true),
     oAuth2: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => oAuth2(req, res, args), true),
-    oAuth2Link: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => oAuth2Link(req, args)),
-    oAuth2Unlink: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => oAuth2Unlink(req, args)),
     register: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => register(req, res, args), true),
+    renewToken: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => renewToken(req, res, args), true),
+
+    // impersonate
+    impersonateStart: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => impersonateStart(req, res, args), true),
+    impersonateStop: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => impersonateStop(req, res, args), true),
+
+    // send verification
+    sendEmailVerification: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => sendEmailVerification(req, args)),
+    sendMessengerVerification: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => sendMessengerVerification(req, args)),
+
+    // update
+    addApiKey: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addApiKey')),
+    addEmail: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addEmail')),
+    addMessenger: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addMessenger')),
+    addPaymentMethod: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => update(req, args, 'addPaymentMethod')),
+    oAuth2Link: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'oAuth2Link')),
+    oAuth2Unlink: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'oAuth2Unlink')),
     removeApiKey: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'removeApiKey')),
+    removeEmail: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'removeEmail')),
+    removeMessenger: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => update(req, args, 'removeMessenger')),
     removePaymentMethod: async (_: unk, args: unk, { req, res }: Ctx) =>
       tryCatch(() => update(req, args, 'removePaymentMethod')),
-    renewToken: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => renewToken(req, res, args), true),
+    updateAvailability: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => update(req, args, 'updateAvailability')),
+    updateAvatar: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'updateAvatar')),
     updateLocale: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'updateLocale')),
-    updateNetworkStatus: async (_: unk, args: unk, { req, res }: Ctx) =>
-      tryCatch(() => update(req, args, 'updateNetworkStatus')),
-    updateUserProfile: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args)),
+    updateProfile: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'updateProfile')),
+    verifyEmail: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => verifyEmail(req, args)),
+    verifyMessenger: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => update(req, args, 'verifyMessenger')),
   },
 };

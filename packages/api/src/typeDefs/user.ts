@@ -11,15 +11,16 @@ export default gql`
   }
 
   extend type Mutation {
-    addUser(tenantId: String!, email: String!): User!
+    addUser(tenantId: String, email: String!, name: String!, studentId: String): User!
     addUserFeature(id: ID!, feature: String!): User!
-    addUserSchoolHistory(id: ID!, tenantId: String!, year: String!, level: String!, schoolClass: String!): User!
+    addUserRemark(id: ID!, remark: String!): User!
+    addUserSchoolHistory(id: ID!, year: String!, level: String!, schoolClass: String): User!
     changeUserPassword(id: ID!, password: String!): StatusResponse!
     clearUserFlag(id: ID!, flag: String!): User!
     removeUserFeature(id: ID!, feature: String!): User!
     setUserFlag(id: ID!, flag: String!): User!
     suspendUser(id: ID!): User!
-    updateIdentifiedAt(userId: String!): User!
+    updateUserIdentifiedAt(id: ID!): User!
   }
 
   type User {
@@ -27,11 +28,17 @@ export default gql`
     flags: [String!]!
 
     tenants: [String!]!
+    status: String!
     name: String!
     formalName: Locale
     emails: [String!]!
+    features: [String!]!
 
     avatarUrl: String
+
+    violations: [UserViolation!]!
+    suspendUtil: Float
+    identifiedAt: Float
 
     studentIds: [String!]!
     schoolHistories: [UserSchoolHistory]!

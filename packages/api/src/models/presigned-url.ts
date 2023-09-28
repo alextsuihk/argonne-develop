@@ -11,7 +11,7 @@ import configLoader from '../config/config-loader';
 import { baseDefinition } from './common';
 
 export interface PresignedUrlDocument extends Document {
-  user: string | Types.ObjectId;
+  user: Types.ObjectId;
   url: string;
   expireAt: Date;
 }

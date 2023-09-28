@@ -18,20 +18,20 @@ export interface SchoolDocument extends BaseDocument {
   name: Locale;
 
   address?: Locale;
-  district?: string | Types.ObjectId;
+  district: Types.ObjectId;
   location?: Point;
 
   phones: string[];
   emi?: boolean;
-  band?: string;
+  band: string;
 
   logoUrl?: string;
   website?: string;
 
-  funding?: string;
-  gender?: string;
-  religion?: string;
-  levels: (string | Types.ObjectId)[];
+  funding: string;
+  gender: string;
+  religion: string;
+  levels: Types.ObjectId[];
 }
 
 const { SYSTEM } = LOCALE.DB_ENUM;

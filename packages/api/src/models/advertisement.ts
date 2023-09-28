@@ -26,7 +26,7 @@ export type { Id } from './common';
 export interface AdvertisementDocument extends BaseDocument {
   status: (typeof LOCALE.DB_TYPE.ADVERTISEMENT.STATUS)[number];
 
-  owner: string | Types.ObjectId;
+  owner: Types.ObjectId;
   title: string;
 
   beginAt: Date;
@@ -49,11 +49,11 @@ export interface AdvertisementDocument extends BaseDocument {
 
   balance: number;
 
-  audiences: (string | Types.ObjectId)[];
+  audiences: Types.ObjectId[]; // targeted audiences
 
   // TODO: break out views/clicks/coupon to AdvertisementEvent (generic)
   views: {
-    user: string | Types.ObjectId;
+    user: Types.ObjectId;
     viewedAt: Date;
     ip: string;
     ua: string;
@@ -62,7 +62,7 @@ export interface AdvertisementDocument extends BaseDocument {
   }[];
 
   clicks: {
-    user: string | Types.ObjectId;
+    user: Types.ObjectId;
     clickedAt: Date;
     ip: string;
     ua: string;
@@ -72,7 +72,7 @@ export interface AdvertisementDocument extends BaseDocument {
 
   coupons: {
     code: string;
-    user: string | Types.ObjectId;
+    user: Types.ObjectId;
     issuedAt: Date;
     expireAt: Date;
     ip: string;
@@ -82,7 +82,7 @@ export interface AdvertisementDocument extends BaseDocument {
   }[];
 
   approvedAt: Date;
-  approvedBy: string | Types.ObjectId;
+  approvedBy: Types.ObjectId;
   settledAt: Date;
 }
 

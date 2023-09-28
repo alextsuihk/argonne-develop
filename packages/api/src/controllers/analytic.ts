@@ -6,6 +6,7 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
 
+import type { SessionAnalyticDocument } from '../models/analytic/session';
 import SessionAnalytic from '../models/analytic/session';
 import type { StatusResponse } from './common';
 import common from './common';
@@ -20,13 +21,13 @@ const session = async (req: Request, args: unknown): Promise<StatusResponse> => 
 
   const { fullscreen, token, coordinates } = await analyticSessionSchema.validate(args);
 
-  await SessionAnalytic.create({
+  await SessionAnalytic.create<Partial<SessionAnalyticDocument>>({
     user: userId,
     fullscreen,
     token,
     ua,
     ip,
-    ...(coordinates && { type: 'Point', location: { coordinates: [coordinates.lng, coordinates.lat] } }),
+    ...(coordinates && { type: 'Point', coordinates: [coordinates.lng, coordinates.lat] }),
   });
   return { code: MSG_ENUM.COMPLETED };
 };

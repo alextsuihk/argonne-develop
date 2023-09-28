@@ -17,13 +17,14 @@ import { client as minioClient, publicBucket } from '../../utils/storage';
 import { addTenantToUsers } from '../helper';
 
 const { TENANT } = LOCALE.DB_ENUM;
-const { CHAT_GROUP, CLASSROOM, QUESTION, TUTOR } = TENANT.SERVICE;
+const { CHAT_GROUP, CLASSROOM, TUTOR } = TENANT.SERVICE;
 
 const seed = async (): Promise<string> => {
   const [logoImage, { alexId }] = await Promise.all([
     fsPromises.readFile(path.join(__dirname, 'images', 'logo-stem.png')),
     User.findSystemAccountIds(),
   ]);
+  if (!alexId) throw 'alexId is not available';
 
   const logoFilename = randomString('png');
   const htmlFilename = randomString('html');
@@ -32,7 +33,7 @@ const seed = async (): Promise<string> => {
     code: 'STEM',
     name: { enUS: 'STEM.Inspire.HK', zhHK: 'STEM.Inspire.HK', zhCN: 'STEM.Inspire.HK' },
     admins: [alexId],
-    services: [CHAT_GROUP, CLASSROOM, QUESTION, TUTOR],
+    services: [CHAT_GROUP, CLASSROOM, TUTOR],
     htmlUrl: `/${publicBucket}/${htmlFilename}`,
     logoUrl: `/${publicBucket}/${logoFilename}`,
     flaggedWords: [],
@@ -106,8 +107,7 @@ const seed = async (): Promise<string> => {
     addTenantToUsers([alexId], tenant._id),
     minioClient.putObject(publicBucket, logoFilename, logoImage),
     minioClient.putObject(publicBucket, htmlFilename, html),
-
-    tenant.save(),
+    Tenant.insertMany(tenant, { rawResult: true }),
   ]);
 
   return `(${chalk.green('Stem tenant')} created)`;

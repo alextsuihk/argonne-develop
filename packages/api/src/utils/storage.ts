@@ -6,15 +6,19 @@
 import { LOCALE } from '@argonne/common';
 import axios from 'axios';
 import { addSeconds } from 'date-fns';
+import mime from 'mime';
 import { Client } from 'minio';
 import type { Types } from 'mongoose';
 
 import configLoader from '../config/config-loader';
+import type { PresignedUrlDocument } from '../models/presigned-url';
 import PresignedUrl from '../models/presigned-url';
-import { randomString } from './helper';
+import { mongoId, randomString } from './helper';
+import log from './log';
 export type { BucketItem } from 'minio';
 
 export type PresignedUrlWithExpiry = { url: string; expiry: number };
+type BucketType = 'public' | 'private';
 
 const { MSG_ENUM } = LOCALE;
 const { config, DEFAULTS } = configLoader;
@@ -31,23 +35,37 @@ export const client = new Client({ endPoint, port, useSSL, accessKey, secretKey 
 /**
  * Fetch from external URL to local storage (minio)
  */
-const fetchToLocal = async (url: string, bucketType: 'private' | 'public' = 'public'): Promise<string> => {
-  const { data } = await axios.get<Blob>(url, { responseType: 'blob' });
-  const image = URL.createObjectURL(new Blob([data]));
+const downloadFromUrlAndSave = async (url: string, bucketType: BucketType = 'public') => {
+  try {
+    console.log('downloadFromUrlAndSave(): try to use stream, facebook avatar is not a file');
+    const { data, headers } = await axios.get<Blob>(url, { timeout: DEFAULTS.AXIOS_TIMEOUT, responseType: 'blob' });
+    const image = URL.createObjectURL(new Blob([data]));
 
-  console.log('fetchToLocal(), need to check file extension, NOT always PNG');
+    console.log('downloadFromUrlAndSave(), need to check file extension, NOT always PNG');
 
-  const bucketName = bucketType === 'private' ? privateBucket : publicBucket;
-  const objectName = randomString('png');
-  await client.putObject(bucketName, objectName, image);
+    const bucketName = bucketType === 'private' ? privateBucket : publicBucket;
 
-  return `/${bucketName}/${objectName}`;
+    const defaultExt = 'PnG'; // TODO: change it later to 'png'
+    const ext = mime.getExtension(headers['Content-Type']?.toString() || defaultExt) || defaultExt;
+    const objectName = randomString(ext);
+
+    console.log(`downloadFromUrlAndSave(), objectName: /${bucketName}/${objectName}`);
+
+    await client.putObject(bucketName, objectName, image);
+    return objectName;
+  } catch (error) {
+    return null;
+  }
 };
 
 /**
  * Generate presignedUrl (for upload)
  */
-const presignedPutObject = async (bucketType: string, ext: string, userId: string): Promise<PresignedUrlWithExpiry> => {
+const presignedPutObject = async (
+  bucketType: BucketType,
+  ext: string,
+  userId: string,
+): Promise<PresignedUrlWithExpiry> => {
   const bucketName = bucketType === 'private' ? privateBucket : publicBucket;
   if (!(await client.bucketExists(bucketName))) throw { statusCode: 500, code: MSG_ENUM.MINIO_ERROR };
 
@@ -55,8 +73,8 @@ const presignedPutObject = async (bucketType: string, ext: string, userId: strin
   const expiry = DEFAULTS.STORAGE.PRESIGNED_URL_PUT_EXPIRY;
   const [presignedUrl] = await Promise.all([
     client.presignedPutObject(bucketName, objectName, expiry),
-    PresignedUrl.create({
-      user: userId,
+    PresignedUrl.create<Partial<PresignedUrlDocument>>({
+      user: mongoId(userId),
       url: `/${bucketName}/${objectName}`,
       expireAt: addSeconds(Date.now(), DEFAULTS.STORAGE.PRESIGNED_URL_PUT_EXPIRY + 5),
     }),
@@ -98,14 +116,16 @@ const removeExpiredObjects = async (): Promise<void> => {
 /**
  * Remove Object from Minio
  */
-const removeObject = async (url: string): Promise<void> => {
+const removeObject = async (url: string): Promise<string | false> => {
   const [bucketName, ...rest] = url.split('/').slice(1);
-  if (!bucketName || !rest.length || !buckets.includes(bucketName)) return;
+  if (!bucketName || !rest.length || !buckets.includes(bucketName)) return false;
 
   try {
     await client.removeObject(bucketName, rest.join('/'));
+    return url;
   } catch (error) {
-    throw { statusCode: 500, code: MSG_ENUM.MINIO_ERROR };
+    await log('error', `fail to removeObject ${url}`);
+    return false;
   }
 };
 
@@ -125,7 +145,7 @@ export const signUrls = async (urls: string[]): Promise<string[]> =>
         case privateBucket:
           return client.presignedGetObject(bucketName, rest.join('/'), DEFAULTS.STORAGE.PRESIGNED_URL_GET_EXPIRY);
         default:
-          return `${minio.serverUrl}/${publicBucket}/error.png`;
+          return url; // non minio path
       }
     }),
   );
@@ -136,25 +156,28 @@ export const signUrls = async (urls: string[]): Promise<string[]> =>
  *
  * @param url (e.g. /bucketName/objectName)
  */
-const validateObject = async (url: string, userId: string | Types.ObjectId, skipCheck = false): Promise<void> => {
+const validateObject = async (url: string, userId: string | Types.ObjectId, skipCheck = false): Promise<string> => {
   const [bucketName, ...rest] = url.split('/').slice(1) ?? [];
 
   if (!bucketName || !rest.length || !buckets.includes(bucketName))
     throw { statusCode: 500, code: MSG_ENUM.USER_INPUT_ERROR };
 
   try {
-    if (!skipCheck) {
-      const { deletedCount } = await PresignedUrl.deleteOne({ user: userId, url });
-      if (!deletedCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-    }
-    await client.statObject(bucketName, rest.join('/'));
+    const [deleteResult] = await Promise.all([
+      !skipCheck && PresignedUrl.deleteOne({ user: userId, url }),
+      client.statObject(bucketName, rest.join('/')),
+    ]);
+
+    if (deleteResult && !deleteResult.deletedCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+    return url;
   } catch (error) {
     throw { statusCode: 422, code: MSG_ENUM.MINIO_ERROR };
   }
 };
 
 export default {
-  fetchToLocal,
+  downloadFromUrlAndSave,
   presignedPutObject,
   removeExpiredObjects,
   removeObject,

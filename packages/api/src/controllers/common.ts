@@ -7,7 +7,7 @@
  *
  */
 
-import type { Query } from '@argonne/common';
+import type { QuerySchema } from '@argonne/common';
 import { LOCALE } from '@argonne/common';
 import merge from 'deepmerge';
 import type { Request } from 'express';
@@ -15,17 +15,14 @@ import type { FilterQuery, Types } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import type { BaseDocument, Id } from '../models/common/base';
-import type { ContentDocument } from '../models/content';
-import Job from '../models/job';
 import Level from '../models/level';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';
-import { isTestMode } from '../utils/environment';
 import { containUtf8, schoolYear } from '../utils/helper';
 import type { Auth } from '../utils/token';
 
 type AuthRole = 'ADMIN' | 'ROOT';
-
+// export type BulkWriteOps<T extends BaseDocument> = mongo.AnyBulkWriteOperation<T & Id>[]; // EOL >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 export type StatusResponse = { code: string };
 
 const { MSG_ENUM } = LOCALE;
@@ -34,11 +31,6 @@ const { config, DEFAULTS } = configLoader;
 
 const DELETED_LOCALE = { enUS: '<Record Deleted>', zhCN: '<已被删除>', zhHK: '<已被刪除>' };
 const DELETED = DELETED_LOCALE.enUS;
-
-const defaultSelect = {
-  admin: '-__v -idx',
-  normal: '-__v -idx -remarks',
-};
 
 /**
  * Assert when reaching unreachable
@@ -55,8 +47,6 @@ const auth = (req: Request, role?: AuthRole): Auth => {
   if (!userFlags || !userId || !userLocale || !userName || !userRoles || !userScopes || !userTenants)
     throw { statusCode: 401, code: MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR };
 
-  if (!userTenants) throw { statusCode: 400, code: MSG_ENUM.TENANT_ERROR }; // publisherAdmin might not be in any tenants
-
   if (role === 'ADMIN' && !isAdmin(userRoles)) throw { statusCode: 403, code: MSG_ENUM.AUTH_REQUIRE_ROLE_ADMIN };
   if (role === 'ROOT' && !isRoot(userRoles)) throw { statusCode: 403, code: MSG_ENUM.AUTH_REQUIRE_ROLE_ROOT };
 
@@ -69,7 +59,7 @@ const auth = (req: Request, role?: AuthRole): Auth => {
 const authCheckUserSuspension = async (req: Request): Promise<UserDocument & Id> => {
   const user = await authGetUser(req);
 
-  if (user.suspension && user.suspension < new Date()) throw { statusCode: 403, code: MSG_ENUM.SUBMISSION_SUSPENDED };
+  if (user.suspendUtil && user.suspendUtil < new Date()) throw { statusCode: 403, code: MSG_ENUM.SUBMISSION_SUSPENDED };
   return user;
 };
 
@@ -86,33 +76,12 @@ const authGetUser = async (req: Request, role?: AuthRole): Promise<UserDocument 
   return req.user;
 };
 
-const censorContent = async (
-  tenantId: string | Types.ObjectId,
-  userId: string,
-  userLocale: string,
-  model: 'chat-groups' | 'questions',
-  parentId: string | Types.ObjectId,
-  content: string | Types.ObjectId | (ContentDocument & Id),
-) =>
-  !isTestMode &&
-  Job.queue({
-    task: 'censor',
-    args: {
-      tenantId: tenantId.toString(),
-      userId,
-      userLocale,
-      model,
-      parentId: parentId.toString(),
-      contentId: content.toString(),
-    },
-  });
-
 /**
  * Operation is NOT supported in satellite mode
  */
-// const satelliteModeOnly = (): void => {
-//   if (config.mode !== 'SATELLITE') throw { statusCode: 400, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
-// };
+const satelliteModeOnly = (): void => {
+  if (config.mode !== 'SATELLITE') throw { statusCode: 400, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
+};
 
 const hubModeOnly = (): void => {
   if (config.mode !== 'HUB') throw { statusCode: 400, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
@@ -143,15 +112,16 @@ const isRoot = (userRoles?: string[]): boolean => !!userRoles?.includes(USER.ROL
 /**
  * Check if user is current a teacher
  */
-let teacherLevelId: string | undefined; // simple caching (this is basically a constant)
-const isTeacher = async (userExtra: Auth['userExtra']) => {
+let teacherLevelId: Types.ObjectId | undefined; // simple caching (this is basically a constant)
+const isTeacher = async (userExtra: Auth['userExtra']): Promise<boolean> => {
   if (!userExtra) return false;
 
-  teacherLevelId ||= (await Level.exists({ code: 'TEACHER' }))?._id.toString();
+  teacherLevelId ||= (await Level.exists({ code: 'TEACHER' }))?._id;
   const [prevSchoolYear, currSchoolYear, nextSchoolYear] = [schoolYear(-1), schoolYear(), schoolYear(1)];
 
   return (
-    userExtra.level == teacherLevelId &&
+    !!teacherLevelId &&
+    teacherLevelId.equals(userExtra.level) &&
     (new Date().getMonth() === 7 || new Date().getMonth() === 8
       ? [prevSchoolYear, currSchoolYear, nextSchoolYear].includes(userExtra.year)
       : currSchoolYear === userExtra.year)
@@ -183,7 +153,7 @@ const paginateSort = (
  */
 const searchFilter = <T extends BaseDocument>(
   searchableFields: string[],
-  { query }: Query,
+  { query }: QuerySchema,
   extra?: FilterQuery<T>,
 ): FilterQuery<T> => {
   const { search, updatedBefore, updatedAfter, skipDeleted } = query;
@@ -213,7 +183,7 @@ const searchFilter = <T extends BaseDocument>(
 /**
  * Query Projection (select)
  */
-const select = (userRoles?: string[], roleSelect = defaultSelect) =>
+const select = (userRoles?: string[], roleSelect = { admin: '-__v -idx', normal: '-__v -idx -remarks' }) =>
   roleSelect[isAdmin(userRoles) ? 'admin' : 'normal'];
 
 export default {
@@ -223,7 +193,6 @@ export default {
   auth,
   authCheckUserSuspension,
   authGetUser,
-  censorContent,
   guest,
   hubModeOnly,
   hasRole,
@@ -231,7 +200,7 @@ export default {
   isRoot,
   isTeacher,
   paginateSort,
-  // satelliteModeOnly,
+  satelliteModeOnly,
   searchFilter,
   select,
 };

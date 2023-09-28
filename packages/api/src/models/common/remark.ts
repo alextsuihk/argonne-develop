@@ -3,17 +3,15 @@
  *
  */
 
-import type { Types } from 'mongoose';
-import { Schema } from 'mongoose';
-
 export interface Remark {
   t: Date;
-  u?: string | Types.ObjectId;
+  u?: string; // this is a special case, as remark is immutable
   m: string;
 }
 
 export const remarkDefinition = {
+  _id: false, // use t (timestamp) for React map
   t: { type: Date, default: Date.now },
-  u: { type: Schema.Types.ObjectId, ref: 'User' },
+  u: String,
   m: String,
 };

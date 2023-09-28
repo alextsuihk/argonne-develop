@@ -8,16 +8,16 @@ import { gql } from 'apollo-server-express';
 
 export default gql`
   extend type Query {
+    authServiceToken(client: String!): AuthService
+    isEmailAvailable(email: String!): Boolean
     listSockets: [String!]!
     listTokens: [Token!]!
+    loginToken(tenantId: String!, userId: String!, expiresIn: Int): String!
   }
 
   extend type Mutation {
-    addApiKey(scope: String!, note: String, expireAt: DateInput): AuthUser!
-    # addPaymentMethod(): AuthUser! ### TODO
+    # login, logout, register, etc
     deregister(password: String!, coordinates: CoordinatesInput, clientHash: String): DeregisterResponse!
-    impersonateStart(userId: String!, coordinates: CoordinatesInput, clientHash: String): AuthSuccessfulResponse!
-    impersonateStop(refreshToken: String!, coordinates: CoordinatesInput): StatusResponse!
     login(
       email: String!
       password: String!
@@ -26,29 +26,26 @@ export default gql`
       coordinates: CoordinatesInput
       clientHash: String
     ): AuthResponse!
-    loginToken(tenantId: String!, userId: String!, expiresIn: Int): String!
     loginWithStudentId(
+      tenantId: String!
       studentId: String!
       password: String!
       isPublic: Boolean
       force: Boolean
       coordinates: CoordinatesInput
       clientHash: String
-      tenantId: String!
     ): AuthResponse!
-    loginWithToken(token: String!): AuthResponse!
+    loginWithToken(token: String!, coordinates: CoordinatesInput, clientHash: String): AuthResponse!
     logout(refreshToken: String!, coordinates: CoordinatesInput): StatusResponse!
     logoutOther(refreshToken: String!, coordinates: CoordinatesInput): LogoutOtherResponse!
     oAuth2(
       provider: String!
-      token: String!
+      code: String!
       isPublic: Boolean
       force: Boolean
       coordinates: CoordinatesInput
       clientHash: String
     ): AuthResponse!
-    oAuth2Link(provider: String!, token: String!, coordinates: CoordinatesInput): AuthUser!
-    oAuth2Unlink(provider: String!, coordinates: CoordinatesInput): AuthUser!
     register(
       name: String!
       email: String!
@@ -57,25 +54,44 @@ export default gql`
       coordinates: CoordinatesInput
       clientHash: String
     ): AuthSuccessfulResponse!
-    removeApiKey(id: String!): AuthUser!
-    removePaymentMethod(id: String!): AuthUser!
     renewToken(
       refreshToken: String!
       isPublic: Boolean
       coordinates: CoordinatesInput
       clientHash: String
     ): AuthSuccessfulResponse!
-    updateLocale(locale: String!): AuthUser!
-    updateNetworkStatus(networkStatus: String!): AuthUser!
-    updateUserProfile(
-      name: String!
-      formalName: LocaleInput
-      avatarUrl: String
-      mobile: String
-      whatsapp: String
-      yob: Int
-      dob: DateInput
+
+    # impersonation
+    impersonateStart(userId: String!, coordinates: CoordinatesInput, clientHash: String): AuthSuccessfulResponse!
+    impersonateStop(refreshToken: String!, coordinates: CoordinatesInput): StatusResponse!
+
+    # request to send verification
+    sendEmailVerification(email: String!): StatusResponse!
+    sendMessengerVerification(provider: String!, account: String!): StatusResponse!
+
+    # update (auth-extra)
+    addApiKey(scope: String!, note: String, expireAt: DateInput!): AuthUser!
+    addEmail(email: String!): AuthUser!
+    addMessenger(provider: String!, account: String!): AuthUser!
+    addPaymentMethod(
+      currency: String!
+      bank: String
+      account: String!
+      payable: Boolean
+      receivable: Boolean
     ): AuthUser!
+    oAuth2Link(provider: String!, code: String!): AuthUser!
+    oAuth2Unlink(oAuthId: String!): AuthUser!
+    removeApiKey(id: String!): AuthUser!
+    removeEmail(email: String!): AuthUser!
+    removeMessenger(provider: String!, account: String!): AuthUser!
+    removePaymentMethod(id: String!): AuthUser!
+    updateAvailability(availability: String): AuthUser!
+    updateAvatar(avatarUrl: String): AuthUser!
+    updateLocale(locale: String!): AuthUser!
+    updateProfile(name: String, formalName: LocaleInput, yob: Int, dob: DateInput): AuthUser!
+    verifyEmail(token: String!): StatusResponse!
+    verifyMessenger(provider: String!, account: String!, token: String!): AuthUser!
   }
 
   type AuthConflict {
@@ -101,6 +117,13 @@ export default gql`
     user: AuthUser!
   }
 
+  type AuthService {
+    clientId: String!
+    token: String!
+    tokenExpireAt: Float!
+    redirectUri: String!
+  }
+
   type AuthUser {
     _id: ID!
     flags: [String!]!
@@ -113,10 +136,9 @@ export default gql`
 
     oAuth2s: [String!]!
     avatarUrl: String
-    mobile: String
-    whatsapp: String
+    messengers: [String!]!
 
-    networkStatus: String
+    availability: String
 
     timezone: String!
     locale: String!
@@ -124,13 +146,13 @@ export default gql`
     darkMode: Boolean!
     theme: String
 
-    apiKeys: [UserApiKey]
+    apiKeys: [UserApiKey!]!
     roles: [String!]!
     features: [String!]!
     scopes: [String!]!
 
     yob: Int
-    dob: String
+    dob: Float
 
     coin: Int!
     virtualCoin: Int!
@@ -145,7 +167,7 @@ export default gql`
     staffs: [String!]!
 
     violations: [UserViolation!]!
-    suspension: String
+    suspendUtil: Float
     expoPushTokens: [String!]!
 
     creditability: Int!
@@ -181,14 +203,16 @@ export default gql`
   }
 
   type UserApiKey {
+    _id: String!
+    value: String!
     scope: String!
     note: String
     expireAt: Float!
   }
 
   type UserPaymentMethod {
+    _id: String!
     currency: String!
-    type: String!
     bank: String
     account: String!
     payable: Boolean!

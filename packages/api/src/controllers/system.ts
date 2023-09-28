@@ -14,6 +14,7 @@ import mongoose from 'mongoose';
 import { io } from 'socket.io-client';
 
 import configLoader from '../config/config-loader';
+import type { JobDocument } from '../models/job';
 import Job from '../models/job';
 import Tenant from '../models/tenant';
 import User from '../models/user';
@@ -34,29 +35,26 @@ const { assertUnreachable } = common;
 const { buildInfo, mode } = configLoader.config;
 const { version, hash, builtAt } = buildInfo;
 
-let hubVersion: string | null = null;
+const TIMEOUT = DEFAULTS.AXIOS_TIMEOUT + 500;
 
-export const updateHubVersion = async () => {
-  config.mode === 'HUB'
-    ? (hubVersion = null)
-    : ({
-        data: { version: hubVersion },
-      } = await axios.get<Awaited<ReturnType<typeof getServerInfo>>>(
-        `${DEFAULTS.ARGONNE_URL}/api/systems/server-info`,
-      ));
+// let hubVersion: string | null = null;
+
+export const updateHubVersion = async (): Promise<string> => {
+  if (config.mode === 'HUB') return version;
+
+  const HUB_VERSION_KEY = 'hubVersion';
+  const cached = await redisCache.get(HUB_VERSION_KEY);
+  if (typeof cached === 'string') return cached;
+
+  const { data } = await axios.get<Awaited<ReturnType<typeof getServerInfo>>>(
+    `${DEFAULTS.ARGONNE_URL}/api/systems/server-info`,
+    { timeout: DEFAULTS.AXIOS_TIMEOUT },
+  );
+
+  const { version: hubVersion } = data;
+  await redisCache.set(HUB_VERSION_KEY, hubVersion);
+  return hubVersion;
 };
-
-// For Promise.race() timeout
-const timer = {
-  mongo: 0, // 0 for placeholder
-  redis: 0,
-  socket: 0,
-};
-
-const timeout = (milliseconds = 2000, task: keyof typeof timer) =>
-  new Promise<number>(resolve => {
-    timer[task] = setTimeout(resolve, milliseconds, { status: 'timeout', error: `timeout (${milliseconds})` });
-  });
 
 /**
  * Health Check
@@ -79,13 +77,11 @@ const healthReport = () => ({
  * Server Info
  */
 const getServerInfo = async () => {
-  const [primaryTenant, tenantCount] = await Promise.all([Tenant.findPrimary(), Tenant.countDocuments()]);
+  const [primaryTenant, hubVersion] = await Promise.all([Tenant.findPrimary(), updateHubVersion()]);
 
   return {
     mode,
     primaryTenantId: primaryTenant && primaryTenant._id.toString(), // null or string
-    status:
-      mode === 'HUB' ? 'ready' : tenantCount === 0 ? 'uninitialized' : tenantCount === 1 ? 'initializing' : 'ready',
     minio: config.server.minio.serverUrl,
     timestamp: Date.now(),
     version,
@@ -114,17 +110,17 @@ const getStatus = async (req: Request) => {
     const startedAt = Date.now();
     const url = DEFAULTS.LOGGER_URL;
 
-    if (!config.loggerApiKey) return { url, status: 'improper configuration' };
+    if (!config.loggerApiKey) return { url, server: 'improper configuration' };
 
     try {
       const { data } = await axios.get<ReturnType<typeof healthReport>>(`${url}/api/health`, {
         headers: { 'x-api-key': config.loggerApiKey },
-        timeout: 2000,
+        timeout: DEFAULTS.AXIOS_TIMEOUT,
       });
-      return { url, status: 'up', timeElapsed: Date.now() - startedAt, ...data };
+      return { url, server: 'up', timeElapsed: Date.now() - startedAt, ...data };
     } catch (error) {
       await log('error', '/api/systems/system:checkLogger error');
-      return { url, status: 'down', timeElapsed: Date.now() - startedAt };
+      return { url, server: 'down', timeElapsed: Date.now() - startedAt };
     }
   };
 
@@ -132,120 +128,99 @@ const getStatus = async (req: Request) => {
    * check Mongoose connection (promise)
    * wrapping with Promise.race to timeout in case mongoose connection is down
    */
-  const checkMongo = Promise.race([
-    timeout(2000, 'mongo'),
+  const checkMongo = async () => {
+    if (mongoose.connection.readyState !== 1) await new Promise(resolve => setTimeout(resolve, 50));
+    if (mongoose.connection.readyState !== 1) await new Promise(resolve => setTimeout(resolve, 100));
+    if (mongoose.connection.readyState !== 1) await new Promise(resolve => setTimeout(resolve, 200));
 
-    (async () => {
-      // wait 500ms for Jest test
-      if (mongoose.connection.readyState !== 1) await new Promise(resolve => setTimeout(resolve, 300));
-      if (mongoose.connection.readyState !== 1) await new Promise(resolve => setTimeout(resolve, 300));
+    const state = ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState];
+    const pool = mongoose.connections.length;
 
-      const state = ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState];
-      const pool = mongoose.connections.length;
-
-      const startedAt = Date.now();
-      try {
-        const job = await Job.create({
-          status: JOB.STATUS.COMPLETED,
-          script: 'JEST',
-          progress: 100,
-          startAfter: new Date(),
-          startedAt: new Date(),
-          completedAt: new Date(),
-        });
-        await Job.findByIdAndDelete(job).exec(); // convert to a true promise
-        clearTimeout(timer.mongo); // timer still runs async, so cleanly clearTimeout()
-        return { state, status: 'up', pool, timeElapsed: Date.now() - startedAt };
-      } catch (error) {
-        await log('error', '/api/systems/system:checkMongo error', error);
-        clearTimeout(timer.mongo); // timer still runs async, so cleanly clearTimeout()
-        return { state, status: 'down', pool, timeElapsed: Date.now() - startedAt };
-      }
-    })(),
-  ]);
+    const startedAt = Date.now();
+    try {
+      const job = await Job.create<Partial<JobDocument>>({
+        status: JOB.STATUS.COMPLETED,
+        title: 'JEST',
+        progress: 100,
+        startAfter: new Date(),
+        startedAt: new Date(),
+        completedAt: new Date(),
+        result: 'JEST mongoDB test',
+      });
+      await Job.findByIdAndDelete(job); // convert to a true promise
+      return { state, server: 'up', pool, timeElapsed: Date.now() - startedAt };
+    } catch (error) {
+      await log('error', '/api/systems/system:checkMongo error', error);
+      return { state, server: 'down', pool, timeElapsed: Date.now() - startedAt };
+    }
+  };
 
   /**
    * check Redis connection (promise)
    *   wrapping with Promise.race to timeout in case redis connection is down
    */
-  const checkRedis = Promise.race([
-    timeout(2000, 'redis'),
-    (async () => {
-      // wait 500ms for Jest test
-      if (redisCache.getStatus() !== 'ready') await new Promise(resolve => setTimeout(resolve, 200));
-      if (redisCache.getStatus() !== 'ready') await new Promise(resolve => setTimeout(resolve, 200));
-
-      const randomData = randomString();
-      const startedAt = Date.now();
-      const state = redisCache.getStatus();
-      try {
-        await redisCache.set(randomData, randomData, 50);
-        const readBack = await redisCache.get(randomData);
-        const status = readBack === randomData ? 'up' : 'down';
-        clearTimeout(timer.redis); // timer still runs async, so cleanly clearTimeout()
-        return { state, status, timeElapsed: Date.now() - startedAt };
-      } catch (error) {
-        await log('error', '/api/systems/system:checkRedis error');
-        clearTimeout(timer.redis); // timer still runs async, so cleanly clearTimeout()
-        return { state, status: 'down', timeElapsed: Date.now() - startedAt };
-      }
-    })(),
-  ]);
+  const checkRedis = async () => {
+    const randomData = randomString();
+    const startedAt = Date.now();
+    const state = redisCache.getStatus();
+    try {
+      await redisCache.set(randomData, randomData, 50);
+      const readBack = await redisCache.get(randomData);
+      return { state, server: readBack === randomData ? 'up' : 'down', timeElapsed: Date.now() - startedAt };
+    } catch (error) {
+      await log('error', '/api/systems/system:checkRedis error');
+      return { state, server: 'down', timeElapsed: Date.now() - startedAt };
+    }
+  };
 
   /**
    * check Socket.io connection
    */
-  const checkSocket =
-    isStagingMode || isTestMode
-      ? { status: 'Not Available in Test Mode' } // cannot don't know the port#, Instead, socket-server.test.ts will cover this test.
-      : Promise.race([
-          timeout(2000, 'socket'),
-          (async () => {
-            const startedAt = Date.now();
-            try {
-              const testUser = await User.findOne({ flags: 'TESTER' }).lean();
-              if (!testUser) return { status: 'improper configuration' };
+  const checkSocket = async () => {
+    if (isStagingMode || isTestMode) return { server: 'Not Available in Test Mode' }; // cannot don't know the port#, Instead, socket-server.test.ts will cover this test.
 
-              const socket = io(`http://127.0.0.1:${config.port}`);
-              const { accessToken } = await token.createTokens(testUser, {
-                ip: '127.0.0.1',
-                ua: 'Jest-User-Agent',
-                expiresIn: 5,
-              });
+    const startedAt = Date.now();
+    try {
+      const testUser = await User.findOne({ flags: 'TESTER' }).lean();
+      if (!testUser) return { server: 'improper configuration' };
 
-              socket.once('JOIN', (receivedMsg: { token?: string; error?: string; msg?: string }) => {
-                if (receivedMsg.token === accessToken) {
-                  clearTimeout(timer.socket); // timer still runs async, so cleanly clearTimeout()
-                  return { status: 'up', timeElapsed: Date.now() - startedAt };
-                }
-              });
-              socket.emit('JOIN', { token: accessToken });
-            } catch (error) {
-              await log('error', '/api/systems/system:checkSocket error');
-              clearTimeout(timer.socket); // timer still runs async, so cleanly clearTimeout()
-              return { status: 'down', timeElapsed: Date.now() - startedAt };
-            }
-          })(),
-        ]);
+      const socket = io(`http://127.0.0.1:${config.port}`);
+      const { accessToken } = await token.createTokens(testUser, {
+        ip: '127.0.0.1',
+        ua: 'Jest-User-Agent',
+        expiresIn: 5,
+      });
+
+      socket.once('JOIN', (receivedMsg: { token?: string; error?: string; msg?: string }) => {
+        if (receivedMsg.token === accessToken) {
+          return { server: 'up', timeElapsed: Date.now() - startedAt };
+        }
+      });
+      socket.emit('JOIN', { token: accessToken });
+    } catch (error) {
+      await log('error', '/api/systems/system:checkSocket error');
+      return { server: 'down', timeElapsed: Date.now() - startedAt };
+    }
+  };
 
   // async () => {
-  //   if (isStagingMode || isTestMode) return { status: 'Not Available in Test Mode' }; // cannot don't know the port#, Instead, socket-server.test.ts will cover this test.
+  //   if (isStagingMode || isTestMode) return { server: 'Not Available in Test Mode' }; // cannot don't know the port#, Instead, socket-server.test.ts will cover this test.
 
   //   const startedAt = Date.now();
   //   try {
   //     const testUser = await User.findOne({ flags: 'TESTER' }).lean();
-  //     if (!testUser) return { status: 'improper configuration' };
+  //     if (!testUser) return { server: 'improper configuration' };
 
   //     const socket = io(`http://127.0.0.1:${config.port}`);
   //     const accessToken = await token.sign({ id: testUser._id.toString() }, '5s');
 
   //     socket.once('JOIN', (receivedMsg: { token?: string; error?: string; msg?: string }) => {
-  //       if (receivedMsg.token === accessToken) return { status: 'up', timeElapsed: Date.now() - startedAt };
+  //       if (receivedMsg.token === accessToken) return { server: 'up', timeElapsed: Date.now() - startedAt };
   //     });
   //     socket.emit('JOIN', { token: accessToken });
   //   } catch (error) {
   //     await log('error', '/api/systems/system:checkSocket error');
-  //     return { status: 'down', timeElapsed: Date.now() - startedAt };
+  //     return { server: 'down', timeElapsed: Date.now() - startedAt };
   //   }
   // };
 
@@ -254,23 +229,44 @@ const getStatus = async (req: Request) => {
    */
   // TODO: to be implemented
   const webpush = {
-    status: 'no idea TODO (WIP)',
+    server: 'no idea TODO (WIP)',
     // grantedSubscriptions: await User.countDocuments({
     //   'user.subscriptions.permission': 'granted',
     // }),
   };
 
-  // wait until all promises are resolved
-  const result = await Promise.all([checkLogger(), checkMongo, checkRedis, checkSocket]);
-  const [logger, mongo, redis, socket] = result;
+  const promiseWithTimeout = async <T>(promise: Promise<T>, ms = TIMEOUT) => {
+    let timerId: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timerId = setTimeout(() => {
+        reject(`timeout (${ms}ms)`);
+      }, ms);
+    });
+
+    const result = await Promise.race([promise, timeout]);
+    clearTimeout(timerId); // be clean, particularly for JEST (unreference before test ends)
+    return result;
+  };
+
+  // wait until all promises are resolved (or reject with timeout)
+  const [logger, mongo, redis, socket] = await Promise.allSettled([
+    promiseWithTimeout(checkLogger()),
+    promiseWithTimeout(checkMongo()),
+    promiseWithTimeout(checkRedis()),
+    promiseWithTimeout(checkSocket()),
+  ]);
+
+  const showResult = <T>(result: PromiseSettledResult<T>) =>
+    result.status === 'fulfilled' ? result.value : { error: `reason: ${result.reason}` };
+
   return {
     mode: config.mode,
     timestamp: new Date(),
-    logger,
-    mongo,
-    redis,
-    server: { status: 'up', appUrl: `${req.protocol}://${req.hostname}`, port, ...healthReport() },
-    socket,
+    logger: showResult(logger),
+    mongo: showResult(mongo),
+    redis: showResult(redis),
+    server: { server: 'up', appUrl: `${req.protocol}://${req.hostname}`, port, ...healthReport() },
+    socket: showResult(socket),
     webpush,
   };
 };
@@ -278,7 +274,7 @@ const getStatus = async (req: Request) => {
 /**
  * Get Action (RESTful)
  */
-const getAction: RequestHandler<{ action: GetAction }> = async (req, res, next) => {
+const getHandler: RequestHandler<{ action: GetAction }> = async (req, res, next) => {
   const { action } = req.params;
 
   try {
@@ -301,4 +297,4 @@ const getAction: RequestHandler<{ action: GetAction }> = async (req, res, next) 
   }
 };
 
-export default { getAction, getServerInfo };
+export default { getHandler, getServerInfo };

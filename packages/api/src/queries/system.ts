@@ -10,7 +10,6 @@ export const GET_SERVER_INFO = gql`
     serverInfo {
       mode
       primaryTenantId
-      status
       minio
       timestamp
       version

@@ -5,15 +5,17 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
+import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import type { Id, LevelDocument } from '../models/level';
 import Level, { searchableFields } from '../models/level';
-import { messageToAdmin } from '../utils/chat';
+import { messageToAdmins } from '../utils/chat';
 import { randomString } from '../utils/helper';
 import log from '../utils/log';
-import { notifySync } from '../utils/notify-sync';
+import type { BulkWrite } from '../utils/notify-sync';
+import { syncToAllSatellites } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -22,6 +24,19 @@ type Action = 'addRemark';
 const { MSG_ENUM } = LOCALE;
 const { assertUnreachable, auth, hubModeOnly, DELETED, DELETED_LOCALE, paginateSort, searchFilter, select } = common;
 const { levelSchema, idSchema, querySchema, remarkSchema, removeSchema } = yupSchema;
+
+/**
+ * (helper) validate user input
+ * @param nextLevel
+ * @returns
+ */
+const validateInputs = async (nextLevelId?: string) => {
+  if (nextLevelId) {
+    const nextLevel = await Level.exists({ _id: nextLevelId, deletedAt: { $exists: false } });
+    if (nextLevel) return nextLevel._id;
+    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  }
+};
 
 /**
  * Add Remark
@@ -39,7 +54,7 @@ const addRemark = async (req: Request, args: unknown): Promise<LevelDocument & I
 
   if (!level) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await DatabaseEvent.log(userId, `/levels/${id}`, 'REMARK', { remark });
+  await DatabaseEvent.log(userId, `/levels/${id}`, 'REMARK', { args });
   return level;
 };
 
@@ -48,13 +63,18 @@ const addRemark = async (req: Request, args: unknown): Promise<LevelDocument & I
  */
 const create = async (req: Request, args: unknown): Promise<LevelDocument & Id> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
-  const { level: fields } = await levelSchema.validate(args);
+  const { userId, userLocale } = auth(req, 'ADMIN');
+  const {
+    level: { nextLevel, ...inputFields },
+  } = await levelSchema.validate(args);
 
-  if (await Level.exists({ code: fields.code.toUpperCase() }))
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  const [duplicatedCode, nextLevelId] = await Promise.all([
+    Level.exists({ code: inputFields.code.toUpperCase() }),
+    nextLevel ? validateInputs(nextLevel) : null,
+  ]);
+  if (duplicatedCode) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const level = new Level<Partial<LevelDocument>>(fields);
+  const level = new Level<Partial<LevelDocument>>({ ...inputFields, ...(nextLevelId && { nextLevel: nextLevelId }) });
   const { _id, code, name } = level;
 
   const common = `${code} (ENG): ${name.enUS}, (繁): ${name.zhHK}, (简): ${name.zhCN} [/levels/${_id}]`;
@@ -66,9 +86,11 @@ const create = async (req: Request, args: unknown): Promise<LevelDocument & Id> 
 
   await Promise.all([
     level.save(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/levels/${_id}`, 'CREATE', { level: fields }),
-    notifySync('CORE', {}, { levelIds: [_id] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/levels/${_id}`, 'CREATE', { args }),
+    syncToAllSatellites({
+      bulkWrite: { levels: [{ insertOne: { document: level.toObject() } }] satisfies BulkWrite<LevelDocument> },
+    }),
   ]);
 
   return level;
@@ -144,18 +166,18 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
+  const { userId, userLocale } = auth(req, 'ADMIN');
   const { id, remark } = await removeSchema.validate(args);
 
+  const update: UpdateQuery<LevelDocument> = {
+    $unset: { nextLevel: 1 },
+    code: `${DELETED}#${randomString()}`,
+    name: DELETED_LOCALE,
+    deletedAt: new Date(),
+  };
   const original = await Level.findOneAndUpdate(
     { _id: id, deletedAt: { $exists: false } },
-    {
-      $unset: { nextLevel: 1 },
-      code: `${DELETED}#${randomString()}`,
-      name: DELETED_LOCALE,
-      deletedAt: new Date(),
-      ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-    },
+    { ...update, ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
   ).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
@@ -166,9 +188,11 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
     zhHK: `剛刪除年級：${common}。`,
   };
   await Promise.all([
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/levels/${id}`, 'DELETE', { remark, original }),
-    notifySync('CORE', {}, { levelIds: [id] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/levels/${id}`, 'DELETE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: { levels: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<LevelDocument> },
+    }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -195,28 +219,36 @@ const update = async (req: Request, args: unknown): Promise<LevelDocument & Id> 
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const {
     id,
-    level: { code, ...fields },
+    level: { code, nextLevel, ...inputFields },
   } = await levelSchema.concat(idSchema).validate(args);
 
-  const original = await Level.findOne({ _id: id, deletedAt: { $exists: false } }).lean();
+  const [original, nextLevelId] = await Promise.all([
+    Level.findOne({ _id: id, code: code.toUpperCase(), deletedAt: { $exists: false } }).lean(), // not allow to change code
+    nextLevel ? validateInputs(nextLevel) : null,
+  ]);
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  if (original.code !== code.toUpperCase()) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const common = `${code} (ENG): ${fields.name.enUS}, (繁): ${fields.name.zhHK}, (简): ${fields.name.zhCN} [/levels/${id}]`;
+  const common = `${code} (ENG): ${inputFields.name.enUS}, (繁): ${inputFields.name.zhHK}, (简): ${inputFields.name.zhCN} [/levels/${id}]`;
   const msg = {
     enUS: `A school level is updated: ${common}.`,
     zhCN: `刚更新年级：${common}。`,
     zhHK: `剛更新年級：${common}。`,
   };
 
+  const update: UpdateQuery<LevelDocument> = {
+    ...inputFields,
+    ...(nextLevel ? { nextLevel: nextLevelId } : { $unset: { nextLevel: 1 } }),
+  };
   const [level] = await Promise.all([
-    Level.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/levels/${id}`, 'UPDATE', { original, update: fields }),
-    notifySync('CORE', {}, { levelIds: [id] }),
+    Level.findByIdAndUpdate(id, update, { fields: select(userRoles), new: true }).lean(),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/levels/${id}`, 'UPDATE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: { levels: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<LevelDocument> },
+    }),
   ]);
   if (level) return level;
-  log('error', `levelController:update()`, { id, ...fields }, userId);
+  log('error', `levelController:update()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 

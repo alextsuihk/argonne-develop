@@ -11,7 +11,7 @@ import type { Id, UserDocument } from './models/user';
 import resolvers from './resolvers';
 import typeDefs from './typeDefs';
 import { isDevMode } from './utils/environment';
-import { idsToString } from './utils/helper';
+import { latestSchoolHistory } from './utils/helper';
 export type { ExpressContext as Ctx } from 'apollo-server-express';
 // export type { ExpressContext } from 'apollo-server-express';
 export { ApolloServer } from 'apollo-server-express';
@@ -65,17 +65,8 @@ export const testServer = (emulatedUser?: (UserDocument & Id) | null): ApolloSer
         userName: emulatedUser?.name,
         userRoles: emulatedUser?.roles,
         userScopes: emulatedUser?.scopes,
-        userTenants: idsToString(emulatedUser?.tenants ?? []),
-        ...(emulatedUser?.schoolHistories[0] && {
-          userExtra: {
-            year: emulatedUser?.schoolHistories[0].year,
-            school: emulatedUser?.schoolHistories[0].school.toString(),
-            level: emulatedUser?.schoolHistories[0].level.toString(),
-            ...(emulatedUser?.schoolHistories[0].schoolClass && {
-              schoolClass: emulatedUser?.schoolHistories[0].schoolClass,
-            }),
-          },
-        }),
+        userTenants: emulatedUser?.tenants.map(t => t.toString()) ?? [],
+        ...(emulatedUser?.schoolHistories[0] && { userExtra: latestSchoolHistory(emulatedUser.schoolHistories) }),
       },
       // setCookie() & clearCookie() are needed for authController's compatibility with Express cookie usage
       res: {

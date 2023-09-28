@@ -1,9 +1,10 @@
-/* eslint-disable simple-import-sort/exports */
-export { pointSchema } from './location';
-export type { Point } from './location';
-export { baseDefinition, localeDefinition } from './base';
 export type { BaseDocument, Id, Locale } from './base';
-export { memberDefinition } from './member';
+export { baseDefinition, localeDefinition } from './base';
+export type { Bid } from './bid';
+export { bidDefinition } from './bid';
+export type { Point } from './location';
+export { pointSchema } from './location';
 export type { Member } from './member';
-export { remarkDefinition } from './remark';
+export { memberDefinition } from './member';
 export type { Remark } from './remark';
+export { remarkDefinition } from './remark';

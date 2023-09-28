@@ -13,6 +13,6 @@ const router = Router();
  * @route   GET api/systems/:action
  * @desc    get :action
  */
-router.get('/:action', systemController.getAction);
+router.get('/:action', systemController.getHandler);
 
 export default router;

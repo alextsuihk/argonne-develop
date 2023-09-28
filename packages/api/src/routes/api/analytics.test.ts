@@ -7,17 +7,17 @@ import { LOCALE } from '@argonne/common';
 import request from 'supertest';
 
 import app from '../../app';
-import { FAKE, jestSetup, jestTeardown, prob, randomId } from '../../jest';
+import { FAKE, jestSetup, jestTeardown, prob } from '../../jest';
 import type { Id, UserDocument } from '../../models/user';
 
 const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe(`Analytics API Routes`, () => {
-  let normalUsers: (UserDocument & Id)[] | null;
+  let normalUser: (UserDocument & Id) | null;
 
   beforeAll(async () => {
-    ({ normalUsers } = await jestSetup(['normal']));
+    ({ normalUser } = await jestSetup(['normal']));
   });
   afterAll(jestTeardown);
 
@@ -26,7 +26,7 @@ describe(`Analytics API Routes`, () => {
 
     const res = await request(app)
       .post(`/api/analytics/session`)
-      .set({ 'Jest-User': randomId(normalUsers!) })
+      .set({ 'Jest-User': normalUser!._id })
       .send({ fullscreen: prob(0.5), token: FAKE });
     expect(res.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');

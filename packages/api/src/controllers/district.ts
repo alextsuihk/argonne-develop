@@ -5,14 +5,16 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
+import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import type { DistrictDocument, Id } from '../models/district';
 import District, { searchableFields } from '../models/district';
 import DatabaseEvent from '../models/event/database';
-import { messageToAdmin } from '../utils/chat';
+import { messageToAdmins } from '../utils/chat';
 import log from '../utils/log';
-import { notifySync } from '../utils/notify-sync';
+import type { BulkWrite } from '../utils/notify-sync';
+import { syncToAllSatellites } from '../utils/notify-sync';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -39,7 +41,7 @@ const addRemark = async (req: Request, args: unknown): Promise<DistrictDocument 
   ).lean();
   if (!district) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await DatabaseEvent.log(userId, `/districts/${id}`, 'REMARK', { remark });
+  await DatabaseEvent.log(userId, `/districts/${id}`, 'REMARK', { args });
 
   return district;
 };
@@ -49,10 +51,10 @@ const addRemark = async (req: Request, args: unknown): Promise<DistrictDocument 
  */
 const create = async (req: Request, args: unknown): Promise<DistrictDocument & Id> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
-  const { district: fields } = await districtSchema.validate(args);
+  const { userId, userLocale } = auth(req, 'ADMIN');
+  const { district: inputFields } = await districtSchema.validate(args);
 
-  const district = new District<Partial<DistrictDocument>>(fields);
+  const district = new District<Partial<DistrictDocument>>(inputFields);
   const { _id, name, region } = district;
 
   const common = `(ENG) ${region.enUS}-${name.enUS}, (繁): ${region.zhHK}-${name.zhHK}, (简): ${region.zhCN}-${name.zhCN} [/districts/${_id}]`;
@@ -64,9 +66,13 @@ const create = async (req: Request, args: unknown): Promise<DistrictDocument & I
 
   await Promise.all([
     district.save(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/districts/${_id}`, 'CREATE', { district: fields }),
-    notifySync('CORE', {}, { districtIds: [_id] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/districts/${_id}`, 'CREATE', { args }),
+    syncToAllSatellites({
+      bulkWrite: {
+        districts: [{ insertOne: { document: district.toObject() } }] satisfies BulkWrite<DistrictDocument>,
+      },
+    }),
   ]);
 
   return district;
@@ -143,17 +149,13 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
+  const { userId, userLocale } = auth(req, 'ADMIN');
   const { id, remark } = await removeSchema.validate(args);
 
+  const update: UpdateQuery<DistrictDocument> = { name: DELETED_LOCALE, region: DELETED_LOCALE, deletedAt: new Date() };
   const original = await District.findOneAndUpdate(
     { _id: id, deletedAt: { $exists: false } },
-    {
-      name: DELETED_LOCALE,
-      region: DELETED_LOCALE,
-      deletedAt: new Date(),
-      ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-    },
+    { ...update, ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
   ).lean();
 
   // const original = await District.findOneAndUpdate(
@@ -173,9 +175,11 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   };
 
   await Promise.all([
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/districts/${id}`, 'DELETE', { remark, original }),
-    notifySync('CORE', {}, { districtIds: [id] }),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/districts/${id}`, 'DELETE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: { districts: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<DistrictDocument> },
+    }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -200,12 +204,12 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 const update = async (req: Request, args: unknown): Promise<DistrictDocument & Id> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
-  const { id, district: fields } = await districtSchema.concat(idSchema).validate(args);
+  const { id, district: updateFields } = await districtSchema.concat(idSchema).validate(args);
 
   const original = await District.findOne({ _id: id, deletedAt: { $exists: false } }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const { name, region } = fields;
+  const { name, region } = updateFields;
   const common = `(ENG): ${region.enUS}-${name.enUS}, (繁): ${region.zhHK}-${name.zhHK}, (简): ${region.zhCN}-${name.zhCN} [/districts/${id}]`;
   const msg = {
     enUS: `A district is updated: ${common}.`,
@@ -214,13 +218,17 @@ const update = async (req: Request, args: unknown): Promise<DistrictDocument & I
   };
 
   const [district] = await Promise.all([
-    District.findByIdAndUpdate(id, fields, { fields: select(userRoles), new: true }).lean(),
-    messageToAdmin(msg, userId, userLocale, userRoles, [], 'CORE'),
-    DatabaseEvent.log(userId, `/districts/${id}`, 'UPDATE', { original, update: fields }),
-    notifySync('CORE', {}, { districtIds: [id] }),
+    District.findByIdAndUpdate(id, updateFields, { fields: select(userRoles), new: true }).lean(),
+    messageToAdmins(msg, userId, userLocale, true),
+    DatabaseEvent.log(userId, `/districts/${id}`, 'UPDATE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: {
+        districts: [{ updateOne: { filter: { _id: id }, update: updateFields } }] satisfies BulkWrite<DistrictDocument>,
+      },
+    }),
   ]);
   if (district) return district;
-  log('error', `districtController:update()`, { id, ...fields }, userId);
+  log('error', `districtController:update()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 

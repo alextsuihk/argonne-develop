@@ -41,4 +41,5 @@ const districtSchema = new Schema<DistrictDocument>(
 // ! Caveat: mongo text-search treats (doc containing) "元朗區" as a single word, searching "元朗" will not work
 districtSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const District = model<DistrictDocument>('District', districtSchema);
+
 export default District;

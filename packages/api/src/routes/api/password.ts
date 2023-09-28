@@ -14,6 +14,6 @@ const router = Router();
  * @route   POST api/password/:action
  * @desc    POST change user password
  */
-router.post('/:action', passwordController.postAction);
+router.post('/:action', passwordController.postHandler);
 
 export default router;

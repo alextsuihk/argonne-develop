@@ -5,17 +5,19 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
-import mongoose from 'mongoose';
+import mongoose, { UpdateQuery } from 'mongoose';
 
+import configLoader from '../config/config-loader';
 import Book from '../models/book';
 import ChatGroup from '../models/chat-group';
 import DatabaseEvent from '../models/event/database';
 import type { Id, PublisherDocument } from '../models/publisher';
 import Publisher, { searchableFields } from '../models/publisher';
 import User from '../models/user';
-import { messageToAdmin } from '../utils/chat';
+import { messageToAdmins } from '../utils/chat';
 import log from '../utils/log';
-import { notifySync } from '../utils/notify-sync';
+import type { BulkWrite } from '../utils/notify-sync';
+import { syncToAllSatellites } from '../utils/notify-sync';
 import storage from '../utils/storage';
 import type { StatusResponse } from './common';
 import common from './common';
@@ -23,8 +25,19 @@ import common from './common';
 type Action = 'addRemark';
 
 const { MSG_ENUM } = LOCALE;
+const { config } = configLoader;
 const { assertUnreachable, auth, DELETED_LOCALE, hubModeOnly, paginateSort, searchFilter, select } = common;
 const { idSchema, publisherSchema, querySchema, remarkSchema, removeSchema } = yupSchema;
+
+/**
+ * (helper) validate user input
+ */
+const validateInputs = async (userIds: string[]) => {
+  const users = await User.find({ _id: { $in: userIds } }, '_id').lean();
+  if (userIds.length === users.length) return users.map(u => u._id);
+
+  throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+};
 
 /**
  * Add Remark
@@ -41,7 +54,7 @@ const addRemark = async (req: Request, args: unknown): Promise<PublisherDocument
   ).lean();
   if (!publisher) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  await DatabaseEvent.log(userId, `/publishers/${id}`, 'REMARK', { remark });
+  await DatabaseEvent.log(userId, `/publishers/${id}`, 'REMARK', { args });
   return publisher;
 };
 
@@ -50,19 +63,17 @@ const addRemark = async (req: Request, args: unknown): Promise<PublisherDocument
  */
 const create = async (req: Request, args: unknown): Promise<PublisherDocument & Id> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
+  const { userId, userLocale } = auth(req, 'ADMIN');
   const {
-    publisher: { logoUrl, ...fields },
+    publisher: { logoUrl, ...inputFields },
   } = await publisherSchema.validate(args);
 
-  const [adminCount] = await Promise.all([
-    User.countDocuments({ _id: { $in: fields.admins } }),
+  const [admins] = await Promise.all([
+    validateInputs(inputFields.admins),
     logoUrl && storage.validateObject(logoUrl, userId),
   ]);
 
-  if (fields.admins.length !== adminCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const publisher = new Publisher<Partial<PublisherDocument>>({ ...fields, ...(logoUrl && { logoUrl }) });
+  const publisher = new Publisher<Partial<PublisherDocument>>({ ...inputFields, admins, ...(logoUrl && { logoUrl }) });
   const { _id, name } = publisher;
 
   const common = `(ENG): ${name.enUS}, (繁): ${name.zhHK}, (简): ${name.zhCN} [/publishers/$_id}]`;
@@ -74,9 +85,14 @@ const create = async (req: Request, args: unknown): Promise<PublisherDocument & 
 
   await Promise.all([
     publisher.save(),
-    messageToAdmin(msg, userId, userLocale, userRoles, publisher.admins, `PUBLISHER#${_id}`),
-    DatabaseEvent.log(userId, `/publishers/${_id}`, 'CREATE', { publisher: { ...fields, logoUrl } }),
-    notifySync('CORE', {}, { publisherIds: [_id], ...(logoUrl && { minioAddItems: [logoUrl] }) }),
+    messageToAdmins(msg, userId, userLocale, true, publisher.admins, `PUBLISHER#${_id}`),
+    DatabaseEvent.log(userId, `/publishers/${_id}`, 'CREATE', { args }),
+    syncToAllSatellites({
+      bulkWrite: {
+        publishers: [{ insertOne: { document: publisher.toObject() } }] satisfies BulkWrite<PublisherDocument>,
+      },
+      ...(logoUrl && { minio: { serverUrl: config.server.minio.serverUrl, addObjects: [logoUrl] } }),
+    }),
   ]);
 
   return publisher;
@@ -154,19 +170,19 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
  */
 const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
   hubModeOnly();
-  const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
+  const { userId, userLocale } = auth(req, 'ADMIN');
   const { id, remark } = await removeSchema.validate(args);
 
+  const update: UpdateQuery<PublisherDocument> = {
+    $unset: { logoUrl: 1, website: 1 },
+    name: DELETED_LOCALE,
+    admins: [],
+    phones: [],
+    deletedAt: new Date(),
+  };
   const original = await Publisher.findByIdAndUpdate(
     { _id: id, deletedAt: { $exists: false } },
-    {
-      $unset: { logoUrl: 1, website: 1 },
-      name: DELETED_LOCALE,
-      admins: [],
-      phones: [],
-      deletedAt: new Date(),
-      ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-    },
+    { ...update, ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
   ).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
@@ -179,9 +195,16 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
 
   await Promise.all([
     original.logoUrl && storage.removeObject(original.logoUrl), // delete file in Minio if exists
-    messageToAdmin(msg, userId, userLocale, userRoles, [], `PUBLISHER#${id}`),
-    DatabaseEvent.log(userId, `/publishers/${id}`, 'DELETE', { remark, original }),
-    notifySync('CORE', {}, { publisherIds: [id], ...(original.logoUrl && { minioRemoveItems: [original.logoUrl] }) }),
+    messageToAdmins(msg, userId, userLocale, true, [], `PUBLISHER#${id}`),
+    DatabaseEvent.log(userId, `/publishers/${id}`, 'DELETE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: {
+        publishers: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<PublisherDocument>,
+      },
+      // ...(original.logoUrl && {
+      //   minio: { serverUrl: config.server.minio.serverUrl, removeObjects: [original.logoUrl] },
+      // }),
+    }),
   ]);
 
   return { code: MSG_ENUM.COMPLETED };
@@ -208,15 +231,14 @@ const update = async (req: Request, args: unknown): Promise<PublisherDocument & 
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const {
     id,
-    publisher: { logoUrl, ...fields },
+    publisher: { logoUrl, ...inputFields },
   } = await idSchema.concat(publisherSchema).validate(args);
 
-  const [original, adminCount] = await Promise.all([
+  const [original, admins] = await Promise.all([
     Publisher.findOne({ _id: id, deletedAt: { $exists: false } }).lean(),
-    User.countDocuments({ _id: { $in: fields.admins } }),
+    validateInputs(inputFields.admins),
   ]);
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  if (fields.admins.length !== adminCount) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const [books] = await Promise.all([
     Book.find({ publisher: id }).lean(),
@@ -224,37 +246,34 @@ const update = async (req: Request, args: unknown): Promise<PublisherDocument & 
     original.logoUrl && original.logoUrl !== logoUrl && storage.removeObject(original.logoUrl), // remove old logoUrl from minio if exists and is different from new logoUrl
   ]);
 
-  const common = `(ENG): ${fields.name.enUS}, (繁): ${fields.name.zhHK}, (简): ${fields.name.zhCN} [/publishers/${id}]`;
+  const common = `(ENG): ${inputFields.name.enUS}, (繁): ${inputFields.name.zhHK}, (简): ${inputFields.name.zhCN} [/publishers/${id}]`;
   const msg = {
     enUS: `A publisher is updated: ${common}.`,
     zhCN: `刚更新出版商：${common}。`,
     zhHK: `剛更新出版社：${common}。`,
   };
 
+  const update: UpdateQuery<PublisherDocument> = {
+    ...inputFields,
+    admins,
+    ...(logoUrl ? { logoUrl } : { $unset: { logoUrl: 1 } }),
+  };
   const [publisher] = await Promise.all([
-    Publisher.findByIdAndUpdate(
-      id,
-      { ...fields, ...(logoUrl ? { logoUrl } : { $unset: { logoUrl: 1 } }) },
-      { fields: select(userRoles), new: true },
-    ).lean(),
+    Publisher.findByIdAndUpdate(id, update, { fields: select(userRoles), new: true }).lean(),
     ChatGroup.updateMany(
       { _id: { $in: books.map(({ _id }) => `BOOK#${_id}`) } },
-      { admins: fields.admins, $addToSet: { users: fields.admins } },
+      { admins: update.admins, $addToSet: { users: update.admins } },
     ),
-    messageToAdmin(msg, userId, userLocale, userRoles, fields.admins, `PUBLISHER#${id}`),
-    DatabaseEvent.log(userId, `/publishers/${id}`, 'UPDATE', { original, update: args }),
-    notifySync(
-      'CORE',
-      {},
-      {
-        publisherIds: [id],
-        ...(logoUrl && original.logoUrl !== logoUrl && { minioAddItems: [logoUrl] }),
-        ...(original.logoUrl && original.logoUrl !== logoUrl && { minioRemoveItems: [original.logoUrl] }),
+    messageToAdmins(msg, userId, userLocale, true, update.admins, `PUBLISHER#${id}`),
+    DatabaseEvent.log(userId, `/publishers/${id}`, 'UPDATE', { args, original }),
+    syncToAllSatellites({
+      bulkWrite: {
+        publishers: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<PublisherDocument>,
       },
-    ),
+    }),
   ]);
   if (publisher) return publisher;
-  log('error', `publisherController:update()`, { id, ...fields }, userId);
+  log('error', `publisherController:update()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 

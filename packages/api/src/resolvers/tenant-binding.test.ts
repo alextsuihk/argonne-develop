@@ -8,15 +8,17 @@ import { LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
-  expectedUserFormatApollo,
+  expectedDateFormat,
+  genUser,
   jestSetup,
   jestTeardown,
   prob,
+  randomString,
   testServer,
-  uniqueTestUser,
 } from '../jest';
 import User from '../models/user';
 import { BIND_TENANT, GET_TENANT_TOKEN, UNBIND_TENANT } from '../queries/tenant-binding';
+import token, { REFRESH_TOKEN } from '../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 
@@ -53,12 +55,15 @@ describe('TenantBinding GraphQL', () => {
   });
 
   test('should pass the full suite (createToken, bind, unbind)', async () => {
-    expect.assertions(3);
+    expect.assertions(5);
 
-    // create a new user (without tenants)
-    const { email, name, password } = uniqueTestUser();
-    const user = await User.create({ tenants: [], name: `tenant-binding-${name}`, emails: [email], password });
+    const user = genUser(null); // create a new user (without tenants)
     const userServer = testServer(user);
+
+    const [refreshToken] = await Promise.all([
+      token.signStrings([REFRESH_TOKEN, user._id.toString(), randomString()], 10),
+      user.save(),
+    ]);
 
     // tenantAdmin creates token
     const tokenRes = await tenantAdminServer!.executeOperation({
@@ -66,17 +71,20 @@ describe('TenantBinding GraphQL', () => {
       variables: { tenantId: tenantId!, ...(prob(0.5) && { expiresIn: 10 }) },
     });
     apolloExpect(tokenRes, 'data', {
-      tenantToken: { token: expect.any(String), expireAt: expect.any(Number) },
+      tenantToken: { token: expect.any(String), expireAt: expectedDateFormat(true) },
     });
+    const bindingToken = tokenRes.data!.tenantToken.token;
 
     // user binds himself to tenant
     const bindRes = await userServer.executeOperation({
       query: BIND_TENANT,
-      variables: { token: tokenRes.data!.tenantToken.token },
+      variables: { bindingToken, refreshToken, ...(prob(0.5) && { studentId: randomString() }) },
     });
-    apolloExpect(bindRes, 'data', {
-      bindTenant: expect.objectContaining({ ...expectedUserFormatApollo, tenants: [tenantId!] }),
-    });
+    apolloExpect(bindRes, 'data', { bindTenant: { code: MSG_ENUM.COMPLETED } });
+
+    // check if binding is successful
+    const updatedUser = await User.findOneActive({ _id: user._id });
+    expect(updatedUser?.tenants.some(t => t.equals(tenantId!))).toBeTrue();
 
     // tenantAdmin unbind user
     const unBindRes = await tenantAdminServer!.executeOperation({
@@ -84,6 +92,13 @@ describe('TenantBinding GraphQL', () => {
       variables: { tenantId: tenantId!, userId: user._id.toString() },
     });
     apolloExpect(unBindRes, 'data', { unbindTenant: { code: MSG_ENUM.COMPLETED } });
+
+    // check if unbinding is successful
+    const updated2User = await User.findOneActive({ _id: user._id });
+    expect(updated2User?.tenants.some(t => t.equals(tenantId!))).toBeFalse();
+
+    // clean up
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should fail when creating a tenantToken with invalid parameters', async () => {

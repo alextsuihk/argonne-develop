@@ -16,15 +16,14 @@ const { createToken, bind, unbind } = tenantBindingController;
  */
 router.post('/:action?', async (req, res, next) => {
   try {
-    res.status(200).json({
-      data:
-        req.params.action === 'createToken'
-          ? await createToken(req, {
-              ...req.body,
-              ...(Number(req.body.expiresIn) && { expiresIn: Number(req.body.expiresIn) }),
-            })
-          : await bind(req, req.body),
-    });
+    req.params.action === 'createToken'
+      ? res.status(200).json({
+          data: await createToken(req, {
+            ...req.body,
+            ...(Number(req.body.expiresIn) && { expiresIn: Number(req.body.expiresIn) }),
+          }),
+        })
+      : res.status(200).json(await bind(req, req.body));
   } catch (error) {
     next(error);
   }
