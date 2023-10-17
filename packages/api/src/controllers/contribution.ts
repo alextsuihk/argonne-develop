@@ -3,6 +3,7 @@
  *
  */
 
+import type { ContributionSchema } from '@argonne/common';
 import { LOCALE } from '@argonne/common';
 
 import Level from '../models/level';
@@ -10,11 +11,7 @@ import School from '../models/school';
 import User from '../models/user';
 import { latestSchoolHistory } from '../utils/helper';
 
-type Contributor = {
-  user: string;
-  name: string;
-  school?: string;
-};
+type Contributor = ContributionSchema['contribution']['contributors'][0];
 
 const { MSG_ENUM } = LOCALE;
 

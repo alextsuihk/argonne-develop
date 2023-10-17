@@ -11,7 +11,7 @@ import request from 'supertest';
 import app from '../app';
 import { apolloExpect, ApolloServer, expectedDateFormat, jestSetup, jestTeardown, randomString } from '../jest';
 import Tenant from '../models/tenant';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import { AUTH_SERVICE_TOKEN } from '../queries/auth-service';
 import { dataDecipher } from '../utils/cipher';
 
@@ -20,7 +20,7 @@ const { TENANT } = LOCALE.DB_ENUM;
 // Top level of this test suite:
 describe('Auth-Services GraphQL', () => {
   let normalServer: ApolloServer | null;
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
   let tenantId: string | null;
 
   beforeAll(async () => {

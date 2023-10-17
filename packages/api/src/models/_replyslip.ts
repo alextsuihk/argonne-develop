@@ -3,44 +3,30 @@
  *
  */
 
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
 
-export type { Id } from './common';
-
-export interface ReplySlipDocument extends BaseDocument {
-  classrooms: Types.ObjectId[];
-  title: string;
-  body: string;
-  choices: string[];
-  replies: {
-    student: Types.ObjectId;
-    parent: Types.ObjectId;
-    repliedAt?: Date;
-    reply?: number;
-  }[];
-}
 const { DEFAULTS } = configLoader;
 
-const replySlipSchema = new Schema<ReplySlipDocument>(
+const replySlipSchema = new Schema(
   {
     ...baseDefinition,
 
-    classrooms: [{ type: Schema.Types.ObjectId, ref: 'Classroom', index: true }],
+    classrooms: [{ type: Schema.Types.ObjectId, ref: 'Classroom', required: true, index: true }],
 
-    title: String,
-    body: String,
+    title: { type: String, required: true },
+    body: { type: String, required: true },
     choices: [String],
     replies: [
       {
-        student: { type: Schema.Types.ObjectId, ref: 'User', index: true },
-        parent: { type: Schema.Types.ObjectId, ref: 'User' },
+        student: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+        parent: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         repliedAt: Date,
-        reply: Number,
+        answer: Number,
       },
     ],
     createdAt: { type: Date, default: Date.now, expires: DEFAULTS.MONGOOSE.EXPIRES.REPLY_SLIP },
@@ -48,5 +34,6 @@ const replySlipSchema = new Schema<ReplySlipDocument>(
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const ReplySlip = model<ReplySlipDocument>('ReplySlip', replySlipSchema);
+const ReplySlip = model('ReplySlip', replySlipSchema);
+export type ReplySlipDocument = InferSchemaType<typeof replySlipSchema> & Id;
 export default ReplySlip;

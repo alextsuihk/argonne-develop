@@ -10,6 +10,7 @@ export default gql`
   extend type Query {
     authServiceToken(client: String!): AuthService
     isEmailAvailable(email: String!): Boolean
+    listApiKeys: [ApiKey!]!
     listSockets: [String!]!
     listTokens: [Token!]!
     loginToken(tenantId: String!, userId: String!, expiresIn: Int): String!
@@ -70,7 +71,7 @@ export default gql`
     sendMessengerVerification(provider: String!, account: String!): StatusResponse!
 
     # update (auth-extra)
-    addApiKey(scope: String!, note: String, expireAt: DateInput!): AuthUser!
+    addApiKey(scope: String!, note: String, expireAt: DateInput!): [ApiKey!]!
     addEmail(email: String!): AuthUser!
     addMessenger(provider: String!, account: String!): AuthUser!
     addPaymentMethod(
@@ -80,12 +81,14 @@ export default gql`
       payable: Boolean
       receivable: Boolean
     ): AuthUser!
+    addPushSubscription(endpoint: String!, p256dh: String!, auth: String!): AuthUser!
     oAuth2Link(provider: String!, code: String!): AuthUser!
     oAuth2Unlink(oAuthId: String!): AuthUser!
-    removeApiKey(id: String!): AuthUser!
+    removeApiKey(id: String!): [ApiKey!]!
     removeEmail(email: String!): AuthUser!
     removeMessenger(provider: String!, account: String!): AuthUser!
     removePaymentMethod(id: String!): AuthUser!
+    removePushSubscriptions: AuthUser!
     updateAvailability(availability: String): AuthUser!
     updateAvatar(avatarUrl: String): AuthUser!
     updateLocale(locale: String!): AuthUser!
@@ -146,10 +149,8 @@ export default gql`
     darkMode: Boolean!
     theme: String
 
-    apiKeys: [UserApiKey!]!
     roles: [String!]!
     features: [String!]!
-    scopes: [String!]!
 
     yob: Int
     dob: Float
@@ -160,9 +161,8 @@ export default gql`
 
     paymentMethods: [UserPaymentMethod!]!
     preference: String
-    subscriptions: [UserSubscription!]!
+    pushSubscriptions: [UserPushSubscription!]!
 
-    interests: [String!]!
     supervisors: [String!]!
     staffs: [String!]!
 
@@ -184,6 +184,14 @@ export default gql`
     deletedAt: Float
   }
 
+  type ApiKey {
+    _id: String!
+    token: String!
+    scope: String!
+    note: String
+    expireAt: Float!
+  }
+
   type DeregisterResponse {
     code: String
     days: Int
@@ -200,14 +208,6 @@ export default gql`
     ip: String!
     ua: String!
     updatedAt: Float!
-  }
-
-  type UserApiKey {
-    _id: String!
-    value: String!
-    scope: String!
-    note: String
-    expireAt: Float!
   }
 
   type UserPaymentMethod {
@@ -227,13 +227,10 @@ export default gql`
     updatedAt: Float!
   }
 
-  type UserSubscription {
-    token: String!
-    subscription: String!
-    enabled: Boolean!
-    permission: String!
-    ip: String!
-    ua: String!
+  type UserPushSubscription {
+    endpoint: String!
+    p256dh: String!
+    auth: String!
   }
 
   type UserViolation {

@@ -13,7 +13,7 @@ import app from '../../app';
 import configLoader from '../../config/config-loader';
 import { expectedIdFormat, expectedUserFormat, genUser, jestSetup, jestTeardown, randomString } from '../../jest';
 import Token from '../../models/token';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 
 const { MSG_ENUM } = LOCALE;
@@ -34,8 +34,8 @@ export const expectedAuthResponse = {
 
 // Top level of this test suite:
 describe('Authentication API (token)', () => {
-  let normalUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantId: string | null;
 
   beforeAll(async () => {

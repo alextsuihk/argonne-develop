@@ -30,7 +30,7 @@ type GetAction = 'health' | 'ping' | 'server-info' | 'status' | 'time';
 const { MSG_ENUM } = LOCALE;
 const { JOB } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
-const { assertUnreachable } = common;
+const { assertUnreachable, isAdmin } = common;
 
 const { buildInfo, mode } = configLoader.config;
 const { version, hash, builtAt } = buildInfo;
@@ -95,7 +95,8 @@ const getServerInfo = async () => {
  * Get system Status
  */
 const getStatus = async (req: Request) => {
-  if (!req.userScopes?.includes('systems:r')) throw { statusCode: 403, code: MSG_ENUM.INVALID_API_KEY };
+  if (!isAdmin(req.userRoles) && req.apiScope !== 'systems:r')
+    throw { statusCode: 403, code: MSG_ENUM.INVALID_API_KEY };
 
   /**
    * express server status
@@ -164,7 +165,7 @@ const getStatus = async (req: Request) => {
     const startedAt = Date.now();
     const state = redisCache.getStatus();
     try {
-      await redisCache.set(randomData, randomData, 50);
+      await redisCache.set(randomData, randomData, 500);
       const readBack = await redisCache.get(randomData);
       return { state, server: readBack === randomData ? 'up' : 'down', timeElapsed: Date.now() - startedAt };
     } catch (error) {

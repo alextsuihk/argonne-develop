@@ -9,9 +9,6 @@ import * as yup from 'yup';
 import LOCALE from '../generated-locale';
 
 const { MSG_ENUM } = LOCALE;
-const { QUESTION, SCHOOL, SYSTEM, TENANT, USER } = LOCALE.DB_ENUM;
-
-const BUCKETS = ['private', 'public'];
 
 // common fields
 const coordinates = yup
@@ -26,7 +23,6 @@ const optionalId = yup.string().test(
   (value: unknown) => typeof value !== 'string' || mongoose.isObjectIdOrHexString(value),
   // (value: unknown) => typeof value !== 'string' || mongoose.isValidObjectId(value),
 );
-const optionalIds = yup.array().of(optionalId);
 const id = optionalId.required();
 const ids = yup.array().of(id).required();
 
@@ -61,6 +57,8 @@ const phones = yup.array().of(phone);
 // const url = yup.string().trim().url(); // workaround: YUP is not happy with localhost
 const url = yup.string().trim();
 
+const optionalStudentIdSchema = yup.object({ studentId: yup.string().trim().optional() });
+
 // common schemas
 export const contributionSchema = yup.object({
   contribution: yup
@@ -73,7 +71,7 @@ export const contributionSchema = yup.object({
           yup.object({
             user: id,
             name: yup.string().trim().required(),
-            school: id,
+            school: optionalId,
           }),
         )
         .required(),
@@ -81,6 +79,7 @@ export const contributionSchema = yup.object({
     })
     .noUnknown(),
 });
+export type ContributionSchema = InferType<typeof contributionSchema>;
 // general schemas
 export const adSchema = yup.object({
   ad: yup
@@ -109,18 +108,14 @@ export const announcementSchema = yup.object({
     })
     .noUnknown(),
 });
-export const apiKeySchema = yup.object({
-  apiKey: yup.string().trim().required(),
-});
 
-export const assignmentIdSchema = yup.object({ assignmentId: id });
 export const assignmentSchema = yup.object({
   classroom: id,
   flags: yup.array().of(yup.string().trim()).required(),
   chapter: yup.string().trim().optional(),
   title: yup.string().trim().optional(),
   deadline: yup.date().required(),
-  questions: yup.array().of(yup.string().trim().required()).required(),
+  assignments: yup.array().of(yup.string().trim().required()).required(),
   maxScores: yup.array().of(yup.number()),
 
   homeworks: yup
@@ -155,6 +150,8 @@ export const bookSchema = yup.object({
     })
     .noUnknown(),
 });
+export type BookSchema = InferType<typeof bookSchema>;
+
 export const bookAssignmentSchema = yup.object({
   assignment: yup
     .object({
@@ -178,11 +175,9 @@ export const bookRevisionSchema = yup.object({
     })
     .noUnknown(),
 });
-export const bookRevisionIdSchema = yup.object({ revisionId: id });
 export const bookSupplementSchema = yup.object({
   supplement: yup.object({ chapter: yup.string().trim().required() }).concat(contributionSchema).noUnknown(),
 });
-export const bookSupplementIdSchema = yup.object({ supplementId: id });
 export const chatIdSchema = yup.object({ chatId: id });
 export const chatGroupSchema = yup.object({
   title: yup.string().trim().optional(),
@@ -219,8 +214,8 @@ export const districtSchema = yup.object({
   district: yup.object({ name: locale, region: locale }).noUnknown(),
 });
 export const emailSchema = yup.object({ email });
-export const featureSchema = yup.object({ feature: yup.string().trim().uppercase().required() });
-export const flagSchema = yup.object({ flag: yup.string().trim().uppercase().required() });
+export const featureSchema = yup.object({ feature: yup.string().trim().required() });
+export const flagSchema = yup.object({ flag: yup.string().trim().required() });
 
 export const homeworkSchema = yup.object({
   answer: yup.string().trim().optional(),
@@ -231,20 +226,20 @@ export const homeworkSchema = yup.object({
 
 export const idSchema = yup.object({ id });
 export const levelSchema = yup.object({
-  level: yup
-    .object({ code: yup.string().trim().uppercase().required(), name: locale, nextLevel: optionalId })
-    .noUnknown(),
+  level: yup.object({ code: yup.string().trim().required(), name: locale, nextLevel: optionalId }).noUnknown(),
 });
+
 export const optionalExpiresInSchema = yup.object({ expiresIn: yup.number() });
-export const optionalIdSchema = yup.object({ id: optionalId });
+export const optionalFlagSchema = yup.object({ flag: yup.string().trim().optional() });
+export const optionalIdsSchema = yup.object({ ids: ids.optional() });
 export const optionalTimeSpentSchema = yup.object({ timeSpent: yup.number().optional() });
 export const optionalTimestampSchema = yup.object({ timestamp: yup.date().optional() });
 export const optionalTitleSchema = yup.object({ title: yup.string().trim().optional() });
 
 export const passwordSchema = yup.object({ password });
 export const presignedUrlSchema = yup.object({
-  bucketType: yup.string().trim().required().oneOf(BUCKETS),
   ext: yup.string().trim().lowercase().required(),
+  bucketType: yup.string().trim().required(),
 });
 export const publisherSchema = yup.object({
   publisher: yup
@@ -259,6 +254,7 @@ export const querySchema = yup.object({
     skipDeleted: yup.boolean().default(true),
   }),
 });
+export type QuerySchema = InferType<typeof querySchema>;
 
 export const questionSchema = yup.object({
   tenantId: id,
@@ -276,7 +272,7 @@ export const questionSchema = yup.object({
   dynParamIdx: yup.number().optional(),
 
   homework: optionalId,
-  lang: yup.string().trim().required().oneOf(Object.keys(QUESTION.LANG)),
+  lang: yup.string().trim().required(), // .oneOf(Object.keys(QUESTION.LANG)), // move the logic to controller
 
   price: yup.number().optional(),
   content: yup.string().trim().required(),
@@ -288,46 +284,64 @@ export const rankingSchema = yup.object({
 });
 export const remarkSchema = yup.object({ remark: yup.string().trim().required() });
 export const removeSchema = yup.object({ id, remark: yup.string().trim().optional() });
-export const roleSchema = yup.object({ role: yup.string().trim().required().oneOf(Object.keys(USER.ROLE)) });
+export const roleSchema = yup.object({ role: yup.string().trim().required() });
+
+export const satelliteSeedCompleteSchema = yup.object({
+  tenantId: id,
+  seedingId: id,
+  hasError: yup.boolean().required(),
+  result: yup.string().required(),
+});
+
+export const satelliteSyncSchema = yup.object({
+  apiKey: yup.string().required(),
+  attempt: yup.number().required(),
+  syncJobId: id,
+  stringifiedNotify: yup.string().required(),
+  stringifiedSync: yup.string().required(),
+  tenantId: id,
+  timestamp: yup.date().required(),
+  version: yup.string().required(),
+});
+
 export const schoolSchema = yup.object({
   school: yup
     .object({
-      code: yup.string().trim().uppercase().required(),
+      code: yup.string().trim().required(),
       name: locale,
       address: locale,
       district: id,
       phones,
       emi: yup.boolean().optional(),
-      band: yup.string().trim().optional(),
+      band: yup.string().trim().required(),
       logoUrl: yup.string().trim().optional(),
       website: url.optional(),
-      funding: yup.string().trim().optional().oneOf(Object.keys(SCHOOL.FUNDING)),
-      gender: yup.string().trim().optional().oneOf(Object.keys(SCHOOL.GENDER)),
-      religion: yup.string().trim().optional(),
+      funding: yup.string().trim().required(),
+      gender: yup.string().trim().required(),
+      religion: yup.string().trim().required(),
       levels: ids,
     })
     .noUnknown(),
 });
-export const sourceIdSchema = yup.object({ sourceId: id });
-export const subjectSchema = yup.object({
-  subject: yup.object({ name: locale, levels: ids }).noUnknown(),
-});
+export type SchoolSchema = InferType<typeof schoolSchema>;
 
+export const sourceIdSchema = yup.object({ sourceId: id });
+export const subIdSchema = yup.object({ subId: id });
+export const subjectSchema = yup.object({ subject: yup.object({ name: locale, levels: ids }).noUnknown() });
 export const taggingSchema = yup.object({ id, tag: id });
 export const tagSchema = yup.object({
   tag: yup.object({ name: locale, description: locale }).noUnknown(),
 });
+export const tenantBindingSchema = optionalStudentIdSchema.concat(
+  yup.object({ refreshToken: yup.string().trim().required(), bindingToken: yup.string().trim().required() }),
+);
 export const tenantCoreSchema = yup.object({
   tenant: yup
     .object({
       code: yup.string().trim().uppercase().required(),
       name: locale,
       school: optionalId,
-      services: yup
-        .array()
-        .of(yup.string().trim().required().oneOf(Object.keys(TENANT.SERVICE)))
-        .required(),
-      satelliteUrl: url.optional(),
+      services: yup.array().of(yup.string().trim().required()).required(),
     })
     .noUnknown(),
 });
@@ -349,18 +363,17 @@ export const tenantExtraSchema = yup.object({
 export const tenantIdSchema = yup.object({ tenantId: id });
 export const tokenSchema = yup.object({ token: yup.string().trim().required() });
 export const tutorSchema = yup.object({
-  intro: yup.string().trim().required(),
+  intro: yup.string().trim().optional(),
   officeHour: yup.string().trim().optional(),
 });
-export const tutorCredentialIdSchema = yup.object({ credentialId: id });
 export const tutorCredentialSchema = yup.object({
   title: yup.string().trim().required(),
   proofs: yup.array().of(yup.string().trim().required()).required(),
 });
-export const tutorSpecialtyIdSchema = yup.object({ specialtyId: id });
 export const tutorSpecialtySchema = yup.object({
+  tenantId: id,
   note: yup.string().trim().optional(),
-  lang: yup.string().trim().required().oneOf(Object.keys(QUESTION.LANG)).required(),
+  langs: yup.array().of(yup.string().trim().required()).required(),
   subject: yup.string().trim().required(),
   level: yup.string().trim().required(),
 });
@@ -385,37 +398,41 @@ export const userApiKeySchema = yup.object({
   note: yup.string().trim().optional(),
   expireAt: yup.date().required(),
 });
-export const userLocaleSchema = yup.object({
-  locale: yup.string().trim().required().oneOf(Object.keys(SYSTEM.LOCALE)),
+export const userAvailabilitySchema = yup.object({ availability: yup.string().trim().optional() });
+export const userAvatarSchema = yup.object({ avatarUrl: yup.string().trim().optional() });
+export const userIdSchema = yup.object({ userId: id });
+export const userIdsSchema = yup.object({
+  userIds: yup.array().of(id).required(),
 });
-export const userNetworkStatusSchema = yup.object({
-  networkStatus: yup.string().trim().required().oneOf(Object.keys(USER.NETWORK_STATUS)),
-});
+export const userLocaleSchema = yup.object({ locale: yup.string().trim().required() });
 export const userPaymentMethodsSchema = yup.object({
   currency: yup.string().trim().required(),
-  type: yup.string().trim().required(),
   bank: yup.string().trim().optional(),
   account: yup.string().trim().required(),
   payable: yup.boolean().default(false),
   receivable: yup.boolean().default(false),
 });
 
+export const userMessengerSchema = yup.object({
+  provider: yup.string().trim().required(),
+  account: yup.string().trim().required(),
+});
+
 export const userProfileSchema = yup.object({
-  name: yup.string().trim().optional(),
-  formalName: locale.optional(),
-  avatarUrl: yup.string().trim().optional(),
-  mobile: phone.optional(),
-  whatsapp: phone.optional(),
+  name: yup.string().trim().required(),
+  formalName: locale.default(null).nullable(),
   yob: yup.number().optional(),
   dob: yup.date().optional(),
 });
 
-export const userIdSchema = yup.object({ userId: id });
-export const userIdsSchema = yup.object({
-  userIds: yup.array().of(id).required(),
+export const userPushSubscriptionSchema = yup.object({
+  endPoint: yup.string().trim().required(),
+  p256dh: yup.string().trim().required(),
+  auth: yup.string().trim().required(),
 });
+
 export const userSchema = yup.object({
-  tenantId: optionalId,
+  tenantId: id,
   email,
   name,
   studentId: yup.string().trim().optional(),
@@ -431,20 +448,23 @@ const force = yup.boolean();
 const isPublic = yup.boolean();
 const refreshToken = yup.string().trim().required();
 
-export const authCommon = yup.object({ coordinates, clientHash: yup.string().trim().optional() });
-const loginCommon = authCommon.concat(yup.object({ isPublic, force }));
+const authCommon = yup.object({ coordinates, clientHash: yup.string().trim().optional() });
+export const loginCommon = authCommon.concat(yup.object({ isPublic, force }));
 export const deregisterSchema = authCommon.concat(passwordSchema);
 
 export const impersonateSchema = authCommon.concat(userIdSchema);
 export const loginSchema = loginCommon.concat(emailSchema).concat(passwordSchema);
 export const loginWithStudentIdSchema = loginCommon
-  .concat(yup.object({ studentId: yup.string().trim().required(), password }))
+  .concat(passwordSchema)
+  .concat(optionalStudentIdSchema)
   .concat(tenantIdSchema);
 export const loginWithTokenSchema = authCommon.concat(tokenSchema);
-export const oAuth2UnlinkSchema = authCommon.concat(yup.object({ oAuthId: yup.string().trim().required() }));
-export const oAuth2Schema = loginCommon.concat(
-  yup.object({ provider: yup.string().trim().uppercase().required(), code: yup.string().trim().required() }),
-);
+export const oAuth2IdSchema = yup.object({ oAuthId: yup.string().trim().required() });
+export const oAuth2Schema = yup.object({
+  provider: yup.string().trim().required(),
+  code: yup.string().trim().required(),
+});
+
 export const passwordChangeSchema = authCommon.concat(
   yup.object({
     currPassword: yup.string().trim().required(),
@@ -457,8 +477,6 @@ export const passwordResetRequestSchema = authCommon.concat(emailSchema);
 export const refreshTokenSchema = authCommon.concat(yup.object({ refreshToken }));
 export const registerSchema = authCommon.concat(yup.object({ email, name, password, isPublic }));
 export const renewTokenSchema = authCommon.concat(yup.object({ refreshToken, isPublic }));
-
-export type Query = InferType<typeof querySchema>;
 
 // TODO: lazy validation  https://objectpartners.com/2020/06/04/validating-optional-objects-with-yup/
 const lazySchema = yup.object({

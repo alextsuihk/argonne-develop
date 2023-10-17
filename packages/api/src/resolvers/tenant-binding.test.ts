@@ -18,7 +18,7 @@ import {
 } from '../jest';
 import User from '../models/user';
 import { BIND_TENANT, GET_TENANT_TOKEN, UNBIND_TENANT } from '../queries/tenant-binding';
-import token, { REFRESH_TOKEN } from '../utils/token';
+import token, { REFRESH_TOKEN_PREFIX } from '../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 
@@ -61,7 +61,7 @@ describe('TenantBinding GraphQL', () => {
     const userServer = testServer(user);
 
     const [refreshToken] = await Promise.all([
-      token.signStrings([REFRESH_TOKEN, user._id.toString(), randomString()], 10),
+      token.signStrings([REFRESH_TOKEN_PREFIX, user._id.toString(), randomString()], 10),
       user.save(),
     ]);
 
@@ -83,7 +83,7 @@ describe('TenantBinding GraphQL', () => {
     apolloExpect(bindRes, 'data', { bindTenant: { code: MSG_ENUM.COMPLETED } });
 
     // check if binding is successful
-    const updatedUser = await User.findOneActive({ _id: user._id });
+    const updatedUser = await User.findOne({ _id: user._id }).lean();
     expect(updatedUser?.tenants.some(t => t.equals(tenantId!))).toBeTrue();
 
     // tenantAdmin unbind user
@@ -94,7 +94,7 @@ describe('TenantBinding GraphQL', () => {
     apolloExpect(unBindRes, 'data', { unbindTenant: { code: MSG_ENUM.COMPLETED } });
 
     // check if unbinding is successful
-    const updated2User = await User.findOneActive({ _id: user._id });
+    const updated2User = await User.findOne({ _id: user._id }).lean();
     expect(updated2User?.tenants.some(t => t.equals(tenantId!))).toBeFalse();
 
     // clean up

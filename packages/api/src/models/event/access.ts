@@ -4,33 +4,29 @@
  *
  */
 
-import type { Model, Types } from 'mongoose';
+import type { InferSchemaType, Model, Types } from 'mongoose';
 import { Schema } from 'mongoose';
 
+import { discriminatorKey } from '../common';
 import type { GenericDocument } from './generic';
-import Generic, { options } from './generic';
+import Generic from './generic';
 
-export interface AccessEventDocument extends GenericDocument {
-  link: string;
-  code: number;
-  data?: unknown;
-}
-
-type Log = (user: string | Types.ObjectId, link: string, data: unknown) => Promise<AccessEventDocument>;
+type Log = (user: Types.ObjectId, link: string, data: unknown) => Promise<AccessEventDocument>;
 interface AccessEventModel extends Model<AccessEventDocument> {
   log: Log;
 }
 
-const accessEventSchema = new Schema<AccessEventDocument>(
+const accessEventSchema = new Schema(
   {
-    link: String,
-    code: Number,
-    data: Schema.Types.Mixed,
+    link: { type: String, required: true },
+    data: { type: Schema.Types.Mixed, required: true },
   },
-  options,
+  discriminatorKey,
 );
 
 const log: Log = async (user, link, data) => AccessEvent.create<Partial<AccessEventDocument>>({ user, link, data });
+
 accessEventSchema.static('log', log);
+export type AccessEventDocument = GenericDocument & InferSchemaType<typeof accessEventSchema>;
 const AccessEvent = Generic.discriminator<AccessEventDocument, AccessEventModel>('AccessEvent', accessEventSchema);
 export default AccessEvent;

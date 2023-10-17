@@ -81,9 +81,9 @@ export default gql`
     bids: [Bid!]!
     paidAt: Float
 
-    correctness: Int!
-    explicitness: Int!
-    punctuality: Int!
+    correctness: Int
+    explicitness: Int
+    punctuality: Int
 
     contentsToken: String!
   }

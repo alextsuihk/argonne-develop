@@ -31,7 +31,7 @@ import {
   testServer,
 } from '../jest';
 import School from '../models/school';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_TENANT,
@@ -49,12 +49,12 @@ const { TENANT } = LOCALE.DB_ENUM;
 // Top tenant of this test suite:
 describe('Tenant GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let rootServer: ApolloServer | null;
-  let rootUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let rootUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantAdminServer: ApolloServer | null;
 
   let htmlUrl: string;
@@ -84,6 +84,8 @@ describe('Tenant GraphQL', () => {
 
     flaggedWords: expect.any(Array),
     authServices: expect.any(Array),
+
+    satelliteStatus: expect.toBeOneOf([null, expect.any(String)]),
 
     remarks: null,
 
@@ -158,7 +160,6 @@ describe('Tenant GraphQL', () => {
       name: FAKE_LOCALE,
       ...(school && { school }),
       services: randomItems(Object.keys(TENANT.SERVICE), 3 * Math.random() + 1),
-      ...(prob(0.5) && { satelliteUrl: `https://satellite.${domain}` }),
     };
 
     // create a new tenant (as root)
@@ -191,7 +192,6 @@ describe('Tenant GraphQL', () => {
       name: FAKE2_LOCALE,
       ...(school && { school }),
       services: randomItems(Object.keys(TENANT.SERVICE), 3 * Math.random() + 1),
-      ...(prob(0.5) && { satelliteUrl: `https://satellite2.${domain}` }),
     };
     const updateCoreRes = await rootServer!.executeOperation({
       query: UPDATE_TENANT_CORE,

@@ -2,33 +2,15 @@
 
 /**
  * Model: Contribution
- * (including scripts)
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface ContributionDocument extends BaseDocument {
-  title: string;
-  description?: string;
-  contributors: {
-    user: Types.ObjectId;
-    name: string; // John (P6, S3)
-    school: Types.ObjectId;
-  }[];
-
-  urls: string[]; // YouTube, github url (with commit hash or branch), private repo for assignment, otherwise public repo
-
-  book?: Types.ObjectId;
-  chapter?: string; // e.g 1.2#33, chapter 1.2, homework#33
-}
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -40,11 +22,11 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const contributionSchema = new Schema<ContributionDocument>(
+const contributionSchema = new Schema(
   {
     ...baseDefinition,
 
-    title: String,
+    title: { type: String, required: true },
     description: String,
     contributors: [
       {
@@ -64,5 +46,6 @@ const contributionSchema = new Schema<ContributionDocument>(
 );
 
 contributionSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const Contribution = model<ContributionDocument>('Contribution', contributionSchema);
+const Contribution = model('Contribution', contributionSchema);
+export type ContributionDocument = InferSchemaType<typeof contributionSchema> & Id;
 export default Contribution;

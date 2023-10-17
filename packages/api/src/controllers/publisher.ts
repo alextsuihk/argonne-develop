@@ -11,7 +11,7 @@ import configLoader from '../config/config-loader';
 import Book from '../models/book';
 import ChatGroup from '../models/chat-group';
 import DatabaseEvent from '../models/event/database';
-import type { Id, PublisherDocument } from '../models/publisher';
+import type { PublisherDocument } from '../models/publisher';
 import Publisher, { searchableFields } from '../models/publisher';
 import User from '../models/user';
 import { messageToAdmins } from '../utils/chat';
@@ -42,7 +42,7 @@ const validateInputs = async (userIds: string[]) => {
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<PublisherDocument & Id> => {
+const addRemark = async (req: Request, args: unknown): Promise<PublisherDocument> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -61,7 +61,7 @@ const addRemark = async (req: Request, args: unknown): Promise<PublisherDocument
 /**
  * Create New Publisher
  */
-const create = async (req: Request, args: unknown): Promise<PublisherDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<PublisherDocument> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req, 'ADMIN');
   const {
@@ -89,7 +89,7 @@ const create = async (req: Request, args: unknown): Promise<PublisherDocument & 
     DatabaseEvent.log(userId, `/publishers/${_id}`, 'CREATE', { args }),
     syncToAllSatellites({
       bulkWrite: {
-        publishers: [{ insertOne: { document: publisher.toObject() } }] satisfies BulkWrite<PublisherDocument>,
+        publishers: [{ insertOne: { document: publisher } }] satisfies BulkWrite<PublisherDocument>,
       },
       ...(logoUrl && { minio: { serverUrl: config.server.minio.serverUrl, addObjects: [logoUrl] } }),
     }),
@@ -112,7 +112,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple Publishers (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<(PublisherDocument & Id)[]> => {
+const find = async (req: Request, args: unknown): Promise<PublisherDocument[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<PublisherDocument>(searchableFields, { query });
@@ -144,7 +144,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One Publisher by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<(PublisherDocument & Id) | null> => {
+const findOne = async (req: Request, args: unknown): Promise<PublisherDocument | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<PublisherDocument>(searchableFields, { query }, { _id: id });
@@ -226,7 +226,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Publisher
  */
-const update = async (req: Request, args: unknown): Promise<PublisherDocument & Id> => {
+const update = async (req: Request, args: unknown): Promise<PublisherDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const {

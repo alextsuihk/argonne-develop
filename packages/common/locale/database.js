@@ -15,8 +15,10 @@ const TUTOR = { enUS: 'Tutor', zhHK: '導師', zhCN: '导师' };
 
 const BLOCKED = { enUS: 'Blocked', zhHK: '封鎖', zhCN: '封锁' };
 const CENSOR = { enUS: 'Censorship', zhHK: '審查', zhCN: '审查' };
+const DEMO = { enUS: 'Demo', zhHK: 'Demo', zhCN: 'Demo' };
+
 const IMPORTANT = { enUS: 'Important', zhHK: '重要', zhCN: '重要' };
-const STEM = { enUS: 'STEM', zhHK: 'STEM', zhCN: 'STEM' };
+const UNSPECIFIC = { enUS: 'Unspecific', zhHK: '未指定', zhCN: '未指定' };
 
 const COMMON_FLAGS = {
   BLOCKED,
@@ -102,6 +104,9 @@ module.exports = {
       ADMIN,
       ADMIN_JOINED: { enUS: '', zhHK: '', zhCN: '' }, // at least one administration has joined the chat,
       BOOK: { enUS: 'Book', zhHK: '書本', zhCN: '书本' },
+      TENANT_ADMINS: { enUS: 'Tenant Admin' },
+      TENANT_COUNSELORS: { enUS: 'Tenant Counselor' },
+      TENANT_SUPPORTS: { enUS: 'Tenant Support' },
       CENSOR,
     },
     MEMBERSHIP: {
@@ -210,6 +215,15 @@ module.exports = {
       COMPLETED: { enUS: 'Completed' },
       ERROR: { enUS: 'Error in Processing' },
       TIMEOUT: { enUS: 'Time-out' },
+      IGNORE: { enUS: ' Ignore' }, // no executed in satellite mode
+    },
+  },
+
+  MESSENGER: {
+    PROVIDER: {
+      MOBILE: { enUS: 'Mobile Phone', zhHK: '手機', zhCN: '手机' },
+      WECHAT: { enUS: 'WeChat', zhHK: '微信', zhCN: '微信' },
+      WHATSAPP: { enUS: 'WhatsApp', zhHK: 'WhatsApp', zhCN: 'WhatsApp' },
     },
   },
 
@@ -235,7 +249,15 @@ module.exports = {
   },
 
   SCHOOL: {
+    BAND: {
+      UNSPECIFIC,
+      ONE: { enUS: '1', zhHK: '1', zhCN: '1' },
+      TWO: { enUS: '2', zhHK: '2', zhCN: '2' },
+      THREE: { enUS: '3', zhHK: '3', zhCN: '3' },
+    },
+
     FUNDING: {
+      UNSPECIFIC,
       PRIVATE: { enUS: 'Private', zhHK: '私立', zhCN: '私立' },
       GOVERNMENT: { enUS: 'Government', zhHK: '官校', zhCN: '官校' },
       AIDED: { enUS: 'Aided', zhHK: '資助', zhCN: '资助' },
@@ -243,10 +265,15 @@ module.exports = {
       INTERNATIONAL: { enUS: 'International', zhHK: '國際', zhCN: '国际' },
     },
     GENDER: {
+      UNSPECIFIC,
       CO_ED: { enUS: 'Co-Ed', zhHK: '男女校', zhCN: '男女校' },
       BOYS: { enUS: 'Boys', zhHK: '', zhCN: '' },
       GIRLS: { enUS: 'Girls', zhHK: '', zhCN: '' },
       OTHERS: { enUS: 'Others', zhHK: '', zhCN: '' },
+    },
+
+    RELIGION: {
+      UNSPECIFIC,
     },
   },
   SCHOOL_COURSE: {
@@ -268,22 +295,29 @@ module.exports = {
     FLAG: {
       DSE_CORE: { enUS: 'DSE Core', zhHK: 'DSE 核心科目', zhCN: 'DSE 核心科目' },
       DSE_ELECTIVE: { enUS: 'DSE Elective', zhHK: 'DSE 選修科目', zhCN: 'DSE 选修科目' },
-      STEM,
+      STEM: { enUS: 'STEM', zhHK: 'STEM', zhCN: 'STEM' }, // internal use for STEM tenant
     },
   },
 
   TENANT: {
     FLAG: {
       BUREAU_STATS: { enUS: 'Education Bureau Stats', zhHK: '教育處', zhCN: '教育处' },
+      DEMO,
       REPUTABLE: { enUS: 'Reputable', zhHK: '信譽', zhCN: '信誉' },
+
     },
     SERVICE: {
       AUTH_SERVICE: { enUS: 'Auth Service' },
       CHAT_GROUP: { enUS: 'Chat Group' },
       CLASSROOM: { enUS: 'Classroom' },
-      QUESTION: { enUS: 'Question' },
       QUESTION_BID: { enUS: 'Question Bid' },
       TUTOR: { enUS: 'Tutor' },
+    },
+
+    SATELLITE_STATUS: {
+      INITIALIZING: { enUS: 'Satellite Initialization In Progress' },
+      INIT_FAIL: { enUS: 'Satellite Initialization Fail' },
+      INIT_SUCCESS: { enUS: 'Satellite Initialization Success' },
     },
   },
 
@@ -323,6 +357,7 @@ module.exports = {
     },
 
     FLAG: {
+      DEMO,
       EDA,
       REQUIRE_PASSWORD_CHANGE: { enUS: 'Require Password Change' },
       // TRUSTED_ADVERTISER: { enUS: 'Trusted Advertiser', zhHK: '高信譽廣告商', zhCN: '高信誉广告商' },
@@ -330,7 +365,7 @@ module.exports = {
       // TRUSTED_TUTOR: { enUS: 'Trusted Tutor', zhHK: '高信譽導師', zhCN: '高信誉导师' },
     },
 
-    NETWORK_STATUS: {
+    AVAILABILITY: {
       AWAY: { enUS: 'Away', zhHK: '暫時離開', zhCN: '暂时离开' }, // user-selected
       IDLE: { enUS: 'Away', zhHK: '暫時離開', zhCN: '暂时离开' }, // system-detected
       BUSY: { enUS: 'Busy', zhHK: '忙碌中', zhCN: '忙碌中' },

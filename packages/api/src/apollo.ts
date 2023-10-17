@@ -7,7 +7,7 @@ import { ApolloServer } from 'apollo-server-express';
 
 import app from './app';
 import configLoader from './config/config-loader';
-import type { Id, UserDocument } from './models/user';
+import type { UserDocument } from './models/user';
 import resolvers from './resolvers';
 import typeDefs from './typeDefs';
 import { isDevMode } from './utils/environment';
@@ -50,7 +50,7 @@ const stop = async (): Promise<void> => apolloServer.stop();
 /**
  * Apollo Test Server for jest
  */
-export const testServer = (emulatedUser?: (UserDocument & Id) | null): ApolloServer =>
+export const testServer = (emulatedUser?: UserDocument | null): ApolloServer =>
   new ApolloServer({
     typeDefs,
     resolvers,
@@ -60,11 +60,10 @@ export const testServer = (emulatedUser?: (UserDocument & Id) | null): ApolloSer
         ip: '127.0.0.1',
         ua: 'Apollo-Jest-User-Agent',
         userFlags: emulatedUser?.flags,
-        userId: emulatedUser?._id.toString(),
+        userId: emulatedUser?._id,
         userLocale: emulatedUser?.locale,
         userName: emulatedUser?.name,
         userRoles: emulatedUser?.roles,
-        userScopes: emulatedUser?.scopes,
         userTenants: emulatedUser?.tenants.map(t => t.toString()) ?? [],
         ...(emulatedUser?.schoolHistories[0] && { userExtra: latestSchoolHistory(emulatedUser.schoolHistories) }),
       },

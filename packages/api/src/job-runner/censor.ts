@@ -36,7 +36,16 @@ const chatMsg = (link: string, data: string) => ({
 const censor = async (task: Task): Promise<string> => {
   if (task.type !== 'censor') return 'IMPOSSIBLE';
 
-  const { tenantId, userLocale, model, parentId, contentId } = task;
+  const { tenantId, userLocale, parent, contentId } = task;
+
+  const model = parent.startsWith('/chatGroups/')
+    ? 'chatGroups'
+    : parent.startsWith('/questions/')
+    ? 'questions'
+    : null;
+  const [parentId] = parent.split('/').splice(2);
+  if (!model || !parentId) return `Error in parent ${parent}`;
+
   const [content, tenant] = await Promise.all([Content.findById(contentId).lean(), Tenant.findByTenantId(tenantId)]);
 
   if (!content) throw `content ${contentId} not found`;
@@ -57,20 +66,20 @@ const censor = async (task: Task): Promise<string> => {
         _id: mongoId(),
         createdAt: new Date(),
         reason: USER.VIOLATION.CENSOR,
-        link: `/${model}/${parentId}/${content._id}`,
+        link: `/${parent}/${content._id}`,
       },
     },
   };
   const [{ chatGroup, chat, content: newContent }] = await Promise.all([
     startChatGroup(
       tenant._id,
-      chatMsg(`/${model}/${parentId}`, data),
+      chatMsg(`/${parent}`, data),
       [creator, ...tenant.marshals],
       userLocale,
-      `USER#${creator}#${model.toUpperCase()}#${parentId}`,
+      `USER#${creator}#${parent}`,
       CHAT_GROUP.FLAG.CENSOR,
     ),
-    model === 'chat-groups'
+    model === 'chatGroups'
       ? ChatGroup.updateOne({ _id: parentId }, update)
       : Question.updateOne({ _id: parentId }, update),
     Content.updateOne(content, contentUpdate),
@@ -79,12 +88,12 @@ const censor = async (task: Task): Promise<string> => {
 
   await notifySync(
     tenant._id,
-    { userIds: [creator, ...tenant.marshals], event: model === 'chat-groups' ? 'CHAT-GROUP' : 'QUESTION' },
+    { userIds: [creator, ...tenant.marshals], event: parent.startsWith('/chatGroups/') ? 'CHAT-GROUP' : 'QUESTION' },
     {
       bulkWrite: {
         chatGroups: [
           { insertOne: { document: chatGroup } },
-          ...(model === 'chat-groups' ? [{ updateOne: { filter: { _id: parentId }, update } }] : []),
+          ...(model === 'chatGroups' ? [{ updateOne: { filter: { _id: parentId }, update } }] : []),
         ] satisfies BulkWrite<ChatGroupDocument>,
         ...(model === 'questions' && {
           questions: [{ updateOne: { filter: { _id: parentId }, update } }] satisfies BulkWrite<QuestionDocument>,

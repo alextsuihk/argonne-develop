@@ -8,7 +8,7 @@ import { addDays } from 'date-fns';
 
 import { expectedDateFormat, expectedIdFormat, FAKE, jestSetup, jestTeardown } from '../../jest';
 import type { AnnouncementDocument } from '../../models/announcement';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -17,9 +17,9 @@ const route = 'announcements';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: (UserDocument & Id) | null;
-  let normalUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
+  let normalUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantId: string | null;
 
   // expected MINIMUM single announcement format

@@ -8,38 +8,29 @@
  *
  */
 
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface OpinionDocument extends BaseDocument {
-  user: Types.ObjectId;
-  event: string;
-  data: unknown;
-  processedAt: Date;
-}
 
 const { DEFAULTS } = configLoader;
 
-const opinionSchema = new Schema<OpinionDocument>(
+const opinionSchema = new Schema(
   {
     ...baseDefinition,
 
-    user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
 
-    event: String,
-    data: Schema.Types.Mixed,
+    event: { type: String, required: true },
+    contents: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
 
     processedAt: { type: Date, expires: DEFAULTS.MONGOOSE.EXPIRES.OPINION },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const Opinion = model<OpinionDocument>('Opinion', opinionSchema);
-
+const Opinion = model('Opinion', opinionSchema);
+export type OpinionDocument = InferSchemaType<typeof opinionSchema> & Id;
 export default Opinion;

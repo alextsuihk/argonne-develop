@@ -23,7 +23,7 @@ import {
   randomItem,
 } from '../jest';
 import Typography from '../models/typography';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import {
   ADD_CUSTOM_TYPOGRAPHY,
   ADD_TYPOGRAPHY,
@@ -40,7 +40,7 @@ const { MSG_ENUM } = LOCALE;
 // Top level of this test suite:
 describe('Typography GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let tenantAdminServer: ApolloServer | null;

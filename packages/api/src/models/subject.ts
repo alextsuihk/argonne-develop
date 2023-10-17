@@ -4,19 +4,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Locale } from './common';
-import { baseDefinition, localeDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface SubjectDocument extends BaseDocument {
-  name: Locale;
-  levels: Types.ObjectId[];
-}
+import type { Id } from './common';
+import { baseDefinition, localeSchema } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -28,16 +21,17 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const subjectSchema = new Schema<SubjectDocument>(
+const subjectSchema = new Schema(
   {
     ...baseDefinition,
 
-    name: localeDefinition,
+    name: { type: localeSchema, required: true },
     levels: [{ type: Schema.Types.ObjectId, ref: 'Level' }], // possible levels
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
 subjectSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const Subject = model<SubjectDocument>('Subject', subjectSchema);
+const Subject = model('Subject', subjectSchema);
+export type SubjectDocument = InferSchemaType<typeof subjectSchema> & Id;
 export default Subject;

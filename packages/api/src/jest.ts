@@ -9,7 +9,7 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 
 import { LOCALE } from '@argonne/common';
-import { addSeconds } from 'date-fns';
+import { addDays, addSeconds } from 'date-fns';
 import type { Types } from 'mongoose';
 import mongoose from 'mongoose';
 
@@ -33,30 +33,38 @@ import PresignedUrl from './models/presigned-url';
 import type { QuestionDocument } from './models/question';
 import Question from './models/question';
 import Tenant, { TenantDocument } from './models/tenant';
-import type { Id, UserDocument } from './models/user';
-import User from './models/user';
+import type { UserDocument } from './models/user';
+import User, { activeCond } from './models/user';
 import { redisClient } from './redis';
-import { mongoId, prob, randomItem, randomString, schoolYear, shuffle, terminate } from './utils/helper';
+import { mongoId, randomItem, randomString, schoolYear, shuffle, terminate } from './utils/helper';
 import { client as minioClient, privateBucket, publicBucket } from './utils/storage';
 
 export { ApolloServer, testServer } from './apollo';
 export { mongoId, prob, randomItem, randomItems, randomString, shuffle } from './utils/helper';
 
+export type ConvertObjectIdToString<T extends object> = {
+  [K in keyof T]: T[K] extends Types.ObjectId | undefined
+    ? string | undefined
+    : T[K] extends Types.ObjectId[]
+    ? string[]
+    : T[K] | null;
+};
+
 type JestSetup = {
   adminServer: ApolloServer | null;
-  adminUser: (UserDocument & Id) | null;
+  adminUser: UserDocument | null;
   guestServer: ApolloServer | null;
   normalServer: ApolloServer | null;
-  normalUser: (UserDocument & Id) | null;
-  normalUsers: (UserDocument & Id)[] | null;
+  normalUser: UserDocument | null;
+  normalUsers: UserDocument[] | null;
   rootServer: ApolloServer | null;
-  rootUser: (UserDocument & Id) | null;
-  tenantAdmin: (UserDocument & Id) | null;
+  rootUser: UserDocument | null;
+  tenantAdmin: UserDocument | null;
   tenantAdminServer: ApolloServer | null;
-  tenant: (TenantDocument & Id) | null;
+  tenant: TenantDocument | null;
   tenantId: string | null;
 };
-const { USER } = LOCALE.DB_ENUM;
+const { QUESTION, USER } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
 const { mongo } = config.server;
 
@@ -73,10 +81,12 @@ export const FAKE2_LOCALE = { enUS: `ENG2: ${domain}`, zhCN: `CHS2: ${domain}`, 
  *
  * note: in case error, data could be either null or undefined
  */
+// export const apolloExpect = <T extends BaseDocument >(
 export const apolloExpect = (
   res: unknown,
   type: 'data' | 'error' | 'errorContaining',
   expected: Record<string, unknown> | string,
+  // expected: Record<string, Partial<ConvertObjectIdToString<T>> | { code: string } | boolean> | string,
 ) => {
   if (type === 'data') return expect(res).toEqual({ http: expect.anything(), data: expected });
 
@@ -142,6 +152,22 @@ export const expectedContributionFormat = expect.objectContaining({
   remarks: expect.any(Array),
 });
 
+// expect BookAssignment Format
+export const expectedBookAssignmentFormat = {
+  _id: expectedIdFormat,
+  flags: expect.any(Array),
+  contribution: expectedContributionFormat,
+  chapter: expect.any(String),
+  content: expectedIdFormat,
+  dynParams: expect.any(Array),
+  solutions: expect.any(Array),
+  examples: expect.any(Array),
+  remarks: expect.any(Array),
+  createdAt: expectedDateFormat(true),
+  updatedAt: expectedDateFormat(true),
+  deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
+};
+
 // expected Locale Format
 export const expectedLocaleFormat = {
   enUS: expect.any(String),
@@ -170,7 +196,7 @@ export const expectedUserFormat = {
   tenants: expect.any(Array), // newly registered user & user added by ROOT (e.g publisher) does not tenant
   status: USER.STATUS.ACTIVE,
   name: expect.any(String),
-  // formalName: expect.any(Object),
+  // formalName: expect.any(Object), // could be null
   emails: expect.arrayContaining([expect.any(String)]),
 
   oAuth2s: expect.any(Array),
@@ -183,10 +209,8 @@ export const expectedUserFormat = {
   darkMode: expect.any(Boolean),
   // theme: expect.any(String), // optional, could be undefined
 
-  apiKeys: expect.any(Array),
   roles: expect.any(Array),
   features: expect.any(Array),
-  scopes: expect.any(Array),
 
   coin: expect.any(Number),
   virtualCoin: expect.any(Number),
@@ -194,8 +218,7 @@ export const expectedUserFormat = {
 
   paymentMethods: expect.any(Array),
   // preference: expect.any(String), // could be undefined
-  subscriptions: expect.any(Array),
-  interests: expect.any(Array),
+  pushSubscriptions: expect.any(Array),
   supervisors: expect.any(Array),
   staffs: expect.any(Array),
 
@@ -217,43 +240,38 @@ export const expectedUserFormat = {
 // Apollo date is number (float)
 export const expectedUserFormatApollo = {
   ...expectedUserFormat,
-  // avatarUrl: expect.toBeOneOf([null, expect.any(String)]),
-  // dob: expect.toBeOneOf([null, expect.any(Number)]),
   availability: expect.toBeOneOf([null, expect.any(String)]),
-  // preference: expect.toBeOneOf([null, expect.any(String)]),
-  // suspendUtil: expect.toBeOneOf([null, expectedDateFormat(true)]),
-  // theme: expect.toBeOneOf([null, expect.any(String)]),
-  // yob: expect.toBeOneOf([null, expect.any(Number)]),
-
+  avatarUrl: expect.toBeOneOf([null, expect.any(String)]),
+  balanceAuditedAt: expectedDateFormat(true),
+  dob: expect.toBeOneOf([null, expect.any(Number)]),
   formalName: expect.toBeOneOf([
     null,
     { enUS: expect.any(String), zhHK: expect.any(String), zhCN: expect.toBeOneOf([null, expect.any(String)]) },
   ]),
-
-  avatarUrl: expect.toBeOneOf([null, expectedIdFormat]),
-
-  suspendUtil: expect.toBeOneOf([null, expectedDateFormat(true)]),
-  balanceAuditedAt: expectedDateFormat(true),
   identifiedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
+  preference: expect.toBeOneOf([null, expect.any(String)]),
+  suspendUtil: expect.toBeOneOf([null, expectedDateFormat(true)]),
+  theme: expect.toBeOneOf([null, expect.any(String)]),
+  yob: expect.toBeOneOf([null, expect.any(Number)]),
 
-  // remark: null,
+  remarks: null,
   createdAt: expectedDateFormat(true),
   updatedAt: expectedDateFormat(true),
   deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
 };
 
-export const genChatGroup = (tenant: string, userId: string | Types.ObjectId) => {
+export const genChatGroup = (tenant: string, userId: Types.ObjectId) => {
   const chat = new Chat<Partial<ChatDocument>>({});
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/chats/${chat._id}`],
-    creator: mongoId(userId),
+    creator: userId,
     data: FAKE,
   });
   const chatGroup = new ChatGroup<Partial<ChatGroupDocument>>({
     tenant: mongoId(tenant),
-    admins: [mongoId(userId)],
-    users: [mongoId(userId)],
-    chats: [chat],
+    admins: [userId],
+    users: [userId],
+    chats: [chat._id],
   });
   chat.parents = [`/chatGroups/${chatGroup._id}`];
   chat.contents = [content._id];
@@ -261,14 +279,14 @@ export const genChatGroup = (tenant: string, userId: string | Types.ObjectId) =>
   return { chatGroup, chat, content };
 };
 
-export const genClassroom = async (tenant: string, teacherId: string | Types.ObjectId) => {
+export const genClassroom = async (tenant: string, teacherId: Types.ObjectId) => {
   const books = await Book.find({ deletedAt: { $exists: false } }).lean();
   const book = randomItem(books);
 
   const chat = new Chat<Partial<ChatDocument>>({});
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/chats/${chat._id}`],
-    creator: mongoId(teacherId),
+    creator: teacherId,
     data: FAKE,
   });
 
@@ -278,10 +296,10 @@ export const genClassroom = async (tenant: string, teacherId: string | Types.Obj
     subject: book.subjects[0],
     schoolClass: `schoolClass ${FAKE}`,
     books: [book._id],
-    teachers: [mongoId(teacherId)],
+    teachers: [teacherId],
     students: [mongoId()],
     year: schoolYear(),
-    chats: [chat],
+    chats: [chat._id],
   }); // bare minimal info
 
   chat.parents = [`/classrooms/${classroom._id}`];
@@ -290,7 +308,7 @@ export const genClassroom = async (tenant: string, teacherId: string | Types.Obj
   return { book, classroom, chat, content, fakeUserId: mongoId() };
 };
 
-export const genClassroomWithAssignment = async (tenant: string, teacherId: string | Types.ObjectId) => {
+export const genClassroomWithAssignment = async (tenant: string, teacherId: Types.ObjectId) => {
   const { book, classroom, fakeUserId } = await genClassroom(tenant, teacherId);
   const assignmentIdx = Math.floor(Math.random() * book.assignments.length);
 
@@ -300,7 +318,11 @@ export const genClassroomWithAssignment = async (tenant: string, teacherId: stri
     bookAssignments: book!.assignments,
   });
 
-  const homework = new Homework<Partial<HomeworkDocument>>({ assignment, user: fakeUserId, assignmentIdx });
+  const homework = new Homework<Partial<HomeworkDocument>>({
+    assignment: assignment._id,
+    user: fakeUserId,
+    assignmentIdx,
+  });
   const homeworkContents = Array(2)
     .fill(0)
     .map(
@@ -313,46 +335,40 @@ export const genClassroomWithAssignment = async (tenant: string, teacherId: stri
     );
 
   homework.contents = homeworkContents.map(c => c._id);
-  assignment.homeworks = [homework];
+  assignment.homeworks = [homework._id];
   classroom.assignments = [assignment._id];
 
   return { assignment, assignmentIdx, book, classroom, homework, homeworkContents };
 };
 
 export const genClassroomUsers = (
-  tenant: string | Types.ObjectId,
+  tenantId: string,
   school: Types.ObjectId,
   level: Types.ObjectId,
   schoolClass: string,
   count: number,
-): (UserDocument & Id)[] =>
+): UserDocument[] =>
   Array(count)
     .fill(0)
     .map((_, idx) =>
-      genUser(tenant, {
+      genUser(tenantId, {
         name: `classroomUser-${idx}`,
         schoolHistories: [{ year: schoolYear(), school, level, schoolClass, updatedAt: new Date() }],
       }),
     );
 
-export const genQuestion = (
-  tenant: string,
-  userId: string | Types.ObjectId,
-  classroom?: string | Types.ObjectId,
-  owner?: 'tutor' | 'student',
-) => {
-  const content = new Content<Partial<ContentDocument>>({ creator: mongoId(userId), data: FAKE });
+export const genQuestion = (tenantId: string, creator: Types.ObjectId, extra: Partial<QuestionDocument>) => {
+  const content = new Content<Partial<ContentDocument>>({ creator, data: FAKE });
   const question = new Question<Partial<QuestionDocument>>({
-    tenant: mongoId(tenant),
-    ...(classroom && { classroom: mongoId(classroom) }),
-    ...(owner === 'student'
-      ? { student: mongoId(userId) }
-      : owner === 'tutor'
-      ? { tutor: mongoId(userId) }
-      : prob(0.5)
-      ? { student: mongoId(userId) }
-      : { tutor: mongoId(userId) }),
+    tenant: mongoId(tenantId),
+    student: mongoId(),
+    deadline: addDays(Date.now(), 10),
+    level: mongoId(),
+    subject: mongoId(),
+    lang: QUESTION.LANG.CSE,
     contents: [content._id],
+
+    ...extra,
   });
   content.parents = [`/questions/${question._id}`];
 
@@ -362,7 +378,7 @@ export const genQuestion = (
 /**
  * Generate an unique Test User
  */
-export const genUser = (tenantId: string | Types.ObjectId | null, override: Partial<UserDocument> = {}) =>
+export const genUser = (tenantId: string | null, override: Partial<UserDocument> = {}) =>
   new User<Partial<UserDocument>>({
     ...(tenantId && { tenants: [mongoId(tenantId)] }),
     name: `Jest User ${domain}`,
@@ -372,7 +388,7 @@ export const genUser = (tenantId: string | Types.ObjectId | null, override: Part
   });
 
 export const jestPutObject = async (
-  userId: string | Types.ObjectId,
+  userId: Types.ObjectId,
   bucketType: 'private' | 'public' = 'public',
 ): Promise<string> => {
   const image = await fsPromises.readFile(path.join(__dirname, 'jest.png'));
@@ -383,7 +399,7 @@ export const jestPutObject = async (
     minioClient.putObject(publicBucket, objectName, image),
     PresignedUrl.insertMany<Partial<PresignedUrlDocument>>(
       {
-        user: mongoId(userId),
+        user: userId,
         url: `/${bucketName}/${objectName}`,
         expireAt: addSeconds(Date.now(), DEFAULTS.STORAGE.PRESIGNED_URL_PUT_EXPIRY + 5),
       },
@@ -430,8 +446,8 @@ export const jestSetup = async (
           identifiedAt: { $exists: true }, // newly jest created user will be excluded (to avoid racing conflict)
         }).lean()
       : null,
-    types.includes('admin') ? User.findOneActive({ roles: USER.ROLE.ADMIN }) : null,
-    types.includes('root') ? User.findOneActive({ roles: USER.ROLE.ROOT }) : null,
+    types.includes('admin') ? User.findOne({ roles: USER.ROLE.ADMIN, ...activeCond }).lean() : null,
+    types.includes('root') ? User.findOne({ roles: USER.ROLE.ROOT, ...activeCond }).lean() : null,
   ]);
 
   const normalUsers =

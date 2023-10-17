@@ -19,7 +19,7 @@ import {
   jestTeardown,
 } from '../../jest';
 import type { TagDocument } from '../../models/tag';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -29,8 +29,8 @@ const route = 'tags';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUsers: (UserDocument & Id)[] | null;
-  let adminUser: (UserDocument & Id) | null;
+  let normalUsers: UserDocument[] | null;
+  let adminUser: UserDocument | null;
 
   // expected MINIMUM single tag format
   const expectedMinFormat = {
@@ -58,7 +58,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const fake2Locale = FAKE2_LOCALE;
     fake2Locale.enUS = fakeLocale.enUS.toLocaleLowerCase();
 
-    await createUpdateDelete<TagDocument & Id>(
+    await createUpdateDelete<TagDocument>(
       route,
       { 'Jest-User': adminUser!._id },
 

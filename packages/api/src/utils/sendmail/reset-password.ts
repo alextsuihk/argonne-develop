@@ -7,13 +7,11 @@ import { addSeconds } from 'date-fns';
 import type { Types } from 'mongoose';
 
 import configLoader from '../../config/config-loader';
-import token from '../token';
+import token, { PASSWORD_TOKEN_PREFIX } from '../token';
 import { sendmail } from './common';
 
 const { zhCN, zhHK } = LOCALE.DB_ENUM.SYSTEM.LOCALE;
 const { config, DEFAULTS } = configLoader;
-
-export const PASSWORD_TOKEN_PREFIX = 'PASSWORD';
 
 export default async (userId: Types.ObjectId, name: string, locale: string, email: string): Promise<boolean> => {
   const expiresBy = addSeconds(new Date(), DEFAULTS.AUTH.PASSWORD_RESET_EXPIRES_IN);

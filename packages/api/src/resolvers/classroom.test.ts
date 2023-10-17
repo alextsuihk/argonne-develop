@@ -30,7 +30,7 @@ import Classroom from '../models/classroom';
 import Content from '../models/content';
 import Level from '../models/level';
 import Tenant from '../models/tenant';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_CLASSROOM,
@@ -64,8 +64,8 @@ const { CHAT } = LOCALE.DB_ENUM;
 describe('Classroom GraphQL', () => {
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantAdminServer: ApolloServer | null;
   let tenantId: string | null;
 
@@ -121,8 +121,8 @@ describe('Classroom GraphQL', () => {
     const teacherId = randomItem(classroom.teachers);
 
     const [student, teacher] = await Promise.all([
-      User.findOneActive({ _id: studentId }),
-      User.findOneActive({ _id: teacherId }),
+      User.findOne({ _id: studentId }).lean(),
+      User.findOne({ _id: teacherId }).lean(),
     ]);
 
     if (!student || !teacher)
@@ -267,7 +267,10 @@ describe('Classroom GraphQL', () => {
     expect.assertions(1);
 
     const { classroom } = await genClassroom(tenantId!, normalUser!._id); // create a classroom
-    const { question, content } = genQuestion(tenantId!, normalUser!._id, classroom._id, 'tutor'); // create source question as tutor
+    const { question, content } = genQuestion(tenantId!, normalUser!._id, {
+      tutor: normalUser!._id,
+      classroom: classroom._id,
+    }); // create source question as tutor
     await Promise.all([classroom.save(), question.save(), content.save()]);
 
     const res = await normalServer!.executeOperation({

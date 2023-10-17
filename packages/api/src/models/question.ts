@@ -4,55 +4,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Bid, Member } from './common';
+import type { Id } from './common';
 import { baseDefinition, bidDefinition, memberDefinition } from './common';
-export type { Id, Member } from './common';
-
-export interface QuestionDocument extends BaseDocument {
-  tenant: Types.ObjectId;
-
-  parent?: Types.ObjectId; // clone from another question
-  student: Types.ObjectId;
-  tutor?: Types.ObjectId;
-  marshals: Types.ObjectId[];
-
-  members: Member[];
-
-  deadline: Date;
-
-  classroom?: Types.ObjectId;
-  level: Types.ObjectId;
-  subject: Types.ObjectId;
-  book?: Types.ObjectId;
-  bookRev?: string;
-  chapter?: string;
-  assignment?: Types.ObjectId;
-  assignmentIdx?: number;
-  dynParamIdx?: number;
-  homework?: Types.ObjectId;
-
-  lang: string;
-
-  contents: Types.ObjectId[];
-  contentIdx: number; // # of contents visible to all bidders (once tutor is assigned, new contents are not visible to bidders)
-  timeSpent?: number; // time spent by tutor
-
-  // bidding
-  price?: number;
-
-  bidders: Types.ObjectId[];
-  bids: Bid[];
-
-  paidAt?: Date;
-
-  correctness: number;
-  explicitness: number;
-  punctuality: number;
-}
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -64,24 +21,24 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const questionSchema = new Schema<QuestionDocument>(
+const questionSchema = new Schema(
   {
     ...baseDefinition,
 
-    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant' },
+    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true },
 
     parent: { type: Schema.Types.ObjectId, ref: 'Question' },
-    student: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    student: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     tutor: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     marshals: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
 
     members: [memberDefinition],
 
-    deadline: Date,
+    deadline: { type: Date, required: true },
 
     classroom: { type: Schema.Types.ObjectId, ref: 'Classroom' },
-    level: { type: Schema.Types.ObjectId, ref: 'Level', index: true },
-    subject: { type: Schema.Types.ObjectId, ref: 'Subject', index: true },
+    level: { type: Schema.Types.ObjectId, ref: 'Level', required: true, index: true },
+    subject: { type: Schema.Types.ObjectId, ref: 'Subject', required: true, index: true },
     book: { type: Schema.Types.ObjectId, ref: 'Book', index: true },
     bookRev: String,
     chapter: String,
@@ -89,7 +46,7 @@ const questionSchema = new Schema<QuestionDocument>(
     assignmentIdx: Number,
     homework: { type: Schema.Types.ObjectId, ref: 'Homework' },
 
-    lang: { type: String, require: true },
+    lang: { type: String, required: true },
 
     contents: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
     contentIdx: { type: Number, default: 1 },
@@ -99,14 +56,13 @@ const questionSchema = new Schema<QuestionDocument>(
     price: Number, // initial offer price
 
     bidders: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
-
     bids: [bidDefinition],
 
     paidAt: Date,
 
-    correctness: { type: Number, default: 0 },
-    explicitness: { type: Number, default: 0 },
-    punctuality: { type: Number, default: 0 },
+    correctness: Number,
+    explicitness: Number,
+    punctuality: Number,
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
@@ -116,18 +72,18 @@ questionSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])),
 // /**
 //  * Virtual Property
 //  */
-// questionSchema.virtual('correct').get(function (this: QuestionDocument) {
+// questionSchema.virtual('correct').get(function () {
 //   return this.members.filter(member => member.flags?.includes(QUESTION.MEMBER.FLAG.CORRECT)).length;
 // });
 
-// questionSchema.virtual('like').get(function (this: QuestionDocument) {
+// questionSchema.virtual('like').get(function () {
 //   return this.members.filter(member => member.flags?.includes(QUESTION.MEMBER.FLAG.LIKE)).length;
 // });
 
-// questionSchema.virtual('dislike').get(function (this: QuestionDocument) {
+// questionSchema.virtual('dislike').get(function () {
 //   return this.members.filter(member => member.flags?.includes(QUESTION.MEMBER.FLAG.DISLIKE)).length;
 // });
 
-const Question = model<QuestionDocument>('Question', questionSchema);
-
+const Question = model('Question', questionSchema);
+export type QuestionDocument = InferSchemaType<typeof questionSchema> & Id;
 export default Question;

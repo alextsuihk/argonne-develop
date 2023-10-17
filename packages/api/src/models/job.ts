@@ -1,31 +1,26 @@
 /**
  * Model: Job
  *
- * future pending jobs either
- *  1) run within worker
- *  2) process offline (isolated) Python or Javascript task by runner
+ * because of "JobDocument.task: Schema.Types.Mixed", we need to union {task: Task}
  *
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Model, Types } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import { redisClient } from '../redis';
 import { isTestMode } from '../utils/environment';
-import type { BaseDocument, Id } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
 
 export type CensorTask = {
   type: 'censor';
   tenantId: Types.ObjectId;
-  userId: string;
+  userId: Types.ObjectId;
   userLocale: string;
-  model: 'chat-groups' | 'questions';
-  parentId: string;
+  parent: `/${'chatGroups' | 'questions'}/${string}`;
   contentId: Types.ObjectId;
 };
 
@@ -33,28 +28,6 @@ type GradeTask = { type: 'grade'; tenantId: Types.ObjectId; assignmentId: Types.
 type RemoveObjectTask = { type: 'removeObject'; url: string };
 type ReportTask = { type: 'report'; file: string; args: unknown[]; tenantId?: Types.ObjectId };
 export type Task = CensorTask | GradeTask | RemoveObjectTask | ReportTask;
-
-export interface JobDocument extends BaseDocument {
-  status: (typeof LOCALE.DB_TYPE.JOB.STATUS)[number];
-  title?: string;
-  owners: Types.ObjectId[];
-  task: Task;
-  priority: number;
-  startAfter: Date;
-  attempt: number;
-
-  startedAt?: Date;
-  progress: number;
-  completedAt?: Date;
-  result?: string; // CSV format
-}
-
-type Queue = (
-  task: Task & Partial<Pick<JobDocument & Id, 'owners' | 'priority' | 'startAfter' | 'title'>>,
-) => Promise<JobDocument & Id>;
-interface JobModel extends Model<JobDocument> {
-  queue: Queue;
-}
 
 const { JOB, SYSTEM } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
@@ -68,11 +41,11 @@ export const searchableFields = [
 
 export const NEW_JOB_CHANNEL = 'JOB';
 
-const jobSchema = new Schema<JobDocument>(
+const jobSchema = new Schema(
   {
     ...baseDefinition,
 
-    status: { type: String, default: JOB.STATUS.QUEUED, index: true },
+    status: { type: String, enum: LOCALE.DB_TYPE.JOB.STATUS, default: JOB.STATUS.QUEUED, index: true },
     title: String,
     owners: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
     task: Schema.Types.Mixed,
@@ -88,10 +61,21 @@ const jobSchema = new Schema<JobDocument>(
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const queue: Queue = async data => {
-  const { title, owners, startAfter = new Date(), priority = 0, ...task } = data;
+jobSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
+export type JobDocument = Omit<InferSchemaType<typeof jobSchema>, 'task'> & Id & { task: Task }; // properly define task type
+const Job = model('Job', jobSchema);
+export default Job;
 
-  const job = await Job.create<Partial<JobDocument>>({
+/**
+ * Queue Job
+ * static function is too convoluted in this case, as input args are referring to JobDocument
+ */
+export const queueJob = async (
+  args: Task & Partial<Pick<JobDocument, 'owners' | 'priority' | 'startAfter' | 'title'>>,
+): Promise<JobDocument> => {
+  const { title, owners, startAfter = new Date(), priority = 0, ...task } = args;
+
+  const job = await Job.create({
     status: task.type === 'grade' && config.mode === 'SATELLITE' ? JOB.STATUS.IGNORE : JOB.STATUS.QUEUED, // ONLY Hub grades homework !
     ...(title && { title }),
     owners,
@@ -109,8 +93,3 @@ const queue: Queue = async data => {
   if (!isTestMode) await redisClient.publish(NEW_JOB_CHANNEL, job._id.toString());
   return job.toObject();
 };
-jobSchema.static('queue', queue);
-
-jobSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const Job = model<JobDocument, JobModel>('Job', jobSchema);
-export default Job;

@@ -8,7 +8,7 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import { addDays } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import type { UpdateQuery } from 'mongoose';
+import type { Types, UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
@@ -16,18 +16,17 @@ import DatabaseEvent from '../models/event/database';
 import School from '../models/school';
 import type { TenantDocument } from '../models/tenant';
 import Tenant from '../models/tenant';
-import type { Id, UserDocument } from '../models/user';
-import User, { searchableFields, userTenantSelect } from '../models/user';
+import type { UserDocument } from '../models/user';
+import User, { activeCond, searchableFields, userTenantSelect } from '../models/user';
 import { messageToAdmins, startChatGroup } from '../utils/chat';
 import { schoolYear } from '../utils/helper';
 import log from '../utils/log';
 import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 import mail from '../utils/sendmail';
-import token from '../utils/token';
+import token, { TENANT_BINDING_TOKEN_PREFIX } from '../utils/token';
 import type { StatusResponse } from './common';
 import common from './common';
-import { TENANT_BINDING_TOKEN_PREFIX } from './tenant-binding';
 
 type Action =
   | 'addFeature'
@@ -50,10 +49,7 @@ const { featureSchema, flagSchema, idSchema, passwordSchema, querySchema, remark
 /**
  * (helper) Hide Histories, StudentIds, Remarks if not belong to school(s)
  */
-export const transform = (
-  { identifiedAt: _, ...user }: UserDocument & Id,
-  tenants: (TenantDocument & Id)[],
-): UserDocument & Id => ({
+export const transform = (user: UserDocument, tenants: TenantDocument[]): UserDocument => ({
   ...user,
   tenants: user.tenants.filter(userTenant => tenants.map(t => t._id).some(tid => tid.equals(userTenant))), // only show intersected tenants
   schoolHistories: user.schoolHistories.filter(h => tenants.some(({ school }) => school && school.equals(h.school))), // only show intersected
@@ -73,7 +69,7 @@ const changePassword = async (req: Request, args: unknown): Promise<StatusRespon
   const { userId: adminId, userRoles: adminRoles } = auth(req);
   const { id, password } = await idSchema.concat(passwordSchema).validate(args);
 
-  const original = await User.findOneActive({ _id: id });
+  const original = await User.findOne({ _id: id, ...activeCond }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const tenant = original.tenants[0]
@@ -88,8 +84,12 @@ const changePassword = async (req: Request, args: unknown): Promise<StatusRespon
     DatabaseEvent.log(adminId, `/users/${id}`, 'changePassword', { args }),
     notifySync(
       tenant?._id || null,
-      { userIds: [id], event: 'AUTH-RENEW-TOKEN' },
-      { bulkWrite: { users: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<UserDocument> } },
+      { userIds: [original._id], event: 'AUTH-RENEW-TOKEN' },
+      {
+        bulkWrite: {
+          users: [{ updateOne: { filter: { _id: original._id }, update } }] satisfies BulkWrite<UserDocument>,
+        },
+      },
     ),
   ]);
 
@@ -102,13 +102,13 @@ const changePassword = async (req: Request, args: unknown): Promise<StatusRespon
  * ONLY school tenantAdmin could add user (not even root)
  *
  */
-const create = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<UserDocument> => {
   const { userId: adminId, userLocale: adminLocale } = auth(req);
   const { tenantId, email, name, studentId } = await userSchema.validate(args);
 
   const [tenant, existingUser] = await Promise.all([
     tenantId ? Tenant.findByTenantId(tenantId, adminId) : null,
-    User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, userTenantSelect), // check email (verified or unverified) is taken
+    User.findOne({ emails: { $in: [email, email.toUpperCase()] }, ...activeCond }, userTenantSelect).lean(), // check email (verified or unverified) is taken
   ]);
 
   if (!tenant?.school) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION }; // only school tenantAdmin could proceed
@@ -129,13 +129,13 @@ const create = async (req: Request, args: unknown): Promise<UserDocument & Id> =
     mail.resetPassword(_id, name, locale, email); // no need to wait, sending email takes time
 
     const [createdUserReadBack] = await Promise.all([
-      User.findOneActive({ _id }, userTenantSelect), // read back with proper select
+      User.findOne({ _id, ...activeCond }, userTenantSelect).lean(), // read back with proper select
       DatabaseEvent.log(adminId, `/users/${_id}`, 'addUser', { tenantId, user: _id.toString(), email }),
       notifySync(
         tenant._id,
         { userIds: [_id], event: 'AUTH-RENEW-TOKEN' },
         {
-          bulkWrite: { users: [{ insertOne: { document: createdUser.toObject() } }] satisfies BulkWrite<UserDocument> },
+          bulkWrite: { users: [{ insertOne: { document: createdUser } }] satisfies BulkWrite<UserDocument> },
         },
       ), // renew-token to reload updated user
     ]);
@@ -199,7 +199,13 @@ const createNew: RequestHandler = async (req, res, next) => {
  * (helper) common code for find(), findMany(), findOne()
  * tenantAdmin could pull his users info, ROOT could get all users
  */
-const findCommon = async (userId: string, userRoles: string[], userTenants: string[], args: unknown, id?: string) => {
+const findCommon = async (
+  userId: Types.ObjectId,
+  userRoles: string[],
+  userTenants: string[],
+  args: unknown,
+  id?: string,
+) => {
   const [{ query }, adminTenants] = await Promise.all([
     querySchema.validate(args),
     isRoot(userRoles) ? [] : Tenant.findAdminTenants(userId, userTenants), // ROOT could access any user (no need to pull adminTenants)
@@ -223,7 +229,7 @@ const findCommon = async (userId: string, userRoles: string[], userTenants: stri
  * Find Multiple Users (Apollo)
  *
  */
-const find = async (req: Request, args: unknown): Promise<(UserDocument & Id)[]> => {
+const find = async (req: Request, args: unknown): Promise<UserDocument[]> => {
   const { userId, userRoles, userTenants } = auth(req);
   const { filter, adminTenants } = await findCommon(userId, userRoles, userTenants, args);
 
@@ -262,7 +268,7 @@ const findMany: RequestHandler = async (req, res, next) => {
  * Find One User by ID
  * tenantAdmin could pull his users info, ROOT could get all users
  */
-const findOne = async (req: Request, args: unknown): Promise<(UserDocument & Id) | null> => {
+const findOne = async (req: Request, args: unknown): Promise<UserDocument | null> => {
   const { userId, userRoles, userTenants } = auth(req);
   const { id } = await idSchema.validate(args);
   const { filter, adminTenants } = await findCommon(userId, userRoles, userTenants, args, id);
@@ -293,11 +299,11 @@ export const update = async (
   req: Request,
   args: unknown,
   action: Exclude<Action, 'changePassword'>,
-): Promise<UserDocument & Id> => {
+): Promise<UserDocument> => {
   const { userId: adminId, userRoles: adminRoles } = auth(req);
 
   const { id } = await idSchema.validate(args); // extract id first
-  const original = await User.findOneActive({ _id: id });
+  const original = await User.findOne({ _id: id, ...activeCond }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const tenant = original.tenants[0]
@@ -312,8 +318,12 @@ export const update = async (
       DatabaseEvent.log(adminId, `/users/${id}`, action, event),
       notifySync(
         tenant?._id || null,
-        { userIds: [id], event: 'AUTH-RENEW-TOKEN' },
-        { bulkWrite: { users: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<UserDocument> } },
+        { userIds: [original._id], event: 'AUTH-RENEW-TOKEN' },
+        {
+          bulkWrite: {
+            users: [{ updateOne: { filter: { _id: original._id }, update } }] satisfies BulkWrite<UserDocument>,
+          },
+        },
       ),
     ]);
     if (user) return isRoot(adminRoles) ? user : transform(user, tenant ? [tenant] : []);
@@ -378,7 +388,7 @@ export const update = async (
   } else if (action === 'suspend') {
     auth(req, 'ROOT'); // root only
     return common({ suspendUtil: addDays(original.suspendUtil || new Date(), DEFAULTS.USER.SUSPENSION_DAY) }, { args });
-    // return common({ suspendUtil: addDays(new Date(), DEFAULTS.USER.SUSPENSION_DAY) }, { args });
+    // return common({ suspendUtil: addDays(Date.now(), DEFAULTS.USER.SUSPENSION_DAY) }, { args });
     //
   } else if (action === 'updateIdentifiedAt') {
     auth(req, 'ROOT'); // root only

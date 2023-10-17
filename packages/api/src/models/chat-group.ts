@@ -4,30 +4,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { ChatDocument } from './chat';
-import type { BaseDocument, Id } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface ChatGroupDocument extends BaseDocument {
-  tenant?: Types.ObjectId;
-  title?: string;
-  description?: string;
-  membership: string;
-  users: Types.ObjectId[];
-  admins: Types.ObjectId[];
-  marshals: Types.ObjectId[];
-  chats: (Types.ObjectId | (ChatDocument & Id))[];
-
-  key?: string;
-  url?: string;
-  logoUrl?: string;
-}
 
 const { CHAT_GROUP, SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -39,17 +21,17 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const chatGroupSchema = new Schema<ChatGroupDocument>(
+const chatGroupSchema = new Schema(
   {
     ...baseDefinition,
 
-    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', index: true },
+    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', index: true }, // undefined for admin message (or non tenant chat)
     title: String,
     description: String,
     membership: { type: String, default: CHAT_GROUP.MEMBERSHIP.NORMAL },
     users: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
     admins: [{ type: Schema.Types.ObjectId, ref: 'User' }],
-    marshals: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    marshals: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
 
     chats: [{ type: Schema.Types.ObjectId, ref: 'Chat' }],
 
@@ -61,5 +43,6 @@ const chatGroupSchema = new Schema<ChatGroupDocument>(
 );
 
 chatGroupSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const ChatGroup = model<ChatGroupDocument>('ChatGroup', chatGroupSchema);
+const ChatGroup = model('ChatGroup', chatGroupSchema);
+export type ChatGroupDocument = InferSchemaType<typeof chatGroupSchema> & Id;
 export default ChatGroup;

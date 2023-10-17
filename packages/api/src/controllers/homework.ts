@@ -6,21 +6,19 @@
  */
 
 import { CONTENT_PREFIX, LOCALE, yupSchema } from '@argonne/common';
-import merge from 'deepmerge';
 import type { Request, RequestHandler } from 'express';
 import type { Types, UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
-import type { AssignmentDocument, Id } from '../models/assignment';
+import type { AssignmentDocument } from '../models/assignment';
 import Assignment, { searchableFields } from '../models/assignment';
+import type { BookAssignmentDocument } from '../models/book';
 import Classroom from '../models/classroom';
 import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
 import DatabaseEvent from '../models/event/database';
 import type { HomeworkDocument } from '../models/homework';
 import Homework from '../models/homework';
-import { mongoId } from '../utils/helper';
-import log from '../utils/log';
 import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 import common from './common';
@@ -28,7 +26,11 @@ import { signContentIds } from './content';
 
 type Action = 'recallContent';
 
-type HomeworkDocumentEx = HomeworkDocument & Id & { contentsToken: string };
+type Populate = {
+  assignment: Omit<AssignmentDocument, 'bookAssignments'> & { bookAssignments: BookAssignmentDocument[] };
+};
+type PopulatedHomework = Omit<HomeworkDocument, 'assignment'> & Populate;
+type HomeworkDocumentEx = PopulatedHomework & { contentsToken: string };
 
 const { MSG_ENUM } = LOCALE;
 const { CONTENT } = LOCALE.DB_ENUM;
@@ -36,31 +38,20 @@ const { assertUnreachable, auth, paginateSort, searchFilter, select } = common;
 const { contentIdSchema, homeworkSchema, idSchema, querySchema } = yupSchema;
 
 // nested populate (with solutions hidden)
-const nestedPopulate = [
+const populate = [
   { path: 'assignment', select: select(), populate: [{ path: 'bookAssignments', select: `${select()} -solutions` }] },
 ];
 
 /**
  * (helper) generate contentsToken
  */
-const transform = async (userId: string, homework: HomeworkDocument & Id): Promise<HomeworkDocumentEx> => {
-  if (typeof homework.assignment !== 'string' && !(homework.assignment instanceof mongoose.Types.ObjectId))
-    return {
-      ...homework,
-      contentsToken: await signContentIds(userId, [
-        ...homework.contents,
-        ...homework.assignment.bookAssignments
-          .map(a =>
-            typeof a === 'string' || a instanceof mongoose.Types.ObjectId ? 'IMPOSSIBLE' : [a.content, ...a.examples],
-          )
-          .flat()
-          .filter((x): x is Types.ObjectId => x !== 'IMPOSSIBLE'),
-      ]),
-    };
-
-  log('error', 'homeworkController:transform() [improper population]', { homeworkId: homework._id.toString() }, userId);
-  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
-};
+const transform = async (userId: Types.ObjectId, homework: PopulatedHomework): Promise<HomeworkDocumentEx> => ({
+  ...homework,
+  contentsToken: await signContentIds(
+    userId,
+    [...homework.contents, ...homework.assignment.bookAssignments.map(a => [a.content, ...a.examples])].flat(),
+  ),
+});
 
 /**
  * Find Multiple Homeworks (Apollo)
@@ -70,7 +61,7 @@ const find = async (req: Request, args: unknown): Promise<HomeworkDocumentEx[]> 
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<HomeworkDocument>(searchableFields, { query }, { user: userId });
-  const homeworks = await Homework.find(filter, select()).populate(nestedPopulate).lean();
+  const homeworks = await Homework.find(filter, select()).populate<Populate>(populate).lean();
 
   return Promise.all(homeworks.map(async homework => transform(userId, homework)));
 };
@@ -88,7 +79,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 
     const [total, homeworks] = await Promise.all([
       Homework.countDocuments(filter),
-      Homework.find(filter, select(), options).populate(nestedPopulate).lean(),
+      Homework.find(filter, select(), options).populate<Populate>(populate).lean(),
     ]);
     res.status(200).json({
       meta: { total, ...options },
@@ -107,7 +98,7 @@ const findOne = async (req: Request, args: unknown): Promise<HomeworkDocumentEx 
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<HomeworkDocument>([], { query }, { _id: id, user: userId });
-  const homework = await Homework.findOne(filter, select()).populate(nestedPopulate).lean();
+  const homework = await Homework.findOne(filter, select()).populate<Populate>(populate).lean();
   return homework && transform(userId, homework);
 };
 
@@ -136,25 +127,24 @@ const recallContent = async (req: Request, args: unknown): Promise<HomeworkDocum
     Homework.findOneAndUpdate(
       { _id: id, user: userId, contents: contentId, deletedAt: { $exists: false } },
       { updatedAt: new Date() },
-      { fields: select(), new: true, populate: nestedPopulate },
-    ).lean(),
+      { fields: select(), new: true },
+    )
+      .populate<Populate>(populate)
+      .lean(),
     Content.findOne({
       _id: contentId,
       parents: `/homeworks/${id}`,
-      creator: mongoId(userId),
+      creator: userId,
       flags: { $nin: [CONTENT.FLAG.BLOCKED, CONTENT.FLAG.RECALLED] },
     }).lean(),
   ]);
 
-  const assignment =
+  const [classroom] = await Promise.all([
+    homework && Classroom.findOne({ _id: homework.assignment.classroom, deletedAt: { $exists: false } }).lean(),
     homework &&
-    (await Assignment.findOneAndUpdate(
-      { _id: homework.assignment, deletedAt: { $exists: false } },
-      { updatedAt: new Date() },
-    ).lean());
-  const classroom =
-    assignment && (await Classroom.findOne({ _id: assignment.classroom, deletedAt: { $exists: false } }).lean());
-  if (!content || !classroom) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+      Assignment.updateOne({ _id: homework.assignment, deletedAt: { $exists: false } }, { updatedAt: new Date() }), // touch the assignment to trigger teacher(s) to re-fetch
+  ]);
+  if (!homework || !content || !classroom) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const contentUpdate: UpdateQuery<ContentDocument> = {
     $addToSet: { flags: CONTENT.FLAG.RECALLED },
@@ -170,7 +160,7 @@ const recallContent = async (req: Request, args: unknown): Promise<HomeworkDocum
       {
         bulkWrite: {
           assignments: [
-            { updateOne: { filter: { _id: assignment._id }, update: { updatedAt: new Date() } } },
+            { updateOne: { filter: { _id: homework.assignment._id }, update: { updatedAt: new Date() } } },
           ] satisfies BulkWrite<AssignmentDocument>,
           homeworks: [
             { updateOne: { filter: { _id: id }, update: { updatedAt: new Date() } } },
@@ -198,31 +188,34 @@ const update = async (req: Request, args: unknown): Promise<HomeworkDocumentEx> 
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const content =
-    !!data && new Content<Partial<ContentDocument>>({ parents: [`/homeworks/${id}`], creator: mongoId(userId), data });
+    !!data && new Content<Partial<ContentDocument>>({ parents: [`/homeworks/${id}`], creator: userId, data });
 
   // note: deep-merge is smart enough to merge two $push
-  const homeworkUpdate = merge.all<UpdateQuery<AssignmentDocument>>([
-    answer ? { answer, answeredAt: new Date() } : {},
-    content ? { $push: { contents: content._id } } : {},
-    timeSpent ? { timeSpent } : {},
-    viewedExample !== undefined ? { $push: { viewedExamples: viewedExample } } : {},
-  ]);
+  const push = {
+    ...(content && { contents: content._id }),
+    ...(viewedExample !== undefined && { viewedExamples: viewedExample }),
+  };
+
+  const homeworkUpdate: UpdateQuery<AssignmentDocument> = {
+    ...(answer && { answer, answeredAt: new Date() }),
+    ...(timeSpent && { timeSpent }),
+    ...(Object.keys(push).length && { $push: push }),
+  };
 
   const homework = await Homework.findOneAndUpdate(
     { _id: id, user: userId, deletedAt: { $exists: false } },
     homeworkUpdate,
-    { fields: select(), new: true, populate: nestedPopulate },
-  ).lean();
+    { fields: select(), new: true },
+  )
+    .populate<Populate>(populate)
+    .lean();
 
-  const assignment =
+  const [classroom] = await Promise.all([
+    homework && Classroom.findOne({ _id: homework.assignment.classroom, deletedAt: { $exists: false } }).lean(),
     homework &&
-    (await Assignment.findOneAndUpdate(
-      { _id: homework.assignment, deletedAt: { $exists: false } },
-      { updatedAt: new Date() },
-    ).lean()); // touch the assignment to trigger teacher(s) to re-fetch
-  const classroom =
-    assignment && (await Classroom.findOne({ _id: assignment.classroom, deletedAt: { $exists: false } }).lean());
-  if (!classroom) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+      Assignment.updateOne({ _id: homework.assignment, deletedAt: { $exists: false } }, { updatedAt: new Date() }), // touch the assignment to trigger teacher(s) to re-fetch
+  ]);
+  if (!homework || !content || !classroom) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const [transformed] = await Promise.all([
     transform(userId, homework),
@@ -234,7 +227,7 @@ const update = async (req: Request, args: unknown): Promise<HomeworkDocumentEx> 
       {
         bulkWrite: {
           assignments: [
-            { updateOne: { filter: { _id: assignment._id }, update: { updatedAt: new Date() } } },
+            { updateOne: { filter: { _id: homework.assignment._id }, update: { updatedAt: new Date() } } },
           ] satisfies BulkWrite<AssignmentDocument>,
           homeworks: [
             { updateOne: { filter: { _id: id }, update: homeworkUpdate } },

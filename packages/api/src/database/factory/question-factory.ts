@@ -10,7 +10,7 @@ import Book from '../../models/book';
 import Classroom from '../../models/classroom';
 import type { ContentDocument } from '../../models/content';
 import Content from '../../models/content';
-import type { Id, QuestionDocument } from '../../models/question';
+import type { QuestionDocument } from '../../models/question';
 import Question from '../../models/question';
 import Tenant from '../../models/tenant';
 import Tutor from '../../models/tutor';
@@ -52,7 +52,7 @@ const fake = async (
   const studentLevelIds = [...primaryLevels, ...juniorLevels, ...seniorLevels].map(lvl => lvl._id);
 
   const contents: ContentDocument[] = [];
-  const questions: (QuestionDocument & Id)[] = [];
+  const questions: QuestionDocument[] = [];
 
   users
     .sort(shuffle)
@@ -70,7 +70,7 @@ const fake = async (
           classroom => classroom.students.some(s => s.equals(student._id)) && classroom.year === schoolYear(),
         );
 
-        const tenantTutors = tutors.filter(tutor => tutor.tenant.equals(studentTenant));
+        const tenantTutors = tutors.filter(tutor => tutor.specialties.some(s => s.tenant.equals(studentTenant)));
 
         if (studentClassrooms.length && tenant)
           Array(questionCount)
@@ -95,7 +95,7 @@ const fake = async (
 
               if (tutorUserIds.length) {
                 const isBidding =
-                  tutorUserIds.length > 1 && tenant.services.includes(TENANT.SERVICE.QUESTION_BID) && prob(0.5); // special condition for JEST (which has all services)
+                  tutorUserIds.length > 1 && tenant.services.includes(TENANT.SERVICE.QUESTION_BID) && prob(0.8); // special condition for JEST (which has all services)
 
                 const questionId = mongoId();
 
@@ -104,8 +104,7 @@ const fake = async (
                   .fill(0)
                   .map((_, idx) =>
                     fakeContents(
-                      'questions',
-                      questionId,
+                      `/questions/${questionId}`,
                       tutorUserIds[0] && idx % 2 ? [tutorUserIds[0]] : [student._id],
                       1,
                     ),
@@ -114,14 +113,13 @@ const fake = async (
                 contents.push(...newContents);
 
                 const bids: QuestionDocument['bids'] = isBidding
-                  ? Array(Math.ceil(tutorUserIds.length * 0.8))
+                  ? randomItems(tutorUserIds, Math.ceil(tutorUserIds.length * 0.9))
                       .sort(shuffle)
                       .map(bidderId => {
                         const bidContents = Array(Math.ceil(Math.random() * 5))
                           .map((_, idx) =>
                             fakeContents(
-                              'questions',
-                              `${questionId}/${bidderId}`,
+                              `/questions/${questionId}/${bidderId}`,
                               idx % 2 ? [student._id] : [bidderId],
                               1,
                             ),
@@ -131,7 +129,7 @@ const fake = async (
 
                         return {
                           bidder: bidderId,
-                          ...(prob(0.5) && { price: faker.datatype.number(50) * 1000 }),
+                          ...(prob(0.5) && { price: faker.number.int({ min: 5, max: 50 }) * 1000 }),
                           contents: bidContents.map(c => c._id),
                         };
                       })
@@ -139,7 +137,7 @@ const fake = async (
 
                 const bookRev = book?.revisions && randomItem(book.revisions).rev;
                 questions.push(
-                  new Question<Partial<QuestionDocument & Id>>({
+                  new Question<Partial<QuestionDocument>>({
                     _id: questionId,
                     ...(student.flags.includes(USER.FLAG.EDA) && { flags: [QUESTION.FLAG.EDA] }),
                     tenant: tenant._id,
@@ -149,17 +147,19 @@ const fake = async (
                     members: randomItems([student._id, ...tutorUserIds], Math.ceil(Math.random() * 3)).map(user => ({
                       user,
                       flags: prob(0.3) ? [CHAT.MEMBER.FLAG.IMPORTANT] : [],
-                      lastViewedAt: faker.date.recent(1),
+                      lastViewedAt: faker.date.recent({ days: 1 }),
                     })),
 
-                    deadline: faker.date.soon(7),
+                    deadline: faker.date.soon({ days: 7 }),
                     classroom: classroom._id,
                     level: classroom.level,
                     subject: classroom.subject,
                     ...(book && { book: book._id }),
                     ...(bookRev && { bookRev }),
                     ...(bookRev &&
-                      prob(0.8) && { chapter: `${faker.datatype.number(10)}#${faker.datatype.number(30)}` }),
+                      prob(0.8) && {
+                        chapter: `${faker.number.int({ min: 1, max: 10 })}#${faker.number.int({ min: 1, max: 30 })}`,
+                      }),
 
                     // assignment
                     // assignmentIdx
@@ -167,16 +167,20 @@ const fake = async (
 
                     lang: randomItem(Object.keys(QUESTION.LANG)),
 
-                    contents: newContents.map(c => c._id), /// TODO: what is the logic here ???
+                    contents: newContents.map(c => c._id),
                     ...(!isBidding && { contents: newContents.map(c => c._id) }),
 
-                    ...(!isBidding && prob(0.8) && { timeSpent: faker.datatype.number(60) }),
+                    ...(!isBidding && prob(0.8) && { timeSpent: faker.number.int({ min: 5, max: 60 }) }),
+
+                    ...(!isBidding && prob(0.8) && { correctness: faker.number.int({ min: 1, max: 5 }) * 1000 }),
+                    ...(!isBidding && prob(0.8) && { explicitness: faker.number.int({ min: 1, max: 5 }) * 1000 }),
+                    ...(!isBidding && prob(0.8) && { punctuality: faker.number.int({ min: 1, max: 5 }) * 1000 }),
 
                     // extra
                     bidders: tutorUserIds,
-                    ...(prob(0.5) && { price: faker.datatype.number(10) * 1000 }),
+                    ...(prob(0.5) && { price: faker.number.int({ min: 1, max: 10 }) * 1000 }),
                     ...(isBidding && { bids }),
-                    ...(!isBidding && prob(0.5) && { paidAt: faker.date.soon(7) }),
+                    ...(!isBidding && prob(0.5) && { paidAt: faker.date.soon({ days: 7 }) }),
                   }),
                 );
               }

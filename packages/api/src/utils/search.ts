@@ -8,10 +8,10 @@
 // // index:
 
 // const index = async (doc: {
-//   subject: string | Types.ObjectId;
-//   level?: string | Types.ObjectId;
+//   subject: Types.ObjectId;
+//   level?: Types.ObjectId;
 //   type: string;
-//   id: string | Types.ObjectId;
+//   id: Types.ObjectId;
 //   body: Record<string, string>;
 // }): Promise<void> =>
 //   client.index({
@@ -23,8 +23,8 @@
 //   });
 
 // const search = async (params: {
-//   subject: string | Types.ObjectId;
-//   level?: string | Types.ObjectId;
+//   subject: Types.ObjectId;
+//   level?: Types.ObjectId;
 //   type: string;
 //   body: { query: unknown };
 // }): Promise<Array<{ type: string; id: string }>> => {

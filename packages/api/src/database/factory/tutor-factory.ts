@@ -12,10 +12,8 @@ import Subject from '../../models/subject';
 import Tenant from '../../models/tenant';
 import type { TutorDocument } from '../../models/tutor';
 import Tutor from '../../models/tutor';
-import type { TutorRankingDocument } from '../../models/tutor-ranking';
-import TutorRanking from '../../models/tutor-ranking';
 import User from '../../models/user';
-import { mongoId, prob, randomItem, randomItems } from '../../utils/helper';
+import { mongoId, prob, randomItem, randomItems, shuffle } from '../../utils/helper';
 
 const { QUESTION, TENANT, USER } = LOCALE.DB_ENUM;
 
@@ -24,9 +22,8 @@ const { QUESTION, TENANT, USER } = LOCALE.DB_ENUM;
  *
  * @param codes: tenantCodes
  * @param ratio: ratio of tutors/users (per tenant)
- * @param rankingCount: number of ranking per tutor
  */
-const fake = async (codes: string[], ratio = 0.2, rankingCount = 3): Promise<string> => {
+const fake = async (codes: string[], ratio = 0.2): Promise<string> => {
   const [subjects, tutorTenants, users] = await Promise.all([
     Subject.find({ deletedAt: { $exists: false } }).lean(),
     Tenant.find({
@@ -34,81 +31,68 @@ const fake = async (codes: string[], ratio = 0.2, rankingCount = 3): Promise<str
       ...(codes.length && { code: { $in: codes } }),
       deletedAt: { $exists: false },
     }).lean(),
-    User.find({ status: USER.STATUS.ACTIVE, deletedAt: { $exists: false } }).lean(),
+    User.find({ status: USER.STATUS.ACTIVE, deletedAt: { $exists: false } }, '_id tenants').lean(),
   ]);
 
-  const tutors = tutorTenants
-    .map(({ _id: tid }) => {
-      const tenantUsers = users.filter(user => user.tenants.some(t => t.equals(tid)));
+  // Pick<UserDocument, '_id' | 'pushSubscriptions'>[]
+  const tutors = randomItems(users.sort(shuffle), Math.floor(users.length * ratio)).map(user => {
+    const subject = randomItem(subjects);
 
-      return randomItems(tenantUsers, Math.ceil(tenantUsers.length * ratio)).map(user => {
-        const subject = randomItem(subjects);
+    const specialties: TutorDocument['specialties'] = tutorTenants
+      .filter(({ _id }) => user.tenants.some(t => t.equals(_id))) // filter interested tenantIds
+      .map(tenant =>
+        Array(Math.ceil(Math.random() * 3 * tutorTenants.length))
+          .fill(0)
+          .map(() => ({
+            _id: mongoId(),
+            tenant: tenant._id,
+            ...(prob(0.5) && { note: faker.lorem.slug(6) }),
+            langs: randomItems(Object.keys(QUESTION.LANG), prob(0.5) ? 1 : 2),
+            level: randomItem(subject.levels),
+            subject: subject._id,
+            priority: 0,
+          })),
+      )
+      .flat();
 
-        return new Tutor<Partial<TutorDocument>>({
-          tenant: tid,
-          user: user._id,
-
-          ...(prob(0.6) && { intro: faker.lorem.slug(5) }),
-          ...(prob(0.3) && { officeHour: faker.lorem.slug(4) }),
-
-          // generate 0-2 credentials
-          credentials: Array(Math.round(Math.random() * 2))
-            .fill(0)
-            .map(() => ({
-              _id: mongoId(),
-              title: faker.lorem.sentence(5),
-              proofs: [faker.lorem.sentence(5), faker.lorem.slug(5)],
-              updatedAt: faker.date.recent(30),
-              ...(prob(0.7) && { verifiedAt: faker.date.recent(15) }),
-            })),
-
-          // at least one specialties
-          specialties: Array(Math.ceil(Math.random() * 3))
-            .fill(0)
-            .map(() => ({
-              _id: mongoId(),
-              ...(prob(0.5) && { note: faker.lorem.slug(6) }),
-              lang: randomItem(Object.keys(QUESTION.LANG)),
-              level: randomItem(subject.levels),
-              subject: subject._id,
-              ranking: { updatedAt: new Date(), correctness: 0, punctuality: 0, explicitness: 0 },
-            })),
+    const rankings: TutorDocument['rankings'] = [];
+    specialties.forEach(({ level, subject }) => {
+      if (rankings.some(ranking => !ranking.level.equals(level) && !ranking.subject.equals(subject)))
+        rankings.push({
+          level,
+          subject,
+          ...(prob(0.8) && { correctness: faker.number.int({ min: 1, max: 5 }) * 1000 }),
+          ...(prob(0.8) && { explicitness: faker.number.int({ min: 1, max: 5 }) * 1000 }),
+          ...(prob(0.8) && { punctuality: faker.number.int({ min: 1, max: 5 }) * 1000 }),
         });
-      });
-    })
-    .flat()
-    .flat();
+    });
 
-  // create tutor-ranking by students
-  const tutorRankings = tutors
-    .map(tutor => {
-      const { tenant, specialties } = tutor;
-      return randomItems(
-        users.filter(user => !tutor.user.equals(user._id) && user.tenants.some(t => t.equals(tenant))), // one cannot post ranking for himself, and intersected tenant
-        rankingCount,
-      ).map(
-        user =>
-          new TutorRanking<Partial<TutorRankingDocument>>({
-            tenant,
-            tutor: tutor.user,
-            student: user._id,
-            question: mongoId(), // just use a fake questionId
-            lang: specialties[0]!.lang,
-            subject: specialties[0]!.subject,
-            level: specialties[0]!.level,
-            correctness: faker.datatype.number({ min: 1, max: 5 }) * 1000,
-            explicitness: faker.datatype.number({ min: 1, max: 5 }) * 1000,
-            punctuality: faker.datatype.number({ min: 1, max: 5 }) * 1000,
-          }),
-      );
-    })
-    .flat();
+    return new Tutor<Partial<TutorDocument>>({
+      user: user._id,
 
-  await Promise.all([
-    Tutor.insertMany<Partial<TutorDocument>>(tutors, { rawResult: true }),
-    TutorRanking.insertMany<Partial<TutorRankingDocument>>(tutorRankings, { rawResult: true }),
-  ]);
-  return `(${chalk.green(tutors.length)} tutors created - ${chalk.green(tutorRankings.length)} tutorRankings created)`;
+      ...(prob(0.6) && { intro: faker.lorem.slug(5) }),
+      ...(prob(0.3) && { officeHour: faker.lorem.slug(4) }),
+
+      // generate 0-2 credentials
+      credentials: Array(Math.round(Math.random() * 2))
+        .fill(0)
+        .map(() => ({
+          _id: mongoId(),
+          title: faker.lorem.sentence(5),
+          proofs: [faker.lorem.sentence(5), faker.lorem.slug(5)],
+          updatedAt: faker.date.recent({ days: 30 }),
+          ...(prob(0.7) && { verifiedAt: faker.date.recent({ days: 15 }) }),
+        })),
+
+      specialties,
+
+      rankings,
+      rankingsUpdatedAt: new Date(),
+    });
+  });
+
+  await Tutor.insertMany<Partial<TutorDocument>>(tutors, { rawResult: true });
+  return `(${chalk.green(tutors.length)} tutors created)`;
 };
 
 export { fake };

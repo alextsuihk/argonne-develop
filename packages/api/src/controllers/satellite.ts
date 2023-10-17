@@ -14,7 +14,7 @@ import { LOCALE, yupSchema } from '@argonne/common';
 import axios from 'axios';
 import { addSeconds, subDays, subYears } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import type { Model, Types } from 'mongoose';
+import type { Model } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
@@ -31,7 +31,7 @@ import Contribution from '../models/contribution';
 import District from '../models/district';
 import DatabaseEvent from '../models/event/database';
 import Homework from '../models/homework';
-import Job from '../models/job';
+import Job, { queueJob } from '../models/job';
 import Level from '../models/level';
 import Publisher from '../models/publisher';
 import Question from '../models/question';
@@ -39,19 +39,19 @@ import School from '../models/school';
 import SchoolCourse from '../models/school-course';
 import Subject from '../models/subject';
 import type { SatelliteSeedData, SyncJobDocument } from '../models/sync-job';
+import SyncJob from '../models/sync-job';
 import Tag from '../models/tag';
-import type { Id } from '../models/tenant';
-import Tenant from '../models/tenant';
+import Tenant, { findSatelliteTenantById } from '../models/tenant';
 import Token from '../models/token';
 import Typography from '../models/typography';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';
-import { dnsLookup, randomString } from '../utils/helper';
+import { dnsLookup, mongoId, randomString, shuffle } from '../utils/helper';
 import log from '../utils/log';
 import { notifySync } from '../utils/notify-sync';
 import storage, { client as minioClient, privateBucket, publicBucket } from '../utils/storage';
 import tokenUtil from '../utils/token';
-import type { StatusResponse } from './common';
+import type { StatusResponse, TokenWithExpireAtResponse } from './common';
 import common from './common';
 import { signContentIds } from './content';
 
@@ -62,15 +62,15 @@ const { config, DEFAULTS } = configLoader;
 
 const { auth, hubModeOnly, satelliteModeOnly } = common;
 const {
-  idSchema,
   optionalTimestampSchema,
   satelliteSyncSchema,
-  statusSchema,
+  satelliteSeedCompleteSchema,
   tenantIdSchema,
   tokenSchema,
+  urlSchema,
   versionSchema,
 } = yupSchema;
-const { createTokens, verifyStrings } = tokenUtil;
+const { createTokens, signStrings, verifyStrings } = tokenUtil;
 
 const SATELLITE_PREFIX = 'SATELLITE';
 
@@ -79,7 +79,7 @@ const SATELLITE_PREFIX = 'SATELLITE';
  */
 const cloneContents = async (contentsToken: string, accessToken: string | null, wait = 100) => {
   try {
-    const { data: contents } = await axios.get<(ContentDocument & Id)[] | unknown>(
+    const { data: contents } = await axios.get<ContentDocument[] | unknown>(
       `${DEFAULTS.ARGONNE_URL}/api/contents/${contentsToken}`,
       {
         ...(accessToken && { headers: { Authorization: `Bearer ${accessToken}` } }),
@@ -134,28 +134,52 @@ const cloneMinioObjects = async (serverUrl: string, urls: string[]) =>
   );
 
 /**
- * (Hub) Satellite reports SeedCompletion [REST-ful ONLY]
+ * Create Token for satellite (re)initialization
+ */
+const createToken = async (req: Request, args: unknown): Promise<TokenWithExpireAtResponse> => {
+  hubModeOnly();
+  auth(req, 'ROOT');
+  const { tenantId } = await tenantIdSchema.validate(args);
+
+  const [satelliteToken, tenant] = await Promise.all([
+    signStrings([SATELLITE_PREFIX, tenantId], DEFAULTS.SATELLITE.TOKEN_EXPIRES_IN),
+    findSatelliteTenantById(tenantId),
+  ]);
+
+  if (!tenant) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  return { token: satelliteToken, expireAt: addSeconds(new Date(), DEFAULTS.SATELLITE.TOKEN_EXPIRES_IN) };
+};
+
+/**
+ * Hub handles the SeedComplete message from satellite [REST-ful ONLY]
  */
 const seedComplete: RequestHandler = async (req, res, next) => {
+  auth(req); // valid accessToken is required
   try {
     hubModeOnly();
-    const { userId } = auth(req);
-    const { id, status, tenantId } = await idSchema.concat(statusSchema).concat(tenantIdSchema).validate(req.body);
+    const { seedingId, tenantId, result, hasError } = await satelliteSeedCompleteSchema.validate(req.body);
 
-    const tenant = await Tenant.findOneAndUpdate(
-      { _id: tenantId, system: userId, 'seedings._id': id },
-      { $set: { 'seedings.$.completedAt': new Date(), 'seedings.$.status': status } },
+    const original = await Tenant.findOneAndUpdate(
+      { _id: tenantId, 'seedings.0._id': seedingId }, // must match the top most recent seedings
+      {
+        $set: {
+          satelliteIp: req.ip,
+          satelliteStatus: hasError ? TENANT.SATELLITE_STATUS.INIT_FAIL : TENANT.SATELLITE_STATUS.INIT_SUCCESS,
+          'seedings.0.completedAt': new Date(),
+          'seedings.0.result': result,
+        },
+      },
     ).lean();
 
-    if (tenant && tenant.satelliteIp !== req.ip)
+    if (original && original.satelliteIp !== req.ip)
       await log('warn', `satelliteController:seedComplete() IP changes`, {
         tenantId,
-        seedingId: id,
+        seedingId,
         ip: req.ip,
-        satelliteIp: tenant.satelliteIp,
+        satelliteIp: original.satelliteIp,
       });
 
-    tenant
+    original
       ? res.status(200).json({ code: MSG_ENUM.COMPLETED })
       : next({ statusCode: 400, code: MSG_ENUM.SATELLITE_ERROR });
   } catch (error) {
@@ -164,8 +188,8 @@ const seedComplete: RequestHandler = async (req, res, next) => {
 };
 
 /**
- * (Hub) Satellite request initialization seed [REST-ful ONLY]
- * hub generates a seed JSON file (along contentTokens) for download
+ * Hub handles initialization seed request from satellite [REST-ful ONLY]
+ * generates a seed JSON file (along contentTokens) for satellite to download
  *
  * extract all related documents (excluding contents) into a single seed JSON file
  */
@@ -173,8 +197,9 @@ const seedRequest: RequestHandler = async (req, res, next) => {
   try {
     hubModeOnly();
     const { ip, ua } = req;
-    const { timestamp, token, version } = await optionalTimestampSchema
+    const { timestamp, token, url, version } = await optionalTimestampSchema
       .concat(tokenSchema)
+      .concat(urlSchema)
       .concat(versionSchema)
       .validate(req.body);
 
@@ -185,19 +210,8 @@ const seedRequest: RequestHandler = async (req, res, next) => {
       throw { statusCode: 400, code: MSG_ENUM.SATELLITE_ERROR, message: 'Version Mismatches' };
 
     const [prefix, tenantId] = await verifyStrings(token);
-    const tenant =
-      prefix == SATELLITE_PREFIX && tenantId
-        ? await Tenant.findOneAndUpdate(
-            { _id: tenantId, school: { $exists: true }, apiKey: { $exists: true }, satelliteUrl: { $exists: true } },
-            {
-              satelliteIp: ip,
-              satelliteVersion: version,
-              $push: { seedings: { $each: [{ ip, startedAt: new Date() }], $position: 0 } },
-            },
-            { fields: '-satelliteIp -satelliteVersion -meta -remarks', new: true },
-          ).lean()
-        : null;
-    if (!tenant) throw { statusCode: 400, code: MSG_ENUM.USER_INPUT_ERROR };
+    const tenant = prefix == SATELLITE_PREFIX && tenantId ? await findSatelliteTenantById(tenantId) : null;
+    if (!tenant) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
     // don't allow re-sync (within a day of last successful satellite-setup)
     if (tenant.seedings[0]?.completedAt && subDays(Date.now(), 1) < tenant.seedings[0].completedAt)
@@ -213,23 +227,27 @@ const seedRequest: RequestHandler = async (req, res, next) => {
     const db = {
       activities: await Activity.find({ $or: [{ tenant }, { tenant: { $exists: false } }] }, select).lean(),
       announcements: await Announcement.find(
-        { $or: [{ tenant }, { tenant: { $exists: false } }], beginAt: { $gte: new Date() } },
+        { $or: [{ tenant: tenant._id }, { tenant: { $exists: false } }], beginAt: { $gte: new Date() } },
         select,
       ).lean(),
       bookAssignments: await BookAssignment.find({}, select).lean(),
       books: await Book.find({}, select).lean(),
-      chatGroups: await ChatGroup.find({ $or: [{ tenant }, { tenant: { $exists: false } }] }, select).lean(),
-      classrooms: await Classroom.find({ tenant }, select).lean(),
+      chatGroups: await ChatGroup.find(
+        { $or: [{ tenant: tenant._id }, { tenant: { $exists: false } }] },
+        select,
+      ).lean(),
+      classrooms: await Classroom.find({ tenant: tenant._id }, select).lean(),
       contributions: await Contribution.find({}, select).lean(),
       districts: await District.find({}, select).lean(),
       levels: await Level.find({}, select).lean(),
       publishers: await Publisher.find({}, select).lean(),
-      questions: await Question.find({ tenant, ...filter }, select).lean(),
+      questions: await Question.find({ tenant: tenant._id, ...filter }, select).lean(),
       schools: await School.find({ _id: tenant.school }, select).lean(),
       schoolCourses: await SchoolCourse.find({ school: tenant.school }, select).lean(),
       subjects: await Subject.find({}, select).lean(),
       tags: await Tag.find({}, select).lean(),
       typographies: await Typography.find({}, select).lean(),
+
       users: await User.find({ $or: [{ tenants: tenant }, { status: USER.STATUS.SYSTEM }] }, select).lean(),
     };
 
@@ -244,7 +262,7 @@ const seedRequest: RequestHandler = async (req, res, next) => {
     }).lean();
 
     // extract chatIds & contentIds
-    const chatIds = [...db.chatGroups.map(c => c.chats), ...db.classrooms.map(c => c.chats)].flat() as Types.ObjectId[];
+    const chatIds = [...db.chatGroups.map(c => c.chats), ...db.classrooms.map(c => c.chats)].flat();
     const chats = await Chat.find({ _id: { $in: chatIds } }).lean();
 
     const contentIds = [
@@ -262,58 +280,70 @@ const seedRequest: RequestHandler = async (req, res, next) => {
     const chunkedContentIds = Array.from({ length: Math.ceil(contentIds.length / 20) }, (v, i) =>
       contentIds.slice(i * 20, i * 20 + 20),
     );
-    const contentsTokens = await Promise.all(
-      chunkedContentIds.map(async ids => signContentIds(tenantSystem._id.toString(), ids)),
-    );
+    const tenantSystem = new User<Partial<UserDocument>>({ name: `Tenant` }).toObject(); // fake tenantSystem for createToken(), no need to save
+    const contentsTokens = await Promise.all(chunkedContentIds.map(async ids => signContentIds(tenantSystem._id, ids)));
 
     // concat additional data
-    const seedingId = tenant.seedings[0]?._id.toString() || null;
-    tenant.seedings = []; // hide seedings info
+    const apiKey = `${randomString()}${randomString}`.replace('-', '').split('').sort(shuffle).join('');
     const seedData: SatelliteSeedData = {
       ...db,
-      tenants: [tenant],
+      tenants: [{ ...tenant, apiKey, seedings: [], satelliteStatus: TENANT.SATELLITE_STATUS.INITIALIZING }], // hide seedings info
       assignments,
       homeworks,
       chats,
       contentsTokens,
       minioServerUrl: config.server.minio.serverUrl,
     };
-    const stringifiedData = JSON.stringify(seedData);
+    const stringifiedData = JSON.stringify(seedData); // convert ObjectId() to string
 
-    const seed = `${prefix}-${tenantId}-${randomString('json')}`;
+    const filename = `${prefix}-${tenantId}-${randomString('json')}`;
     const size = `${(stringifiedData.length / 1024 / 1024).toFixed(2)} MB`;
     const startAfter = addSeconds(Date.now(), DEFAULTS.SATELLITE.SEED_EXPIRES_IN);
-    const tenantSystem = new User<Partial<UserDocument>>({ name: `Tenant` }).toObject(); // fake tenantSystem for createToken(), no need to save
+    const seedingId = mongoId();
     const [{ accessToken }] = await Promise.all([
       createTokens(tenantSystem, { expiresIn: DEFAULTS.SATELLITE.SEED_EXPIRES_IN, ip, ua }), // generate accessToken
-      minioClient.putObject(publicBucket, seed, stringifiedData),
-      DatabaseEvent.log(null, `/tenants/${tenantId}`, '(re)init satellite', { ip, ua, seed, size }),
-      Job.queue({ type: 'removeObject', url: `/${publicBucket}/${seed}`, startAfter }), // schedule to remove the seed JSON file
+      minioClient.putObject(publicBucket, filename, stringifiedData),
+      DatabaseEvent.log(null, `/tenants/${tenantId}`, '(re)init satellite', { ip, ua, filename, size }),
+      queueJob({ type: 'removeObject', url: `/${publicBucket}/${filename}`, startAfter }), // schedule to remove the seed JSON file
+      Tenant.updateOne(
+        { _id: tenant._id },
+        {
+          apiKey,
+          satelliteUrl: url,
+          satelliteIp: ip,
+          satelliteVersion: version,
+          satelliteStatus: TENANT.SATELLITE_STATUS.INITIALIZING,
+          $push: { seedings: { $each: [{ _id: seedingId, ip, startedAt: new Date() }], $position: 0 } },
+        },
+      ),
+      SyncJob.updateMany({ tenant: tenant._id }, { completedAt: new Date(), result: `clearing by ${seedingId}` }), // clear previous syncJobs of tenant
     ]);
-    res.status(200).json({ accessToken, seed, seedingId });
+    res.status(200).json({ accessToken, seed: filename, seedingId });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * Setup-Satellite [Apollo ONLY]
- * React client send requests to satellite server to initialize database
+ * Satellite handles Setup-Satellite request from React-Client [Apollo ONLY]
+ * !note: it takes a while to process: for hub to generate JSON file, and satellite to download seedData
  */
 const setup = async (req: Request, args: unknown): Promise<StatusResponse> => {
   satelliteModeOnly();
 
-  const [primaryTenant, token] = await Promise.all([Tenant.findPrimary(), tokenSchema.validate(args)]);
-  if (primaryTenant) throw { message: 'Satellite is Initialized' };
+  const [primaryTenant, { token, url }] = await Promise.all([
+    Tenant.findPrimary(),
+    tokenSchema.concat(urlSchema).validate(args),
+  ]);
+  if (primaryTenant) throw { statusCode: 500, code: MSG_ENUM.SATELLITE_ERROR, message: 'Satellite is Initialized' };
 
   const { data } = await axios.post<{ accessToken: string; seed: string; seedingId: string } | unknown>(
-    `${DEFAULTS.ARGONNE_URL}/api/sync/seedRequest`,
-    { token, timestamp: Date.now(), version: config.buildInfo },
+    `${DEFAULTS.ARGONNE_URL}/api/satellite/seedRequest`,
+    { token, url, timestamp: Date.now(), version: config.buildInfo.version },
     { timeout: DEFAULTS.AXIOS_TIMEOUT, responseType: 'json' },
   );
 
   // trust no one, always check the data type
-
   if (
     !data ||
     typeof data !== 'object' ||
@@ -327,7 +357,7 @@ const setup = async (req: Request, args: unknown): Promise<StatusResponse> => {
     throw { statusCode: 500, code: MSG_ENUM.SATELLITE_ERROR, message: 'Invalid Seed Data (1)' };
 
   const { accessToken, seed, seedingId } = data;
-  await DatabaseEvent.log(null, '/tenants', 'setup satellite', { startedAt: new Date(), seed, seedingId, accessToken });
+  await DatabaseEvent.log(null, '/tenants', 'setupSatellite', { startedAt: new Date(), seed, seedingId, accessToken });
 
   // download seed file, Partial<> because we don't trust the data
   const { data: seedData } = await axios.get<Partial<SatelliteSeedData>>(
@@ -431,25 +461,30 @@ const setup = async (req: Request, args: unknown): Promise<StatusResponse> => {
   // tell hub that satellite initialization is successful
   const result = { hasError, dbResult, contentsTokenResults, addMinioObjectsResults };
   await axios.post(
-    `${DEFAULTS.ARGONNE_URL}/api/seedComplete`,
-    { id: seedingId, tenantId, status: JSON.stringify(result) },
+    `${DEFAULTS.ARGONNE_URL}/api/satellite/seedComplete`,
+    { seedingId, tenantId, result: JSON.stringify(result), hasError },
     { headers: { Authorization: `Bearer ${accessToken}` }, timeout: DEFAULTS.AXIOS_TIMEOUT },
   );
 
-  const completedAt = new Date();
   await Promise.all([
     Tenant.updateOne(
       { _id: tenantId },
-      { $unset: { flags: TENANT.FLAG.INIT }, ...(hasError && { $set: { flags: TENANT.FLAG.INIT_FAIL } }) },
+      { satelliteStatus: hasError ? TENANT.SATELLITE_STATUS.INIT_FAIL : TENANT.SATELLITE_STATUS.INITIALIZING },
     ),
-    DatabaseEvent.log(null, '/tenants', 'setup satellite', { completedAt, seed, seedingId, tenantId, ...result }),
+    DatabaseEvent.log(null, '/tenants', 'setupSatellite', {
+      completedAt: new Date(),
+      seed,
+      seedingId,
+      tenantId,
+      ...result,
+    }),
   ]);
 
-  return { code: MSG_ENUM.COMPLETED };
+  return { code: hasError ? MSG_ENUM.SATELLITE_ERROR : MSG_ENUM.COMPLETED };
 };
 
 /**
- * Receive updates (between hub & satellite) [REST-ful ONLY]
+ * Receive updates (from hub or satellite) [REST-ful ONLY]
  * ! also send socket notifications
  *
  * In case of discrepancy, Hub always wins
@@ -463,8 +498,8 @@ const sync: RequestHandler = async (req, res, next) => {
     const { apiKey, attempt, syncJobId, stringifiedNotify, stringifiedSync, tenantId, timestamp, version } =
       await satelliteSyncSchema.validate(req.body);
 
-    const tenant = await Tenant.findSatelliteById(tenantId);
-    if (!tenant?.satelliteUrl || tenant.apiKey !== apiKey) throw { statusCode: 400, code: MSG_ENUM.TENANT_ERROR };
+    const tenant = await findSatelliteTenantById(tenantId, 'sync'); // only proceed after SATELLITE_STATUS.INIT_SUCCESS
+    if (!tenant?.satelliteUrl || tenant.apiKey !== apiKey) throw { statusCode: 400, code: MSG_ENUM.SATELLITE_ERROR };
 
     if (!timestamp || Math.abs(timestamp.getTime() - Date.now()) > 3000) {
       await log('error', `${tenantId}: DateTime Out of Sync`);
@@ -484,7 +519,7 @@ const sync: RequestHandler = async (req, res, next) => {
     if (config.mode === 'HUB' && req.ip !== tenant.satelliteIp)
       await Promise.all([
         log('warn', `satelliteController:sync() IP changes`, { tenantId, ip: req.ip, satelliteIp: tenant.satelliteIp }),
-        Tenant.updateOne(tenant, { satelliteIp: req.ip }),
+        Tenant.updateOne({ _id: tenant._id }, { satelliteIp: req.ip }),
       ]);
 
     // Part 1: sync database
@@ -598,13 +633,12 @@ const sync: RequestHandler = async (req, res, next) => {
       removeMinioObjectsResults,
       extraResult,
     };
-    const databaseEvent = await DatabaseEvent.log(
-      null,
-      `/satellites`,
-      'sync',
-      { attempt, sync, syncResult },
+    const databaseEvent = await DatabaseEvent.log(null, `/satellites`, 'sync', {
+      attempt,
+      sync,
+      syncResult,
       syncJobId,
-    );
+    });
 
     // Part 2: send notification (after updating database)
     const parsed = JSON.parse(stringifiedNotify) as SyncJobDocument['notify'] | unknown;
@@ -640,4 +674,4 @@ const updateConfig: RequestHandler = async (req, res, next) => {
   // TODO
 };
 
-export default { seedRequest, seedComplete, setup, sync, updateConfig };
+export default { createToken, seedRequest, seedComplete, setup, sync, updateConfig };

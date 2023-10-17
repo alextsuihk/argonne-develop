@@ -10,7 +10,7 @@ import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 
 import { jestSetup, jestTeardown } from '../jest';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import token from '../utils/token';
 import { decodeHeader } from './auth';
 
@@ -18,7 +18,7 @@ const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('Auth Middleware Test', () => {
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
 
   beforeAll(async () => {
     ({ normalUser } = await jestSetup(['normal'], { apollo: true }));
@@ -36,7 +36,7 @@ describe('Auth Middleware Test', () => {
       query,
       params,
       get: (name: string) => headers[name],
-    } as Request); // cast as an express request mock object
+    }) as Request; // cast as an express request mock object
 
   const mockResponse = () => {
     const res: { status?: unknown; json?: unknown } = {};
@@ -67,11 +67,10 @@ describe('Auth Middleware Test', () => {
           ua: expect.any(String),
           isMobile: expect.any(Boolean),
           userFlags: expect.any(Array),
-          userId: expect.any(String),
+          userId: expect.anything(), // expect.anything() because userId is an ObjectId
           userLocale: expect.any(String),
           userName: expect.any(String),
           userRoles: expect.any(Array),
-          userScopes: expect.any(Array),
           userTenants: expect.any(Array), // book publishers have no tenants
         }),
       );

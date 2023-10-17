@@ -7,34 +7,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { ChatDocument } from './chat';
-import type { BaseDocument, Id } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface ClassroomDocument extends BaseDocument {
-  tenant: Types.ObjectId;
-  level: Types.ObjectId;
-  subject: Types.ObjectId;
-  year: string;
-  schoolClass: string; // e.g. 1-A
-  title?: string;
-  room?: string;
-  schedule?: string;
-
-  books: Types.ObjectId[];
-
-  teachers: Types.ObjectId[];
-  students: Types.ObjectId[];
-
-  chats: (Types.ObjectId | (ChatDocument & Id))[];
-  assignments: Types.ObjectId[];
-}
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -46,20 +24,20 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const classroomSchema = new Schema<ClassroomDocument>(
+const classroomSchema = new Schema(
   {
     ...baseDefinition,
 
-    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', index: true },
-    level: { type: Schema.Types.ObjectId, ref: 'Level' },
-    subject: { type: Schema.Types.ObjectId, ref: 'Subject' },
-    year: { type: String, index: true },
-    schoolClass: String,
+    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
+    level: { type: Schema.Types.ObjectId, ref: 'Level', required: true },
+    subject: { type: Schema.Types.ObjectId, ref: 'Subject', required: true },
+    year: { type: String, required: true, index: true },
+    schoolClass: { type: String, required: true }, // e.g 1A
     title: String,
     room: String,
     schedule: String,
 
-    books: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    books: [{ type: Schema.Types.ObjectId, ref: 'Book' }],
 
     teachers: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
     students: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
@@ -71,5 +49,6 @@ const classroomSchema = new Schema<ClassroomDocument>(
 );
 
 classroomSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const Classroom = model<ClassroomDocument>('Classroom', classroomSchema);
+const Classroom = model('Classroom', classroomSchema);
+export type ClassroomDocument = InferSchemaType<typeof classroomSchema> & Id;
 export default Classroom;

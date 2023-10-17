@@ -9,19 +9,7 @@ import { tryCatch } from './root';
 
 type unk = unknown;
 
-const {
-  addRemark,
-  create,
-  find,
-  findOne,
-  addCredential,
-  addSpecialty,
-  remove,
-  removeCredential,
-  removeSpecialty,
-  verifyCredential,
-  update,
-} = tutorController;
+const { find, findOne, upsert } = tutorController;
 
 export default {
   Query: {
@@ -30,14 +18,15 @@ export default {
   },
 
   Mutation: {
-    addTutor: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
-    addTutorCredential: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addCredential(req, args)),
-    addTutorRemark: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addRemark(req, args)),
-    removeTutor: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => remove(req, args)),
-    addTutorSpecialty: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addSpecialty(req, args)),
-    removeTutorCredential: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => removeCredential(req, args)),
-    removeTutorSpecialty: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => removeSpecialty(req, args)),
-    updateTutor: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args)),
-    verifyTutorCredential: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => verifyCredential(req, args)),
+    addTutorCredential: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => upsert(req, args, 'addCredential')),
+    addTutorRemark: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => upsert(req, args, 'addRemark')),
+    addTutorSpecialty: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => upsert(req, args, 'addSpecialty')),
+    removeTutorCredential: async (_: unk, args: unk, { req }: Ctx) =>
+      tryCatch(() => upsert(req, args, 'removeCredential')),
+    removeTutorSpecialty: async (_: unk, args: unk, { req }: Ctx) =>
+      tryCatch(() => upsert(req, args, 'removeSpecialty')),
+    updateTutor: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => upsert(req, args)),
+    verifyTutorCredential: async (_: unk, args: unk, { req }: Ctx) =>
+      tryCatch(() => upsert(req, args, 'verifyCredential')),
   },
 };

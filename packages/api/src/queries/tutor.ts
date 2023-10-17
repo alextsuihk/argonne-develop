@@ -5,15 +5,14 @@
 
 import { gql } from 'apollo-server-core';
 
-import { REMARK, STATUS_RESPONSE } from './common';
+import { REMARK } from './common';
 
 const TUTOR_FIELDS = gql`
   ${REMARK}
   fragment TutorFields on Tutor {
     _id
     flags
-    tenant
-    user
+    name
     intro
     officeHour
     credentials {
@@ -25,17 +24,20 @@ const TUTOR_FIELDS = gql`
     }
     specialties {
       _id
+      tenant
       note
-      lang
+      langs
       level
       subject
-      ranking {
-        correctness
-        punctuality
-        explicitness
-      }
     }
-    rankingUpdatedAt
+
+    rankings {
+      level
+      subject
+      correctness
+      explicitness
+      punctuality
+    }
     star
 
     remarks {
@@ -65,19 +67,10 @@ export const GET_TUTORS = gql`
   }
 `;
 
-export const ADD_TUTOR = gql`
-  ${TUTOR_FIELDS}
-  mutation AddTutor($tenantId: String!, $userId: String!) {
-    addTutor(tenantId: $tenantId, userId: $userId) {
-      ...TutorFields
-    }
-  }
-`;
-
 export const ADD_TUTOR_CREDENTIAL = gql`
   ${TUTOR_FIELDS}
-  mutation AddTutorCredential($id: ID!, $title: String!, $proofs: [String!]!) {
-    addTutorCredential(id: $id, title: $title, proofs: $proofs) {
+  mutation AddTutorCredential($title: String!, $proofs: [String!]!) {
+    addTutorCredential(title: $title, proofs: $proofs) {
       ...TutorFields
     }
   }
@@ -94,26 +87,23 @@ export const ADD_TUTOR_REMARK = gql`
 
 export const ADD_TUTOR_SPECIALTY = gql`
   ${TUTOR_FIELDS}
-  mutation AddTutorSpecialty($id: ID!, $note: String, $lang: String!, $level: String!, $subject: String!) {
-    addTutorSpecialty(id: $id, note: $note, lang: $lang, level: $level, subject: $subject) {
+  mutation AddTutorSpecialty(
+    $tenantId: String!
+    $note: String
+    $langs: [String!]!
+    $level: String!
+    $subject: String!
+  ) {
+    addTutorSpecialty(tenantId: $tenantId, note: $note, langs: $langs, level: $level, subject: $subject) {
       ...TutorFields
-    }
-  }
-`;
-
-export const REMOVE_TUTOR = gql`
-  ${STATUS_RESPONSE}
-  mutation RemoveTutor($id: ID!, $remark: String) {
-    removeTutor(id: $id, remark: $remark) {
-      ...StatusResponse
     }
   }
 `;
 
 export const REMOVE_TUTOR_CREDENTIAL = gql`
   ${TUTOR_FIELDS}
-  mutation RemoveTutorCredential($id: ID!, $credentialId: String!) {
-    removeTutorCredential(id: $id, credentialId: $credentialId) {
+  mutation RemoveTutorCredential($subId: String!) {
+    removeTutorCredential(subId: $subId) {
       ...TutorFields
     }
   }
@@ -121,8 +111,8 @@ export const REMOVE_TUTOR_CREDENTIAL = gql`
 
 export const REMOVE_TUTOR_SPECIALTY = gql`
   ${TUTOR_FIELDS}
-  mutation RemoveTutorSpecialty($id: ID!, $specialtyId: String!) {
-    removeTutorSpecialty(id: $id, specialtyId: $specialtyId) {
+  mutation RemoveTutorSpecialty($subId: String!) {
+    removeTutorSpecialty(subId: $subId) {
       ...TutorFields
     }
   }
@@ -130,8 +120,8 @@ export const REMOVE_TUTOR_SPECIALTY = gql`
 
 export const UPDATE_TUTOR = gql`
   ${TUTOR_FIELDS}
-  mutation UpdateTutor($id: ID!, $intro: String!, $officeHour: String) {
-    updateTutor(id: $id, intro: $intro, officeHour: $officeHour) {
+  mutation UpdateTutor($intro: String, $officeHour: String) {
+    updateTutor(intro: $intro, officeHour: $officeHour) {
       ...TutorFields
     }
   }
@@ -139,8 +129,8 @@ export const UPDATE_TUTOR = gql`
 
 export const VERIFY_TUTOR_CREDENTIAL = gql`
   ${TUTOR_FIELDS}
-  mutation VerifyTutorCredential($id: ID!, $credentialId: String!) {
-    verifyTutorCredential(id: $id, credentialId: $credentialId) {
+  mutation VerifyTutorCredential($id: ID!, $subId: String!) {
+    verifyTutorCredential(id: $id, subId: $subId) {
       ...TutorFields
     }
   }

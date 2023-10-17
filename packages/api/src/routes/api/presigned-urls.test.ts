@@ -8,7 +8,7 @@ import request from 'supertest';
 
 import app from '../../app';
 import { jestSetup, jestTeardown } from '../../jest';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 
 const { MSG_ENUM } = LOCALE;
 
@@ -16,7 +16,7 @@ const route = 'presigned-urls';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
 
   const expectedFormat = {
     url: expect.any(String),

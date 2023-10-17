@@ -9,8 +9,7 @@ import app from '../../app';
 import configLoader from '../../config/config-loader';
 import { genUser, jestSetup, jestTeardown } from '../../jest';
 import User from '../../models/user';
-import { PASSWORD_TOKEN_PREFIX } from '../../utils/sendmail';
-import token from '../../utils/token';
+import token, { PASSWORD_TOKEN_PREFIX } from '../../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 const { DEFAULTS } = configLoader;

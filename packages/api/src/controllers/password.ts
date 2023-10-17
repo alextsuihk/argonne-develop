@@ -10,12 +10,12 @@ import type { UpdateQuery } from 'mongoose';
 
 import AuthEvent from '../models/event/auth';
 import type { UserDocument } from '../models/user';
-import User from '../models/user';
+import User, { activeCond } from '../models/user';
 import authenticateClient from '../utils/authenticate-client';
 import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
-import mail, { PASSWORD_TOKEN_PREFIX } from '../utils/sendmail';
-import token from '../utils/token';
+import mail from '../utils/sendmail';
+import token, { PASSWORD_TOKEN_PREFIX } from '../utils/token';
 import type { StatusResponse } from './common';
 import common from './common';
 
@@ -31,9 +31,8 @@ const { passwordChangeSchema, passwordConfirmResetSchema, passwordResetRequestSc
  */
 const change = async (req: Request, args: unknown): Promise<StatusResponse> => {
   const { userId } = auth(req);
-  const { currPassword, newPassword, refreshToken, coordinates, clientHash } = await passwordChangeSchema.validate(
-    args,
-  );
+  const { currPassword, newPassword, refreshToken, coordinates, clientHash } =
+    await passwordChangeSchema.validate(args);
   const [user] = await Promise.all([authGetUser(req), authenticateClient(clientHash)]);
 
   // newPassword must be different from current
@@ -77,14 +76,13 @@ const resetConfirm = async (req: Request, args: unknown): Promise<StatusResponse
   const user = await User.findByIdAndUpdate(id, { password }); // password is hashed in models/user.ts
   if (!user) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 
-  const userId = user._id.toString();
   await Promise.all([
-    token.revokeAll(userId), // logout all
-    AuthEvent.log(userId, 'passwordConfirmReset', req.ua, req.ip, coordinates),
+    token.revokeAll(user._id), // logout all
+    AuthEvent.log(user._id, 'passwordConfirmReset', req.ua, req.ip, coordinates),
     notifySync(
       user.tenants[0] || null,
-      { userIds: [userId], event: 'AUTH-RELOAD' },
-      { extra: { revokeAllTokensByUserId: userId } },
+      { userIds: [user._id], event: 'AUTH-RELOAD' },
+      { extra: { revokeAllTokensByUserId: user._id } },
     ),
   ]);
 
@@ -100,7 +98,7 @@ const resetRequest = async (req: Request, args: unknown): Promise<StatusResponse
 
   // accept verified (lower-cased) & unverified email (upper-cased)
   const [user] = await Promise.all([
-    User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }),
+    User.findOne({ emails: { $in: [email, email.toUpperCase()] }, ...activeCond }).lean(),
     authenticateClient(clientHash),
   ]);
 

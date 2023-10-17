@@ -68,8 +68,6 @@ export default {
     },
   },
 
-  LOCALE: SYSTEM.LOCALE.enUS,
-
   LOGGER_URL: 'https://service.alextsui.net/logger',
 
   MESSENGER: { MAX_ATTEMPTS: 3 },
@@ -87,8 +85,8 @@ export default {
       REFERRAL: '30d',
       REPLY_SLIP: '400d',
       SYNC_JOB: '30d',
-      TUTOR_RANKING: '180d',
       USER: '400d',
+      USER_INTEREST: '180d',
       VERIFICATION: '1d',
     },
     SCHEMA_OPTS: {
@@ -151,19 +149,28 @@ export default {
 
   SATELLITE: {
     SEED_EXPIRES_IN: 60 * 30, // seed expires in 30min (seed file removed)
+    TOKEN_EXPIRES_IN: 60 * 60 * 24, // token expires in 1 day
   },
 
   TENANT_BINDING: {
     TOKEN_EXPIRES_IN: 60 * 60 * 24 * 1, // expires in 1 day
   },
 
-  DARK_MODE: false,
-  TIMEZONE: 'Asia/Hong_Kong',
+  TUTOR: {
+    RANKING: {
+      ANALYSIS_DAY: 120, // analysis periods
+      ANALYSIS_MIN: 20, // min amount of questions required for ranking
+      ANALYSIS_MAX: 2000, // only analyze using most recent n questions
+    },
+  },
 
   USER: {
+    DARK_MODE: false,
     FLAGS: [],
-    IDENTIFIABLE_EXPIRY: 3, // IDENTIFIABLE expires after 3 years
+    IDENTIFIABLE_EXPIRY: 6, // IDENTIFIABLE expires after 3 years
+    LOCALE: SYSTEM.LOCALE.enUS,
     SUSPENSION_DAY: 7,
+    TIMEZONE: 'Asia/Hong_Kong',
     WEBPUSH: {},
   },
 

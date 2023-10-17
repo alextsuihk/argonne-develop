@@ -5,30 +5,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BookAssignmentDocument } from './book';
-import type { BaseDocument, Id } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-import type { HomeworkDocument } from './homework';
-
-export type { Id } from './common';
-
-export interface AssignmentDocument extends BaseDocument {
-  classroom: Types.ObjectId;
-  chapter?: string;
-  title?: string;
-  deadline: Date;
-
-  bookAssignments: (Types.ObjectId | (BookAssignmentDocument & Id))[];
-  manualAssignments: string[]; // e.g. Chapter# 1, question# 2B
-  maxScores: number[];
-
-  job?: Types.ObjectId; // grading job
-  homeworks: (Types.ObjectId | (HomeworkDocument & Id))[];
-}
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -40,19 +22,19 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const assignmentSchema = new Schema<AssignmentDocument>(
+const assignmentSchema = new Schema(
   {
     ...baseDefinition,
 
-    classroom: { type: Schema.Types.ObjectId, ref: 'Classroom' },
+    classroom: { type: Schema.Types.ObjectId, ref: 'Classroom', required: true },
     chapter: String,
     title: String,
-    deadline: Date,
+    deadline: { type: Date, required: true },
 
     bookAssignments: [{ type: Schema.Types.ObjectId, ref: 'BookAssignment' }],
     manualAssignments: [String],
     maxScores: [Number],
-    job: { type: Schema.Types.ObjectId, ref: 'Job' },
+    job: { type: Schema.Types.ObjectId, ref: 'Job' }, // grading job
 
     homeworks: [{ type: Schema.Types.ObjectId, ref: 'Homework' }],
   },
@@ -60,6 +42,7 @@ const assignmentSchema = new Schema<AssignmentDocument>(
 );
 
 assignmentSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const Assignment = model<AssignmentDocument>('Assignment', assignmentSchema);
+const Assignment = model('Assignment', assignmentSchema);
+export type AssignmentDocument = InferSchemaType<typeof assignmentSchema> & Id;
 
 export default Assignment;

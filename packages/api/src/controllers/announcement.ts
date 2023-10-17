@@ -8,7 +8,7 @@ import type { Request, RequestHandler } from 'express';
 import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
-import type { AnnouncementDocument, Id } from '../models/announcement';
+import type { AnnouncementDocument } from '../models/announcement';
 import Announcement, { searchableFields } from '../models/announcement';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
@@ -26,7 +26,7 @@ const { announcementSchema, idSchema, querySchema } = yupSchema;
 /**
  * Create
  */
-const create = async (req: Request, args: unknown): Promise<AnnouncementDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<AnnouncementDocument> => {
   const { userId, userLocale, userRoles } = auth(req);
   const {
     announcement: { tenantId, ...inputFields },
@@ -53,7 +53,7 @@ const create = async (req: Request, args: unknown): Promise<AnnouncementDocument
 
   const sync = {
     bulkWrite: {
-      announcements: [{ insertOne: { document: announcement.toObject() } }] satisfies BulkWrite<AnnouncementDocument>,
+      announcements: [{ insertOne: { document: announcement } }] satisfies BulkWrite<AnnouncementDocument>,
     },
   };
   await Promise.all([
@@ -108,7 +108,7 @@ const findCommon = async (userTenants: string[], isAdmin: boolean, args: unknown
 /**
  * Find Multiple (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<AnnouncementDocument & Id[]> => {
+const find = async (req: Request, args: unknown): Promise<AnnouncementDocument[]> => {
   const { userRoles, userTenants } = auth(req);
   const filter = await findCommon(userTenants, isAdmin(userRoles), args);
 
@@ -138,7 +138,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<(AnnouncementDocument & Id) | null> => {
+const findOne = async (req: Request, args: unknown): Promise<AnnouncementDocument | null> => {
   const { userRoles, userTenants } = auth(req);
   const filter = await findCommon(userTenants, isAdmin(userRoles), args, true);
 

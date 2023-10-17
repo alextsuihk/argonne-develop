@@ -2,35 +2,27 @@
  * Model: Content
  *
  */
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface ContentDocument extends BaseDocument {
-  parents: string[];
-  creator: Types.ObjectId;
-  data: string;
-  visibleAfter?: Date; // defer visibility to later time
-}
 
 const { DEFAULTS } = configLoader;
 
-const contentSchema = new Schema<ContentDocument>(
+const contentSchema = new Schema(
   {
     ...baseDefinition,
 
     parents: [String],
-    creator: { type: Schema.Types.ObjectId, ref: 'User' },
-    data: String,
+    creator: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    data: { type: String, required: true },
     visibleAfter: Date,
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const Content = model<ContentDocument>('Content', contentSchema);
+const Content = model('Content', contentSchema);
+export type ContentDocument = InferSchemaType<typeof contentSchema> & Id;
 export default Content;

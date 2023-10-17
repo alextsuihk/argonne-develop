@@ -10,7 +10,7 @@ import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import Level from '../models/level';
-import type { Id, SubjectDocument } from '../models/subject';
+import type { SubjectDocument } from '../models/subject';
 import Subject, { searchableFields } from '../models/subject';
 import { messageToAdmins } from '../utils/chat';
 import log from '../utils/log';
@@ -36,7 +36,7 @@ const validateIds = async (levelIds: string[]) => {
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<SubjectDocument & Id> => {
+const addRemark = async (req: Request, args: unknown): Promise<SubjectDocument> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -56,7 +56,7 @@ const addRemark = async (req: Request, args: unknown): Promise<SubjectDocument &
 /**
  * Create
  */
-const create = async (req: Request, args: unknown): Promise<SubjectDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<SubjectDocument> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req, 'ADMIN');
   const { subject: inputFields } = await subjectSchema.validate(args);
@@ -77,7 +77,7 @@ const create = async (req: Request, args: unknown): Promise<SubjectDocument & Id
     messageToAdmins(msg, userId, userLocale, true),
     DatabaseEvent.log(userId, `/subjects/${_id}`, 'CREATE', { args }),
     syncToAllSatellites({
-      bulkWrite: { subjects: [{ insertOne: { document: subject.toObject() } }] satisfies BulkWrite<SubjectDocument> },
+      bulkWrite: { subjects: [{ insertOne: { document: subject } }] satisfies BulkWrite<SubjectDocument> },
     }),
   ]);
 
@@ -98,7 +98,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<(SubjectDocument & Id)[]> => {
+const find = async (req: Request, args: unknown): Promise<SubjectDocument[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<SubjectDocument>(searchableFields, { query });
@@ -129,7 +129,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<(SubjectDocument & Id) | null> => {
+const findOne = async (req: Request, args: unknown): Promise<SubjectDocument | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<SubjectDocument>(searchableFields, { query }, { _id: id });
@@ -199,7 +199,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Subject
  */
-const update = async (req: Request, args: unknown): Promise<SubjectDocument & Id> => {
+const update = async (req: Request, args: unknown): Promise<SubjectDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { id, subject: inputFields } = await idSchema.concat(subjectSchema).validate(args);

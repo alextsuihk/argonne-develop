@@ -8,11 +8,11 @@
 import { LOCALE } from '@argonne/common';
 import chalk from 'chalk';
 
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 
 const { USER } = LOCALE.DB_ENUM;
-let originalData: (UserDocument & Id)[] = []; // backup for roll-back if needed
+let originalData: UserDocument[] = []; // backup for roll-back if needed
 
 /**
  * Proceed Migration

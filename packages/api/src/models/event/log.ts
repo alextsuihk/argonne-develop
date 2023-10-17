@@ -3,25 +3,22 @@
  *
  */
 
-import { Schema } from 'mongoose';
+import { InferSchemaType, Schema } from 'mongoose';
 
+import { discriminatorKey } from '../common';
 import type { GenericDocument } from './generic';
-import Generic, { options } from './generic';
+import Generic from './generic';
 
-export interface LogEventDocument extends GenericDocument {
-  level: string;
-  extra: unknown; // we don't process nor care the detailed format
-  url: string;
-}
-
-const logEventSchema = new Schema<LogEventDocument>(
+const logEventSchema = new Schema(
   {
-    level: String,
+    level: { type: String, required: true },
+    msg: { type: String, required: true },
     extra: Schema.Types.Mixed,
     url: String,
   },
-  options,
+  discriminatorKey,
 );
 
-const LogEvent = Generic.discriminator('LogEvent', logEventSchema);
+export type LogEventDocument = GenericDocument & InferSchemaType<typeof logEventSchema>;
+const LogEvent = Generic.discriminator<LogEventDocument>('LogEvent', logEventSchema);
 export default LogEvent;

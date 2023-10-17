@@ -23,7 +23,7 @@ import {
   randomItem,
 } from '../jest';
 import Level from '../models/level';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import { ADD_LEVEL, ADD_LEVEL_REMARK, GET_LEVEL, GET_LEVELS, REMOVE_LEVEL, UPDATE_LEVEL } from '../queries/level';
 
 const { MSG_ENUM } = LOCALE;
@@ -31,7 +31,7 @@ const { MSG_ENUM } = LOCALE;
 // Top level of this test suite:
 describe('Level GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
 

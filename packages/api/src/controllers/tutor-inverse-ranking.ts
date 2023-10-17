@@ -1,25 +1,26 @@
-// WIP: untested
-
 /**
- * Controller: Tutor-Ranking
+ * Controller: Tutor-Inverse-Ranking
  *
- * rankingController is primary for tutor to see average ranking scores from individual students
+ * rankingController is primary for tutor to see average ranking scores given by individual students
  *
  * note: _id is referred to studentId
  */
 
 import { yupSchema } from '@argonne/common';
+import { subDays } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
 import mongoose from 'mongoose';
 
-import type { Id, TutorRankingDocument } from '../models/tutor-ranking';
-import TutorRanking from '../models/tutor-ranking';
+import configLoader from '../config/config-loader';
+import type { QuestionDocument } from '../models/question';
+import Question from '../models/question';
 import { mongoId } from '../utils/helper';
 import common from './common';
 
-type AverageRanking = Pick<TutorRankingDocument & Id, '_id' | 'correctness' | 'explicitness' | 'punctuality'>;
+type AverageRanking = Pick<QuestionDocument, '_id' | 'correctness' | 'explicitness' | 'punctuality'>;
 
 const { auth, hubModeOnly, paginateSort } = common;
+const { DEFAULTS } = configLoader;
 const { idSchema } = yupSchema;
 
 /**
@@ -29,8 +30,10 @@ const find = async (req: Request): Promise<AverageRanking[]> => {
   hubModeOnly();
   const { userId } = auth(req);
 
-  return TutorRanking.aggregate<AverageRanking>([
-    { $match: { tutor: new mongoose.Types.ObjectId(userId) } },
+  return Question.aggregate<AverageRanking>([
+    { $match: { tutor: userId, updatedAt: { $gte: subDays(Date.now(), DEFAULTS.TUTOR.RANKING.ANALYSIS_DAY) } } },
+    { $sort: { student: 1, createdAt: -1 } },
+    { $limit: DEFAULTS.TUTOR.RANKING.ANALYSIS_MAX },
     {
       $group: {
         _id: '$student',
@@ -52,8 +55,10 @@ const findMany: RequestHandler = async (req, res, next) => {
   try {
     const { limit, skip, sort } = paginateSort(req.query, { _id: 1 });
 
-    const agg = TutorRanking.aggregate<AverageRanking>([
-      { $match: { tutor: new mongoose.Types.ObjectId(userId) } },
+    const agg = Question.aggregate<AverageRanking>([
+      { $match: { tutor: userId, updatedAt: { $gte: subDays(Date.now(), DEFAULTS.TUTOR.RANKING.ANALYSIS_DAY) } } },
+      { $sort: { student: 1, createdAt: -1 } },
+      { $limit: DEFAULTS.TUTOR.RANKING.ANALYSIS_MAX },
       {
         $group: {
           _id: '$student',
@@ -80,8 +85,16 @@ const findOne = async (req: Request, args: unknown): Promise<AverageRanking | nu
   const { userId } = auth(req);
   const { id } = await idSchema.validate(args);
 
-  const tutorRankings = await TutorRanking.aggregate<AverageRanking>([
-    { $match: { tutor: mongoId(userId), student: mongoId(id) } },
+  const tutorRankings = await Question.aggregate<AverageRanking>([
+    {
+      $match: {
+        tutor: userId,
+        student: mongoId(id),
+        updatedAt: { $gte: subDays(Date.now(), DEFAULTS.TUTOR.RANKING.ANALYSIS_DAY) },
+      },
+    },
+    { $sort: { student: 1, createdAt: -1 } },
+    { $limit: DEFAULTS.TUTOR.RANKING.ANALYSIS_MAX },
     {
       $group: {
         _id: '$student',

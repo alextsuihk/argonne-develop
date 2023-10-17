@@ -4,49 +4,54 @@
  */
 
 import { LOCALE } from '@argonne/common';
+import request from 'supertest';
 
+import app from '../../app';
 import {
   expectedDateFormat,
   expectedIdFormat,
   expectedRemark,
   FAKE,
+  FAKE_ID,
   FAKE2,
   genUser,
   jestSetup,
   jestTeardown,
   prob,
   randomItem,
+  randomItems,
+  shuffle,
 } from '../../jest';
 import Level from '../../models/level';
 import Subject from '../../models/subject';
 import type { TutorDocument } from '../../models/tutor';
 import Tutor from '../../models/tutor';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
 const { QUESTION } = LOCALE.DB_ENUM;
-const { getMany, getUnauthenticated, createUpdateDelete } = commonTest;
+const { getMany, getUnauthenticated } = commonTest;
 
 const route = 'tutors';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: (UserDocument & Id) | null;
-  let normalUsers: (UserDocument & Id)[] | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
+  let normalUsers: UserDocument[] | null;
+  let adminUser: UserDocument | null;
   let tenantId: string | null;
 
   // expected MINIMUM single credential format
   const expectedMinFormat = {
     _id: expectedIdFormat,
-    tenant: expectedIdFormat,
-    user: expectedIdFormat,
+    flags: expect.any(Array),
 
+    name: expect.any(String),
     credentials: expect.any(Array), // could be empty array
     specialties: expect.any(Array), // could be an empty array for newly created tutor
-    rankingUpdatedAt: expectedDateFormat(),
+    rankings: expect.any(Array),
 
     createdAt: expectedDateFormat(),
     updatedAt: expectedDateFormat(),
@@ -61,18 +66,14 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   const expectedSpecialtyMinFormat = {
     _id: expectedIdFormat,
-    lang: expect.toBeOneOf(Object.keys(QUESTION.LANG)),
+    tenant: expectedIdFormat,
+    langs: expect.arrayContaining([expect.toBeOneOf(Object.keys(QUESTION.LANG))]),
     level: expectedIdFormat,
     subject: expectedIdFormat,
-    ranking: {
-      correctness: expect.any(Number),
-      punctuality: expect.any(Number),
-      explicitness: expect.any(Number),
-    },
   };
 
   beforeAll(async () => {
-    ({ normalUser, normalUsers, tenantAdmin, tenantId } = await jestSetup(['admin', 'normal', 'tenantAdmin']));
+    ({ normalUser, normalUsers, adminUser, tenantId } = await jestSetup(['admin', 'normal']));
   });
   afterAll(jestTeardown);
 
@@ -82,10 +83,15 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       'specialties.level': { $in: normalUsers!.map(user => user.schoolHistories[0]?.level).filter(lvl => !!lvl) },
       deletedAt: { $exists: false },
     }).lean();
-    const tutorLevels = tutors.map(t => t.specialties.map(s => s.level)).flat();
+    const tutorLevels = tutors
+      .map(t => t.specialties.map(s => s.level))
+      .flat()
+      .sort(shuffle);
+
     const student = normalUsers!.find(
       ({ schoolHistories }) => schoolHistories[0] && tutorLevels.some(lvl => lvl.equals(schoolHistories[0].level)),
     );
+
     if (!student) throw `No valid student for testing`;
 
     await getMany<TutorDocument>(route, { 'Jest-User': student._id }, expectedMinFormat, {
@@ -95,8 +101,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     });
   });
 
-  // There is no tutor (with naLevel) initially
-  test.skip('should pass when getMany & getById (as teacher)', async () => {
+  test('should pass when getMany & getById (as teacher)', async () => {
     const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
     const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
     if (!teacher) throw `No valid teacher for testing`;
@@ -108,8 +113,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     });
   });
 
-  test('should pass when getMany & getById (as tenantAdmin)', async () =>
-    getMany<TutorDocument>(route, { 'Jest-User': tenantAdmin!._id }, expectedMinFormat, {
+  test('should pass when getMany & getById (as adminUser)', async () =>
+    getMany<TutorDocument>(route, { 'Jest-User': adminUser!._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
@@ -120,149 +125,183 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should fail when GET one without authenticated', async () =>
     getUnauthenticated(`${route}/${normalUser!._id}`, {}));
 
-  test('should fail when adding a tutor without identifiedAt', async () => {
-    expect.assertions(3);
+  test('should fail when adding credential or specialty without identifiedAt', async () => {
+    expect.assertions(3 + 3);
 
     // create a new user (without identifiedAt)
     const user = genUser(tenantId!);
     await user.save();
 
-    await createUpdateDelete(route, { 'Jest-User': tenantAdmin!._id }, [
-      {
-        action: 'create', // tenantAdmin creates (add) new tutor
-        data: { tenantId: tenantId!, userId: user._id.toString() },
-        expectedResponse: {
-          statusCode: 422,
-          data: { type: 'plain', statusCode: 422, errors: [{ code: MSG_ENUM.USER_INPUT_ERROR }] },
-        },
-      },
-    ]);
+    // add credential
+    const res = await request(app)
+      .patch(`/api/${route}/addCredential`)
+      .send({ title: FAKE, proofs: [FAKE] })
+      .set({ 'Jest-User': user._id });
+    expect(res.body).toEqual({ errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }], statusCode: 403, type: 'plain' });
+    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res.status).toBe(403);
+
+    // add specialty
+    const res2 = await request(app)
+      .patch(`/api/${route}/addSpecialty`)
+      .send({
+        tenantId,
+        ...(prob(0.5) && { note: FAKE }),
+        langs: [QUESTION.LANG.CSE],
+        level: FAKE_ID,
+        subject: FAKE_ID,
+      })
+      .set({ 'Jest-User': user._id });
+    expect(res2.body).toEqual({ errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }], statusCode: 403, type: 'plain' });
+    expect(res2.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res2.status).toBe(403);
 
     // clean-up
-    await User.deleteOne({ _id: user });
+    await User.deleteOne({ _id: user._id });
+  });
+
+  test('should pass when create a tutor document with upsert()', async () => {
+    expect.assertions(4 + 4);
+
+    //  create a new user (with identifiedAt)
+    const user = genUser(tenantId!, { identifiedAt: new Date() });
+    await user.save();
+
+    // upsert with addSpecialty
+    const subject = randomItem(await Subject.find({ deletedAt: { $exists: false } }).lean());
+    const specialty = {
+      ...(prob(0.5) && { note: `specialty ${FAKE}` }),
+      langs: randomItems(Object.keys(QUESTION.LANG), prob(0.5) ? 1 : 2),
+      level: randomItem(subject.levels).toString(),
+      subject: subject._id.toString(),
+    };
+    const res = await request(app)
+      .patch(`/api/${route}/addSpecialty`)
+      .send({ tenantId, ...specialty })
+      .set({ 'Jest-User': user._id });
+    expect(res.body).toEqual({ data: expect.objectContaining(expectedMinFormat) });
+    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res.status).toBe(200);
+    const tutor = await Tutor.findOneAndDelete({ user: res.body.data._id }).lean(); // clean up
+    expect(tutor!.user.equals(user._id)).toBeTrue();
+
+    // upsert with addCredential
+    const res2 = await request(app)
+      .patch(`/api/${route}/addCredential`)
+      .send({ title: FAKE, proofs: [`${FAKE} PNG`] })
+      .set({ 'Jest-User': user._id });
+    expect(res2.body).toEqual({ data: expect.objectContaining(expectedMinFormat) });
+    expect(res2.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res2.status).toBe(200);
+    const tutor2 = await Tutor.findOneAndDelete({ user: res.body.data._id }).lean(); // clean up
+    expect(tutor2!.user.equals(user._id)).toBeTrue();
+
+    // clean up
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should pass the full suite', async () => {
-    expect.assertions(3 * (11 + 1));
+    expect.assertions(3 * 7);
 
     // create a new user (with identifiedAt)
     const user = genUser(tenantId!, { identifiedAt: new Date() });
     await user.save();
-    const userId = user._id.toString();
 
-    const updateIntro = { intro: FAKE, ...(prob(0.5) && { officeHour: FAKE2 }) };
-
-    const subject = randomItem(await Subject.find({ deletedAt: { $exists: false } }).lean());
-    const level = randomItem(subject.levels).toString();
-
-    const lang = randomItem(Object.keys(QUESTION.LANG));
+    // upsert with addCredential
     const credential = { title: FAKE, proofs: [`${FAKE} PNG`] };
-    const specialty = { lang, subject: subject._id.toString(), level, ...(prob(0.5) && { note: `specialty ${FAKE}` }) };
+    const addCredentialRes = await request(app)
+      .patch(`/api/${route}/addCredential`)
+      .send(credential)
+      .set({ 'Jest-User': user._id });
+    expect(addCredentialRes.body).toEqual({
+      data: expect.objectContaining({
+        ...expectedMinFormat,
+        credentials: [expect.objectContaining({ ...expectedCredentialMinFormat, ...credential })],
+      }),
+    });
+    expect(addCredentialRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(addCredentialRes.status).toBe(200);
 
-    const tutor = await createUpdateDelete<TutorDocument & Id>(
-      route,
-      { 'Jest-User': userId },
-      [
-        {
-          action: 'create', // tenantAdmin creates (add) new tutor
-          headers: { 'Jest-User': tenantAdmin!._id },
-          data: { tenantId: tenantId!, userId },
-          expectedMinFormat: { ...expectedMinFormat, tenant: tenantId!, user: userId },
-        },
-        {
-          action: 'update', // new tutor updates intro & officeHour
-          data: updateIntro,
-          expectedMinFormat: { ...expectedMinFormat, ...updateIntro },
-        },
-        {
-          action: 'addRemark', // tenantAdmin addRemark
-          headers: { 'Jest-User': tenantAdmin!._id },
-          data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(tenantAdmin!._id, FAKE) },
-        },
-        {
-          action: 'addCredential', // tutor addCredential
-          data: credential,
-          expectedMinFormat: {
-            ...expectedMinFormat,
-            credentials: [expect.objectContaining({ ...expectedCredentialMinFormat, ...credential })],
-          },
-        },
-        {
-          action: 'addSpecialty', // tutor addSpecialty
-          data: specialty,
-          expectedMinFormat: {
-            ...expectedMinFormat,
-            specialties: [expect.objectContaining({ ...expectedSpecialtyMinFormat, ...specialty })],
-          },
-        },
-      ],
-      { skipAssertion: true },
-    );
+    // adminUser verifyCredential (second credential)
+    const credentialId = addCredentialRes.body.data.credentials[0]._id;
+    const verifyCredentialRes = await request(app)
+      .patch(`/api/${route}/verifyCredential`)
+      .send({ id: user._id, subId: credentialId })
+      .set({ 'Jest-User': adminUser!._id });
+    expect(verifyCredentialRes.body).toEqual({
+      data: expect.objectContaining({
+        ...expectedMinFormat,
+        credentials: [
+          expect.objectContaining({ ...expectedCredentialMinFormat, ...credential, verifiedAt: expectedDateFormat() }),
+        ],
+      }),
+    });
+    expect(verifyCredentialRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(verifyCredentialRes.status).toBe(200);
 
-    const tutorId = tutor!._id.toString();
-    const credentialId = tutor!.credentials[0]._id.toString();
-    const specialtyId = tutor!.specialties[0]._id.toString();
+    // tutor removeCredential
+    const removeCredentialRes = await request(app)
+      .patch(`/api/${route}/removeCredential`)
+      .send({ subId: credentialId })
+      .set({ 'Jest-User': user._id });
+    expect(removeCredentialRes.body).toEqual({
+      data: expect.objectContaining({ ...expectedMinFormat, credentials: [] }),
+    });
+    expect(removeCredentialRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(removeCredentialRes.status).toBe(200);
 
-    await createUpdateDelete<TutorDocument & Id>(
-      route,
-      { 'Jest-User': tenantAdmin!._id },
-      [
-        {
-          action: 'verifyCredential', // tenantAdmin verifyCredential
-          data: { credentialId },
-          expectedMinFormat: {
-            ...expectedMinFormat,
-            credentials: [
-              expect.objectContaining({
-                ...expectedCredentialMinFormat,
-                ...credential,
-                verifiedAt: expectedDateFormat(),
-              }),
-            ],
-          },
-        },
-        {
-          action: 'removeCredential', // tutor removeCredential
-          headers: { 'Jest-User': userId },
-          data: { credentialId },
-          expectedMinFormat: { ...expectedMinFormat, credentials: [] },
-        },
-        {
-          action: 'removeSpecialty', // tutor removeSpecialty
-          headers: { 'Jest-User': userId },
-          data: { specialtyId },
-          expectedMinFormat: { ...expectedMinFormat, specialties: [] }, // deleted specialties are hidden
-        },
-        {
-          action: 'addSpecialty', // tutor re-addSpecialty
-          headers: { 'Jest-User': userId },
-          data: specialty,
-          expectedMinFormat: {
-            ...expectedMinFormat,
-            specialties: [expect.objectContaining({ ...expectedSpecialtyMinFormat, ...specialty })],
-          },
-        },
-        { action: 'delete', data: {} }, //tenantAdmin removes tutor
-        {
-          action: 'create', // tenantAdmin re-creates (re-add) tutor
-          data: { tenantId: tenantId!, userId },
-          expectedMinFormat: {
-            ...expectedMinFormat,
-            tenant: tenantId!,
-            user: userId,
-            specialties: [expect.objectContaining({ ...expectedSpecialtyMinFormat, ...specialty })],
-          },
-        },
-      ],
-      { skipAssertion: true, overrideId: tutorId },
-    );
+    // adminUser addRemark
+    const addRemarkRes = await request(app)
+      .patch(`/api/${route}/addRemark`)
+      .send({ id: user._id, remark: FAKE })
+      .set({ 'Jest-User': adminUser!._id });
+    expect(addRemarkRes.body).toEqual({
+      data: expect.objectContaining({ ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) }),
+    });
+    expect(addRemarkRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(addRemarkRes.status).toBe(200);
 
-    // remove specialty and re-add
+    // tutor updates intro & officeHour
+    const update = { ...(prob(0.8) && { intro: FAKE }), ...(prob(0.8) && { officeHour: FAKE2 }) };
+    const updateRes = await request(app).patch(`/api/${route}`).send(update).set({ 'Jest-User': user._id });
+    expect(updateRes.body).toEqual({ data: expect.objectContaining({ ...expectedMinFormat, ...update }) });
+    expect(updateRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(updateRes.status).toBe(200);
 
-    // remove tutor and re-add
+    // upsert with addSpecialty
+    const subject = randomItem(await Subject.find({ deletedAt: { $exists: false } }).lean());
+    const specialty = {
+      ...(prob(0.5) && { note: `specialty ${FAKE}` }),
+      langs: randomItems(Object.keys(QUESTION.LANG), prob(0.5) ? 1 : 2),
+      level: randomItem(subject.levels).toString(),
+      subject: subject._id.toString(),
+    };
+    const addSpecialtyRes = await request(app)
+      .patch(`/api/${route}/addSpecialty`)
+      .send({ tenantId, ...specialty })
+      .set({ 'Jest-User': user._id });
+    expect(addSpecialtyRes.body).toEqual({
+      data: expect.objectContaining({
+        ...expectedMinFormat,
+        specialties: [expect.objectContaining({ ...expectedSpecialtyMinFormat, tenant: tenantId, ...specialty })],
+      }),
+    });
+    expect(addSpecialtyRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(addSpecialtyRes.status).toBe(200);
+
+    // tutor removeSpecialty
+    const specialtyId = addSpecialtyRes.body.data.specialties[0]._id;
+    const removeSpecialtyRes = await request(app)
+      .patch(`/api/${route}/removeSpecialty`)
+      .send({ subId: specialtyId })
+      .set({ 'Jest-User': user._id });
+    expect(removeSpecialtyRes.body).toEqual({
+      data: expect.objectContaining({ ...expectedMinFormat, specialties: [] }),
+    });
+    expect(removeSpecialtyRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(removeSpecialtyRes.status).toBe(200);
 
     // clean up
-    await User.deleteOne({ _id: userId });
+    await Promise.all([User.deleteOne({ _id: user._id }), Tutor.deleteOne({ user: user._id })]);
   });
 });

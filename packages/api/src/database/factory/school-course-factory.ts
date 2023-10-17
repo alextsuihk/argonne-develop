@@ -55,7 +55,7 @@ const fake = async (codes: string[], revCount = 2): Promise<string> => {
       year,
       rev,
 
-      createdAt: faker.date.recent(90),
+      createdAt: faker.date.recent({ days: 90 }),
       createdBy: randomItem(tenantAdmins),
       courses: schools
         .find(s => s._id.equals(school))!

@@ -18,7 +18,7 @@ import {
   prob,
 } from '../../jest';
 import type { PublisherDocument } from '../../models/publisher';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { createUpdateDelete, getMany } = commonTest;
@@ -26,8 +26,8 @@ const route = 'publishers';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: (UserDocument & Id) | null;
-  let normalUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
+  let normalUser: UserDocument | null;
   let url: string | undefined;
   let url2: string | undefined;
 
@@ -68,7 +68,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       website: 'http://jest2.com',
     };
 
-    await createUpdateDelete<PublisherDocument & Id>(route, { 'Jest-User': adminUser!._id }, [
+    await createUpdateDelete<PublisherDocument>(route, { 'Jest-User': adminUser!._id }, [
       { action: 'create', data: create, expectedMinFormat: { ...expectedMinFormat, ...create } },
       {
         action: 'addRemark',

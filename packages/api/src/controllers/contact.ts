@@ -13,13 +13,13 @@ import configLoader from '../config/config-loader';
 import Classroom from '../models/classroom';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
-import type { Id, UserDocument } from '../models/user';
-import User, { userNormalSelect } from '../models/user';
+import type { UserDocument } from '../models/user';
+import User, { activeCond, userNormalSelect } from '../models/user';
 import { schoolYear } from '../utils/helper';
 import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 import token from '../utils/token';
-import type { StatusResponse } from './common';
+import type { StatusResponse, TokenWithExpireAtResponse } from './common';
 import common from './common';
 
 type ContactWithAvatarUrl = {
@@ -46,7 +46,7 @@ const CONTACT_TOKEN_PREFIX = 'CONTACT';
  */
 const transform = (
   userTenants: string[],
-  friend: UserDocument & Id,
+  friend: UserDocument,
   userContacts: UserDocument['contacts'],
 ): ContactWithAvatarUrl => {
   const myContact = userContacts.find(c => c.user.equals(friend._id));
@@ -65,7 +65,7 @@ const transform = (
 /**
  * Generate a token with auth-user Id for other to make friend
  */
-const createToken = async (req: Request, args: unknown): Promise<{ token: string; expireAt: Date }> => {
+const createToken = async (req: Request, args: unknown): Promise<TokenWithExpireAtResponse> => {
   const { userId } = auth(req);
   const { expiresIn = DEFAULTS.CONTACT.TOKEN_EXPIRES_IN } = await optionalExpiresInSchema.validate(args);
 
@@ -79,7 +79,7 @@ const createToken = async (req: Request, args: unknown): Promise<{ token: string
  * Create New User Contact (bi-directional)
  */
 const create = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl> => {
-  const { userId, userTenants } = auth(req);
+  const { userTenants } = auth(req);
   const { token: contactToken } = await tokenSchema.validate(args);
 
   const [prefix, friendId] = await token.verifyStrings(contactToken);
@@ -88,24 +88,24 @@ const create = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl
   // cross tenant NOT allowed
   const [user, friend] = await Promise.all([
     authGetUser(req),
-    User.findOneActive({ _id: friendId, tenants: { $in: userTenants } }), // make sure user & friend have intersected tenants
+    User.findOne({ _id: friendId, tenants: { $in: userTenants }, ...activeCond }).lean(), // make sure user & friend have intersected tenants
   ]);
-  if (!friend || userId === friendId) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+  if (!friend || user._id.equals(friend._id)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const isFriendInUserContacts = user.contacts.some(c => c.user.equals(friendId));
-  const isUserInFriendContacts = friend.contacts.some(c => c.user.equals(userId));
+  const isFriendInUserContacts = user.contacts.some(c => c.user.equals(friend._id));
+  const isUserInFriendContacts = friend.contacts.some(c => c.user.equals(user._id));
 
   const updatedAt = new Date();
-  const friendUpdate: UpdateQuery<UserDocument> = { $push: { contacts: { user: user._id, updatedAt } } };
-  const userUpdate: UpdateQuery<UserDocument> = { $push: { contacts: { user: friend._id, updatedAt } } };
+  const friendUpdate: UpdateQuery<UserDocument> = { $push: { contacts: { user: user._id, updatedAt } }, updatedAt };
+  const userUpdate: UpdateQuery<UserDocument> = { $push: { contacts: { user: friend._id, updatedAt } }, updatedAt };
   const [transformed] = await Promise.all([
     transform(userTenants, friend, [{ user: friend._id, updatedAt }]), // friend in user.contacts
     !isFriendInUserContacts && User.updateOne({ _id: user._id }, userUpdate),
     !isUserInFriendContacts && User.updateOne({ _id: friend._id }, friendUpdate, { new: true }),
-    DatabaseEvent.log(userId, `/contacts/${userId}`, 'CREATE', { user: userId, friend: friendId }),
+    DatabaseEvent.log(user._id, `/contacts/${user._id}`, 'CREATE', { user: user._id, friend: friend._id }),
     notifySync(
       user.tenants[0] && friend.tenants[0]?.equals(user.tenants[0]) ? user.tenants[0] : null,
-      { userIds: [userId, friendId], event: 'CONTACT' },
+      { userIds: [user._id, friend._id], event: 'CONTACT' },
       {
         bulkWrite: {
           users: [
@@ -140,9 +140,9 @@ const createNew: RequestHandler<{ action?: 'createToken' }> = async (req, res, n
 };
 
 // (helper) to get all contactIds (contacts, platform admin, tenantAdmins, classroom teachers & classmates)
-const myContactIds = async (userId: string, userTenants: string[]) => {
+const myContactIds = async (userId: Types.ObjectId, userTenants: string[]) => {
   const [user, classrooms, systemAccountIds, tenants] = await Promise.all([
-    User.findOneActive({ _id: userId }),
+    User.findOne({ _id: userId, ...activeCond }).lean(),
     Classroom.find({
       tenant: { $in: userTenants },
       $or: [{ students: userId }, { teachers: userId }],
@@ -215,8 +215,8 @@ const findOne = async (req: Request, args: unknown): Promise<ContactWithAvatarUr
     idSchema.validate(args),
   ]);
 
-  if (userId === friendId || !contactIds.some(c => c.equals(friendId))) return null;
-  const friend = await User.findOneActive({ _id: friendId });
+  if (userId.equals(friendId) || !contactIds.some(c => c.equals(friendId))) return null;
+  const friend = await User.findOne({ _id: friendId, ...activeCond }).lean();
   return friend && transform(userTenants, friend, user.contacts);
 };
 
@@ -281,7 +281,7 @@ const update = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl
   const { userId, userTenants } = auth(req);
   const { id: friendId, name } = await contactNameSchema.concat(idSchema).validate(args);
 
-  const friend = await User.findOneActive({ _id: friendId });
+  const friend = await User.findOne({ _id: friendId, ...activeCond }).lean();
   if (!friend) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const now = new Date();

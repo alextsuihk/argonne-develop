@@ -30,12 +30,16 @@ const {
   sendMessengerVerification,
   update,
   verifyEmail,
+  addApiKey,
+  removeApiKey,
+  listApiKeys,
 } = authController;
 
 export default {
   Query: {
     authServiceToken: (_: unk, args: unk, { req }: Ctx) => tryCatch(() => authServiceToken(req, args)),
     isEmailAvailable: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => isEmailAvailable(req, args)),
+    listApiKeys: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => listApiKeys(req)),
     listSockets: async (_: unk, __: unk, { req }: Ctx) => listSockets(req),
     listTokens: async (_: unk, __: unk, { req }: Ctx) => tryCatch(() => listTokens(req)),
     loginToken: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => loginToken(req, args)),
@@ -68,19 +72,24 @@ export default {
       tryCatch(() => sendMessengerVerification(req, args)),
 
     // update
-    addApiKey: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addApiKey')),
+    addApiKey: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => addApiKey(req, args)),
+    removeApiKey: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => removeApiKey(req, args)),
+
     addEmail: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addEmail')),
     addMessenger: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addMessenger')),
     addPaymentMethod: async (_: unk, args: unk, { req, res }: Ctx) =>
       tryCatch(() => update(req, args, 'addPaymentMethod')),
+    addPushSubscription: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => update(req, args, 'addPushSubscription')),
     oAuth2Link: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'oAuth2Link')),
     oAuth2Unlink: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'oAuth2Unlink')),
-    removeApiKey: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'removeApiKey')),
     removeEmail: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'removeEmail')),
     removeMessenger: async (_: unk, args: unk, { req, res }: Ctx) =>
       tryCatch(() => update(req, args, 'removeMessenger')),
     removePaymentMethod: async (_: unk, args: unk, { req, res }: Ctx) =>
       tryCatch(() => update(req, args, 'removePaymentMethod')),
+    removePushSubscriptions: async (_: unk, args: unk, { req, res }: Ctx) =>
+      tryCatch(() => update(req, args, 'removePushSubscriptions')),
     updateAvailability: async (_: unk, args: unk, { req, res }: Ctx) =>
       tryCatch(() => update(req, args, 'updateAvailability')),
     updateAvatar: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'updateAvatar')),

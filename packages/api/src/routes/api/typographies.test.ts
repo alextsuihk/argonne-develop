@@ -18,7 +18,7 @@ import {
   jestTeardown,
 } from '../../jest';
 import type { TypographyDocument } from '../../models/typography';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -28,9 +28,9 @@ const route = 'typographies';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: (UserDocument & Id) | null;
-  let normalUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
+  let normalUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantId: string | null;
 
   // expected MINIMUM single typography format

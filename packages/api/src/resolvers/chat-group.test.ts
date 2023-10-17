@@ -29,7 +29,7 @@ import Book from '../models/book';
 import ChatGroup from '../models/chat-group';
 import Level from '../models/level';
 import Tenant from '../models/tenant';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_CHAT_GROUP,
@@ -64,11 +64,11 @@ const { CHAT, CHAT_GROUP } = LOCALE.DB_ENUM;
 // Top chat of this test suite:
 describe('ChatGroup GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: (UserDocument & Id) | null;
-  let normalUsers: (UserDocument & Id)[] | null;
+  let normalUser: UserDocument | null;
+  let normalUsers: UserDocument[] | null;
   let tenantId: string | null;
   let url: string | undefined;
   let url2: string | undefined;
@@ -432,19 +432,42 @@ describe('ChatGroup GraphQL', () => {
     await Promise.all([chatGroup.deleteOne(), source.deleteOne()]);
   });
 
-  test('should pass when sharing question to chatGroup', async () => {
+  test('should pass when sharing question to chatGroup (as student)', async () => {
     expect.assertions(1);
 
     const { chatGroup } = genChatGroup(tenantId!, normalUser!._id);
-    const { question, content } = genQuestion(tenantId!, normalUser!._id);
+    const { question, content } = genQuestion(tenantId!, normalUser!._id, { student: normalUser!._id });
     await Promise.all([chatGroup.save(), question.save(), content.save()]);
     //! Note: at the point, chatGroup.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
 
-    const res1 = await normalServer!.executeOperation({
+    const res = await normalServer!.executeOperation({
       query: SHARE_QUESTION_TO_CHAT_GROUP,
       variables: { id: chatGroup._id.toString(), sourceId: question._id.toString() },
     });
-    apolloExpect(res1, 'data', {
+    apolloExpect(res, 'data', {
+      shareQuestionToChatGroup: {
+        ...expectedFormat,
+        chats: [{ ...expectedChatFormat, contents: [expectedIdFormat, content._id.toString()] }], // first contentId is auto-gen message
+      },
+    });
+
+    // clean-up (as the documents are only partially formatted)
+    await Promise.all([chatGroup.deleteOne(), question.deleteOne()]);
+  });
+
+  test('should pass when sharing question to chatGroup (as tutor)', async () => {
+    expect.assertions(1);
+
+    const { chatGroup } = genChatGroup(tenantId!, normalUser!._id);
+    const { question, content } = genQuestion(tenantId!, normalUser!._id, { tutor: normalUser!._id });
+    await Promise.all([chatGroup.save(), question.save(), content.save()]);
+    //! Note: at the point, chatGroup.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
+
+    const res = await normalServer!.executeOperation({
+      query: SHARE_QUESTION_TO_CHAT_GROUP,
+      variables: { id: chatGroup._id.toString(), sourceId: question._id.toString() },
+    });
+    apolloExpect(res, 'data', {
       shareQuestionToChatGroup: {
         ...expectedFormat,
         chats: [{ ...expectedChatFormat, contents: [expectedIdFormat, content._id.toString()] }], // first contentId is auto-gen message
@@ -462,7 +485,7 @@ describe('ChatGroup GraphQL', () => {
     const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = normalUsers!.map(u => u._id.toString());
     const ownerServer = normalServer!;
 
-    [url, url2] = await Promise.all([jestPutObject(ownerId!), jestPutObject(ownerId!)]);
+    [url, url2] = await Promise.all([jestPutObject(normalUsers![0]._id), jestPutObject(normalUsers![0]._id)]);
 
     const create = {
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,

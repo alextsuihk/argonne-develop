@@ -32,7 +32,8 @@ const fake = async (count = 10): Promise<string> => {
       (_, idx) =>
         new User<Partial<UserDocument>>({
           name: `publisherAdmin ${idx}`,
-          emails: [faker.internet.email(`publisherAdmin-${idx}`).toUpperCase()],
+          emails: [faker.internet.email({ firstName: `publisherAdmin-${idx}` }).toUpperCase()],
+          password: User.genValidPassword(),
         }),
     );
 
@@ -47,7 +48,7 @@ const fake = async (count = 10): Promise<string> => {
             zhCN: `(CHS-Tenant) ${faker.lorem.sentence(3)}`,
             zhHK: `(CHT-Tenant) ${faker.lorem.sentence(3)}`,
           },
-          phones: [faker.phone.number('+852 8#######')],
+          phones: [`+852 ${faker.number.int({ min: 30000000, max: 30009999 })}`],
           ...(prob(0.5) && { logoUrl: `/${publicBucket}/${publisherLogoFilename}` }),
           ...(prob(0.5) && { website: faker.internet.url() }),
         }),

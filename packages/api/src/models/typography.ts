@@ -4,21 +4,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Locale } from './common';
-import { baseDefinition, localeDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface TypographyDocument extends BaseDocument {
-  key: string;
-  title: Locale;
-  content: Locale;
-  customs: { tenant: Types.ObjectId; title: Locale; content: Locale }[];
-}
+import type { Id } from './common';
+import { baseDefinition, localeSchema } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -30,19 +21,19 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const typographySchema = new Schema<TypographyDocument>(
+const typographySchema = new Schema(
   {
     ...baseDefinition,
 
-    key: String,
-    title: localeDefinition,
-    content: localeDefinition,
+    key: { type: String, required: true },
+    title: { type: localeSchema, required: true },
+    content: { type: localeSchema, required: true },
     customs: [
       {
         _id: false,
-        tenant: { type: Schema.Types.ObjectId, ref: 'Tenant' },
-        title: localeDefinition,
-        content: localeDefinition,
+        tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true },
+        title: { type: localeSchema, required: true },
+        content: { type: localeSchema, required: true },
       },
     ],
   },
@@ -50,5 +41,7 @@ const typographySchema = new Schema<TypographyDocument>(
 );
 
 typographySchema.index({ tenant: 'text', key: 'text' }, { name: 'Search' }); // text search
-const Typography = model<TypographyDocument>('Typography', typographySchema);
+const Typography = model('Typography', typographySchema);
+export type TypographyDocument = InferSchemaType<typeof typographySchema> & Id;
+
 export default Typography;

@@ -16,7 +16,7 @@ import {
   randomItems,
 } from '../../jest';
 import Level from '../../models/level';
-import type { Id, SubjectDocument } from '../../models/subject';
+import type { SubjectDocument } from '../../models/subject';
 import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -26,7 +26,7 @@ const { createUpdateDelete, getMany } = commonTest;
 describe('Subject API Routes', () => {
   const route = 'subjects';
 
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
 
   // expected MINIMUM single subject format
   const expectedMinFormat = {

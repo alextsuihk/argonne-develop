@@ -3,25 +3,16 @@
  *
  */
 
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Member } from './common';
+import type { Id } from './common';
 import { baseDefinition, memberDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface ChatDocument extends BaseDocument {
-  parents: string[];
-  title?: string;
-  members: Member[];
-  contents: Types.ObjectId[];
-}
 
 const { DEFAULTS } = configLoader;
 
-const chatSchema = new Schema<ChatDocument>(
+const chatSchema = new Schema(
   {
     ...baseDefinition,
 
@@ -33,5 +24,6 @@ const chatSchema = new Schema<ChatDocument>(
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const Chat = model<ChatDocument>('Chat', chatSchema);
+const Chat = model('Chat', chatSchema);
+export type ChatDocument = InferSchemaType<typeof chatSchema> & Id;
 export default Chat;

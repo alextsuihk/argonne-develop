@@ -8,7 +8,7 @@ import request from 'supertest';
 
 import app from '../../app';
 import { jestSetup, jestTeardown } from '../../jest';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -18,8 +18,8 @@ const { getByIdNonExisting } = commonTest;
 
 // Top level of this test suite:
 describe('Role API Routes', () => {
-  let adminUser: (UserDocument & Id) | null;
-  let normalUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
+  let normalUser: UserDocument | null;
 
   beforeAll(async () => {
     ({ adminUser, normalUser } = await jestSetup(['admin', 'normal']));

@@ -3,34 +3,25 @@
  *
  */
 
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { Schema } from 'mongoose';
 
-import type { Point } from '../common';
-import { pointSchema } from '../common';
+import { discriminatorKey, pointSchema } from '../common';
 import type { GenericDocument } from './generic';
-import Analytic, { options } from './generic';
+import Analytic from './generic';
 
-export interface SessionAnalyticDocument extends GenericDocument {
-  user: string | Types.ObjectId;
-  fullscreen: boolean;
-  token: string;
-  ua: string;
-  ip: string;
-  location: Point;
-}
-
-const sessionAnalyticSchema = new Schema<SessionAnalyticDocument>(
+const sessionAnalyticSchema = new Schema(
   {
-    user: { type: Schema.Types.ObjectId, ref: 'user', index: true },
-    fullscreen: { type: Boolean, alias: 'fs' },
-    token: String,
-    ua: String,
-    ip: String,
+    user: { type: Schema.Types.ObjectId, ref: 'user', required: true, index: true },
+    fullscreen: { type: Boolean, alias: 'fs', required: true },
+    token: { type: String, required: true },
+    ua: { type: String, required: true },
+    ip: { type: String, required: true },
     location: pointSchema,
   },
-  options,
+  discriminatorKey,
 );
 
-const SessionAnalytic = Analytic.discriminator('SessionAnalytic', sessionAnalyticSchema);
+export type SessionAnalyticDocument = GenericDocument & InferSchemaType<typeof sessionAnalyticSchema>;
+const SessionAnalytic = Analytic.discriminator<SessionAnalyticDocument>('SessionAnalytic', sessionAnalyticSchema);
 export default SessionAnalytic;

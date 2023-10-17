@@ -6,7 +6,8 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import { subDays } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import mongoose, { UpdateQuery } from 'mongoose';
+import type { Types, UpdateQuery } from 'mongoose';
+import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import Book from '../models/book';
@@ -15,12 +16,10 @@ import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
 import Homework from '../models/homework';
 import Level from '../models/level';
-import type { Id, QuestionDocument } from '../models/question';
+import type { QuestionDocument } from '../models/question';
 import Question from '../models/question';
 import Subject from '../models/subject';
-import Tenant from '../models/tenant';
-import type { TutorRankingDocument } from '../models/tutor-ranking';
-import TutorRanking from '../models/tutor-ranking';
+import Tenant, { findSatelliteTenants } from '../models/tenant';
 import User from '../models/user';
 import { mongoId } from '../utils/helper';
 import log from '../utils/log';
@@ -43,7 +42,7 @@ type Action =
   | 'updateRanking'
   | 'updatePrice';
 
-type QuestionDocumentEx = Omit<QuestionDocument & Id, 'contentIdx'> & { contentsToken: string };
+type QuestionDocumentEx = Omit<QuestionDocument, 'contentIdx'> & { contentsToken: string };
 
 type Role = 'student' | 'tutor' | 'bidders' | 'marshals';
 
@@ -68,8 +67,8 @@ const {
 /**
  * (helper) findOne active question
  */
-const findOneQuestion = async (id: string, userId: string, userTenants: string[], roles: Role[]) => {
-  const roleFilter: { [key in Role]?: string }[] = [];
+const findOneQuestion = async (id: string, userId: Types.ObjectId, userTenants: string[], roles: Role[]) => {
+  const roleFilter: { [key in Role]?: Types.ObjectId }[] = [];
   if (roles.includes('student')) roleFilter.push({ student: userId });
   if (roles.includes('tutor')) roleFilter.push({ tutor: userId });
   if (roles.includes('bidders')) roleFilter.push({ bidders: userId });
@@ -84,6 +83,7 @@ const findOneQuestion = async (id: string, userId: string, userTenants: string[]
         deletedAt: { $exists: false },
       }).lean()
     : null;
+
   if (question) return question;
 
   throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
@@ -95,8 +95,8 @@ const findOneQuestion = async (id: string, userId: string, userTenants: string[]
  * note: not everyone needs bids, therefore, populating is done in transform()
  */
 const transform = async (
-  userId: string,
-  { contentIdx, ...question }: QuestionDocument & Id,
+  userId: Types.ObjectId,
+  { contentIdx, ...question }: QuestionDocument,
 ): Promise<QuestionDocumentEx> => {
   const isStudent = [question.student, ...question.marshals].some(u => u.equals(userId)); // either student or marshal
   const isTutor = question.tutor?.equals(userId);
@@ -111,7 +111,7 @@ const transform = async (
     ...question,
     members,
     tutor: !question.tutor || isStudent || isTutor ? question.tutor : question.student, // for bidders' prospective, once tutor is assigned, bidders see tutor = student (hiding tutor identity)
-    bidders: isStudent ? question.bidders : question.bidders.length ? [mongoId(userId)] : [],
+    bidders: isStudent ? question.bidders : question.bidders.length ? [userId] : [],
     bids,
     contents,
     contentsToken: await signContentIds(userId, [...contents, ...bids.map(bid => bid.contents).flat()]),
@@ -137,7 +137,7 @@ const addBidContent = async (req: Request, args: unknown): Promise<QuestionDocum
 
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/questions/${id}/${bidderId}`],
-    creator: mongoId(userId),
+    creator: userId,
     data,
   });
 
@@ -161,7 +161,7 @@ const addBidContent = async (req: Request, args: unknown): Promise<QuestionDocum
       { fields: select(), new: true },
     ).lean(),
     content.save(),
-    censorContent(original.tenant, userId, userLocale, 'questions', id, content._id),
+    censorContent(original.tenant, userId, userLocale, `/questions/${id}`, content._id),
     notifySync(
       original.tenant,
       { userIds: [original.student, ...original.bidders], event: 'QUESTION' },
@@ -210,12 +210,13 @@ const addBidContent = async (req: Request, args: unknown): Promise<QuestionDocum
  */
 const addBidders = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
   const { userId, userTenants } = auth(req);
-  const { id, userIds: newBidderIds } = await idSchema.concat(userIdsSchema).validate(args);
+  const { id, userIds } = await idSchema.concat(userIdsSchema).validate(args);
 
   const original = await findOneQuestion(id, userId, userTenants, ['student']);
-  const newBidders = await User.find({ _id: { $in: newBidderIds }, tenants: original.tenant }, '_id').lean();
+  const newBidders = await User.find({ _id: { $in: userIds }, tenants: original.tenant }, '_id').lean();
+  const newBidderIds = newBidders.map(u => u._id);
 
-  if (original.tutor || !newBidderIds.length || newBidders.length !== newBidderIds.length)
+  if (original.tutor || !newBidderIds.length || userIds.length !== newBidderIds.length)
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const update: UpdateQuery<QuestionDocument> = { $addToSet: { bidders: { $each: newBidders.map(u => u._id) } } };
@@ -259,7 +260,7 @@ const addContent = async (req: Request, args: unknown): Promise<QuestionDocument
 
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/questions/${id}`],
-    creator: mongoId(userId),
+    creator: userId,
     data,
     visibleAfter,
   });
@@ -278,7 +279,7 @@ const addContent = async (req: Request, args: unknown): Promise<QuestionDocument
     Question.findByIdAndUpdate(id, update, { fields: select(), new: true }).lean(),
     // transform(userId, question),
     content.save(),
-    censorContent(original.tenant, userId, userLocale, 'questions', id, content._id),
+    censorContent(original.tenant, userId, userLocale, `/questions/${id}`, content._id),
     notifySync(
       original.tenant,
       { userIds, event: 'QUESTION' },
@@ -350,7 +351,7 @@ const assignTutor = async (req: Request, args: unknown): Promise<QuestionDocumen
   return transformed;
 };
 
-const pay = async (question: QuestionDocument & Id): Promise<QuestionDocument & Id> => {
+const pay = async (question: QuestionDocument): Promise<QuestionDocument> => {
   const transaction = async () => {
     console.log('working transaction');
   };
@@ -438,7 +439,7 @@ const closeByScheduler = async (): Promise<void> => {
         },
       }, // close for free question & question without tutor
     ),
-    Tenant.findSatellites(),
+    findSatelliteTenants('queue'),
   ]);
 
   const update: UpdateQuery<QuestionDocument> = { $addToSet: { flags: QUESTION.FLAG.CLOSED } };
@@ -476,19 +477,20 @@ const closeByScheduler = async (): Promise<void> => {
  */
 const clone = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
   const { userId } = auth(req);
-  const { id, userIds } = await idSchema.concat(userIdsSchema).validate(args);
+  const { id, userIds: uIds } = await idSchema.concat(userIdsSchema).validate(args);
 
   const original = await Question.findOne({ _id: id, student: userId }).lean(); // student could always find even deleted
-  const users = original && (await User.find({ _id: { $in: userIds }, tenants: original.tenant }, '_id').lean());
-  if (!original || !userIds.length || users?.length !== userIds.length)
+  const users = original && (await User.find({ _id: { $in: uIds }, tenants: original.tenant }, '_id').lean());
+  if (!original || !uIds.length || users?.length !== uIds.length)
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const question = new Question<Partial<QuestionDocument & Id>>({
+  const userIds = users.map(u => u._id);
+  const question = new Question<Partial<QuestionDocument>>({
     ...original,
     _id: mongoId(),
     parent: original._id,
     ...(users.length == 1 && users[0] ? { tutor: users[0]._id, bidders: [] } : { bidders: users.map(u => u._id) }),
-    members: [{ user: mongoId(userId), flags: [], lastViewedAt: new Date() }],
+    members: [{ user: userId, flags: [], lastViewedAt: new Date() }],
     contentIdx: original.contents.length,
   });
 
@@ -502,7 +504,7 @@ const clone = async (req: Request, args: unknown): Promise<QuestionDocumentEx> =
       { userIds: [userId, ...userIds], event: 'QUESTION' },
       {
         bulkWrite: {
-          questions: [{ insertOne: { document: question.toObject() } }] satisfies BulkWrite<QuestionDocument>,
+          questions: [{ insertOne: { document: question } }] satisfies BulkWrite<QuestionDocument>,
           contents: [
             { updateMany: { filter: { _id: { $in: original.contents } }, update: contentUpdate } },
           ] satisfies BulkWrite<ContentDocument>,
@@ -524,10 +526,10 @@ const clone = async (req: Request, args: unknown): Promise<QuestionDocumentEx> =
  */
 const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> => {
   const { userFlags, userId, userLocale, userTenants } = auth(req);
-  const { tenantId, userIds, content: data, ...inputFields } = await questionSchema.validate(args);
+  const { tenantId, userIds: uIds, content: data, ...inputFields } = await questionSchema.validate(args);
 
   const [users, book, classroom, homework, level, subject, tenant] = await Promise.all([
-    User.find({ _id: { $in: userIds }, tenants: tenantId }, '_id').lean(),
+    User.find({ _id: { $in: uIds }, tenants: tenantId }, '_id').lean(),
     inputFields.book
       ? Book.exists({ _id: inputFields.book, level: inputFields.level, subjects: inputFields.subject })
       : null,
@@ -539,6 +541,7 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
     Subject.exists({ _id: inputFields.subject, levels: inputFields.level, deletedAt: { $exists: false } }),
     Tenant.findByTenantId(tenantId),
   ]);
+  const userIds = users.map(u => u._id);
 
   if (
     !userTenants.includes(tenantId) ||
@@ -551,8 +554,8 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
   if (
     !Object.keys(QUESTION.LANG).includes(inputFields.lang) ||
     !userIds.length ||
-    userIds.includes(userId) ||
-    userIds.length !== users.length ||
+    userIds.some(u => u.equals(userId)) ||
+    uIds.length !== userIds.length ||
     (inputFields.book && !book) ||
     (inputFields.classroom && !classroom) ||
     (inputFields.homework && !homework) ||
@@ -572,23 +575,20 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
     ...inputFields,
     tenant: tenant._id,
     flags,
-    student: mongoId(userId),
+    student: userId,
     ...(users.length == 1 && users[0] ? { tutor: users[0]._id, bidders: [] } : { bidders: users.map(u => u._id) }),
-    members: [{ user: mongoId(userId), flags: [], lastViewedAt: new Date() }],
+    members: [{ user: userId, flags: [], lastViewedAt: new Date() }],
     classroom: classroom?._id,
     level: level._id,
     subject: subject._id,
     book: book?._id,
-    ...(homework && {
-      assignment:
-        homework.assignment instanceof mongoose.Types.ObjectId ? homework.assignment : homework.assignment._id,
-    }),
+    assignment: homework?.assignment,
     homework: homework?._id,
   });
   const { _id } = question;
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/questions/${_id}`],
-    creator: mongoId(userId),
+    creator: userId,
     data,
   });
   question.contents = [content._id];
@@ -599,13 +599,13 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
     homework && Homework.findByIdAndUpdate(homework, { $push: { questions: _id } }).lean(),
     question.save(),
     content.save(),
-    censorContent(question.tenant, userId, userLocale, 'questions', _id.toString(), content._id),
+    censorContent(question.tenant, userId, userLocale, `/questions/${_id}`, content._id),
     notifySync(
       question.tenant,
       { userIds: [userId, ...userIds], event: 'QUESTION' },
       {
         bulkWrite: {
-          questions: [{ insertOne: { document: question.toObject() } }] satisfies BulkWrite<QuestionDocument>,
+          questions: [{ insertOne: { document: question } }] satisfies BulkWrite<QuestionDocument>,
         },
       },
     ),
@@ -626,7 +626,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 };
 
 // (helper) common code for find(), findMany(), findOne()
-const findCommon = async (userId: string, args: unknown, getOne = false) => {
+const findCommon = async (userId: Types.ObjectId, args: unknown, getOne = false) => {
   const { id, query } = getOne
     ? await idSchema.concat(querySchema).validate(args)
     : { ...(await querySchema.validate(args)), id: null };
@@ -889,13 +889,6 @@ const updateRanking = async (req: Request, args: unknown): Promise<QuestionDocum
   ).lean();
   if (!question) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const { tenant, tutor, lang, level, subject } = question;
-  const tutorRanking = await TutorRanking.findOneAndUpdate(
-    { tenant, tutor, student: userId, question: id },
-    { tenant, tutor, student: userId, question: id, lang, level, subject, correctness, explicitness, punctuality },
-    { fields: '_id', upsert: true, new: true },
-  ).lean();
-
   const [transformed] = await Promise.all([
     transform(userId, question),
     notifySync(
@@ -904,7 +897,6 @@ const updateRanking = async (req: Request, args: unknown): Promise<QuestionDocum
       {
         bulkWrite: {
           questions: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<QuestionDocument>,
-          tutorRanking: [{ insertOne: { document: tutorRanking } }] satisfies BulkWrite<TutorRankingDocument>,
         },
       },
     ),

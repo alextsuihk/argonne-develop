@@ -7,14 +7,12 @@
 
 import { LOCALE } from '@argonne/common';
 import { addDays } from 'date-fns';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
 
 //! TODO: add calculatedPriority
 // const probability = balance / Math.ceil((endAt - beginAt)/1000/60*60*24) / (0.9 * cpv + 0.1 * cpc) / audiences / dailyLimit * 100
@@ -22,69 +20,6 @@ export type { Id } from './common';
 // probability = 100: should be about to push $dailyLimit times to each push targetUser
 // probability = 50%: targetUser would have 50% chance to view ${dailyLimit} times per day
 // The optimal probability should be 100%
-
-export interface AdvertisementDocument extends BaseDocument {
-  status: (typeof LOCALE.DB_TYPE.ADVERTISEMENT.STATUS)[number];
-
-  owner: Types.ObjectId;
-  title: string;
-
-  beginAt: Date;
-  endAt: Date;
-
-  position: 'top-banner' | 'side-rect' | 'modal';
-  media: string;
-  dimension: string;
-  clickUrl: string; // either redirect to another URL, or return a minio url (PDF or PNG, MP4)
-  frequency: number;
-
-  categories: (typeof LOCALE.DB_TYPE.ADVERTISEMENT.CATEGORY)[number][];
-  targetAge: { min: number; max: number };
-  targets: string[];
-
-  dailyLimit: number;
-  cpv: number;
-  cpc: number;
-  cpa: number;
-
-  balance: number;
-
-  audiences: Types.ObjectId[]; // targeted audiences
-
-  // TODO: break out views/clicks/coupon to AdvertisementEvent (generic)
-  views: {
-    user: Types.ObjectId;
-    viewedAt: Date;
-    ip: string;
-    ua: string;
-    amount: number;
-    createdAt: Date;
-  }[];
-
-  clicks: {
-    user: Types.ObjectId;
-    clickedAt: Date;
-    ip: string;
-    ua: string;
-    amount: number;
-    createdAt: Date;
-  }[];
-
-  coupons: {
-    code: string;
-    user: Types.ObjectId;
-    issuedAt: Date;
-    expireAt: Date;
-    ip: string;
-    ua: string;
-    amount: number;
-    redeemedAt: Date;
-  }[];
-
-  approvedAt: Date;
-  approvedBy: Types.ObjectId;
-  settledAt: Date;
-}
 
 const { ADVERTISEMENT, SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -96,32 +31,31 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const advertisementSchema = new Schema<AdvertisementDocument>(
+const advertisementSchema = new Schema(
   {
     ...baseDefinition,
 
-    status: { type: String, default: ADVERTISEMENT.STATUS.SUBMITTED },
+    status: { type: String, enum: LOCALE.DB_TYPE.ADVERTISEMENT.STATUS, default: ADVERTISEMENT.STATUS.SUBMITTED },
 
-    owner: { type: Schema.Types.ObjectId, ref: 'User', index: true },
-    title: String,
+    owner: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    title: { type: String, required: true },
 
     beginAt: { type: Date, default: Date.now },
-    endAt: { type: Date, default: addDays(Date.now(), DEFAULTS.ADVERTISEMENT.RUNNING_DAYS) },
+    endAt: { type: Date, default: () => addDays(Date.now(), DEFAULTS.ADVERTISEMENT.RUNNING_DAYS) },
 
-    position: String,
-    media: String,
-    dimension: String,
-    clickUrl: String, // URL redirect link
-    frequency: Number,
+    position: { type: String, enum: ['top-banner', 'side-rect', 'modal'], required: true },
+    media: { type: String, required: true },
+    dimension: { type: String, required: true },
+    clickUrl: { type: String, required: true }, // URL redirect link
 
-    categories: [String],
-    targetAge: { min: Number, max: Number },
+    categories: [{ type: String, enum: LOCALE.DB_TYPE.ADVERTISEMENT.CATEGORY }],
+    targetAge: { min: { type: Number, required: true }, max: { type: Number, required: true } },
     targets: [String],
 
-    dailyLimit: { type: Number, default: 1 }, // limit number of views per user (per device)
-    cpv: Number,
-    cpc: Number,
-    cpa: Number,
+    frequency: { type: Number, default: 1 }, // limit number of views per user (per device)
+    cpv: { type: Number, default: 0 },
+    cpc: { type: Number, default: 0 },
+    cpa: { type: Number, default: 0 },
 
     balance: { type: Number, default: 0 },
 
@@ -129,33 +63,33 @@ const advertisementSchema = new Schema<AdvertisementDocument>(
 
     views: [
       {
-        user: { type: Schema.Types.ObjectId, ref: 'User' },
+        user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         viewedAt: { type: Date, default: Date.now },
-        ip: String,
-        ua: String,
-        amount: Number,
+        ip: { type: String, required: true },
+        ua: { type: String, required: true },
+        amount: { type: Number, required: true },
         createdAt: { type: Date, default: Date.now },
       },
     ],
 
     clicks: [
       {
-        user: { type: Schema.Types.ObjectId, ref: 'User' },
+        user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         clickedAt: { type: Date, default: Date.now },
-        ip: String,
-        ua: String,
-        amount: Number,
+        ip: { type: String, required: true },
+        ua: { type: String, required: true },
+        amount: { type: Number, required: true },
         createdAt: { type: Date, default: Date.now },
       },
     ],
     coupons: [
       {
         code: String,
-        user: { type: Schema.Types.ObjectId, ref: 'User' },
+        user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         issuedAt: { type: Date, default: Date.now },
-        ip: String,
-        ua: String,
-        amount: Number,
+        ip: { type: String, required: true },
+        ua: { type: String, required: true },
+        amount: { type: Number, required: true },
         redeemedAt: Date,
       },
     ],
@@ -170,5 +104,6 @@ const advertisementSchema = new Schema<AdvertisementDocument>(
 );
 
 advertisementSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const Advertisement = model<AdvertisementDocument>('Advertisement', advertisementSchema);
+const Advertisement = model('Advertisement', advertisementSchema);
+export type AdvertisementDocument = InferSchemaType<typeof advertisementSchema> & Id;
 export default Advertisement;

@@ -4,34 +4,27 @@
  *
  */
 
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface ReferralDocument extends BaseDocument {
-  user: Types.ObjectId;
-  email: string;
-}
 
 const { DEFAULTS } = configLoader;
 
-const referralSchema = new Schema<ReferralDocument>(
+const referralSchema = new Schema(
   {
     ...baseDefinition,
 
-    user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
-    email: String,
+    user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    email: { type: String, required: true },
 
-    updatedAt: { type: Date, expires: DEFAULTS.MONGOOSE.EXPIRES.REFERRAL },
+    updatedAt: { type: Date, default: Date.now, expires: DEFAULTS.MONGOOSE.EXPIRES.REFERRAL },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const Referral = model<ReferralDocument>('Referral', referralSchema);
-
+const Referral = model('Referral', referralSchema);
+export type ReferralDocument = InferSchemaType<typeof referralSchema> & Id;
 export default Referral;

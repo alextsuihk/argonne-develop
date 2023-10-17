@@ -5,6 +5,7 @@
 
 import { CONTENT_PREFIX } from '@argonne/common';
 
+import type { BookDocumentEx } from '../../controllers/book';
 import {
   expectedContributionFormat,
   expectedDateFormat,
@@ -19,13 +20,12 @@ import {
   prob,
   randomItem,
 } from '../../jest';
-import type { BookAssignmentDocument, BookDocument } from '../../models/book';
 import Book, { BookAssignment } from '../../models/book';
 import Level from '../../models/level';
 import Publisher from '../../models/publisher';
 import School from '../../models/school';
 import Subject from '../../models/subject';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { createUpdateDelete, getMany, getById } = commonTest;
@@ -33,8 +33,8 @@ const route = 'books';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: (UserDocument & Id) | null;
-  let normalUsers: (UserDocument & Id)[] | null;
+  let adminUser: UserDocument | null;
+  let normalUsers: UserDocument[] | null;
   let url: string | undefined;
 
   // expected MINIMUM single book format
@@ -166,7 +166,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     };
 
     // create, addRemark, (teacher) join bookChat, addRevision, addAssignment, addSupplement
-    const book = await createUpdateDelete<BookDocument & Id>(
+    const book = await createUpdateDelete<BookDocumentEx>(
       route,
       { 'Jest-User': adminUser!._id },
       [
@@ -258,18 +258,18 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const created = await Book.findById(book!._id).lean();
     const revisionId = created!.revisions[0]._id.toString();
-    const assignmentId = (created!.assignments[0] as BookAssignmentDocument & Id)._id.toString();
+    const assignmentId = created!.assignments[0].toString();
     const supplementId = created!.supplements[0]._id.toString();
     url = await jestPutObject(adminUser!._id);
 
     // addRevisionImage, removeRevisionImage, removeRevision, removeAssignment, removeSupplement & delete
-    await createUpdateDelete<BookDocument>(
+    await createUpdateDelete<BookDocumentEx>(
       route,
       { 'Jest-User': adminUser!._id },
       [
         {
           action: 'addRevisionImage',
-          data: { revisionId, url },
+          data: { subId: revisionId, url },
           expectedMinFormat: {
             ...expectedMinFormat,
             revisions: [expect.objectContaining({ ...expectedRevMinFormat, ...revision, imageUrls: [url] })],
@@ -277,7 +277,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         },
         {
           action: 'removeRevisionImage',
-          data: { revisionId, url },
+          data: { subId: revisionId, url },
           expectedMinFormat: {
             ...expectedMinFormat,
             revisions: [
@@ -291,7 +291,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         },
         {
           action: 'removeRevision',
-          data: { revisionId, ...(prob(0.5) && { remark: FAKE2 }) },
+          data: { subId: revisionId, ...(prob(0.5) && { remark: FAKE2 }) },
           expectedMinFormat: {
             ...expectedMinFormat,
             revisions: [expect.objectContaining({ ...expectedRevMinFormat, deletedAt: expectedDateFormat() })], // isbn is removed
@@ -299,7 +299,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         },
         {
           action: 'removeAssignment',
-          data: { assignmentId, ...(prob(0.5) && { remark: FAKE }) },
+          data: { subId: assignmentId, ...(prob(0.5) && { remark: FAKE }) },
           expectedMinFormat: {
             ...expectedMinFormat,
             assignments: [expect.objectContaining({ ...expectedAssignmentMinFormat, deletedAt: expectedDateFormat() })],
@@ -307,7 +307,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         },
         {
           action: 'removeSupplement',
-          data: { supplementId, ...(prob(0.5) && { remark: FAKE2 }) },
+          data: { subId: supplementId, ...(prob(0.5) && { remark: FAKE2 }) },
           expectedMinFormat: {
             ...expectedMinFormat,
             supplements: [expect.objectContaining({ ...expectedSupplementMinFormat, deletedAt: expectedDateFormat() })],

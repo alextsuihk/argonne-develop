@@ -15,16 +15,13 @@ import chalk from 'chalk';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { MigrationDocument } from '../models/migration';
 import Migration from '../models/migration';
 import User from '../models/user';
 import { isProdMode } from '../utils/environment';
 import type { BucketItem } from '../utils/storage';
-import { buckets } from '../utils/storage';
-import { client as minioClient, REGION } from '../utils/storage';
+import { buckets, client as minioClient, REGION } from '../utils/storage';
 
 const { config } = configLoader;
-const { privateBucket, publicBucket } = config.server.minio;
 
 const seeders = [
   'avatar',
@@ -58,7 +55,7 @@ const factory = (argv: string[]) =>
         ['typography', [], 0.4],
         ['user', [], 25, 20, 50, 10],
         ['book', 200, 3, 10, 5], // after user-factory (because of contribution), before school-course
-        ['tutor', [], 0.2, 3],
+        ['tutor', [], 0.2],
         ['school-course', [], 2],
         ['chat-group', [], 5, 4, 4],
         ['classroom', [], 3, 5, 5],
@@ -96,8 +93,8 @@ const sync = async (argv: string[]): Promise<void> => {
         const objectNames: string[] = [];
 
         await new Promise((resolve, reject) => {
-          const stream = minioClient.listObjectsV2(bucketName);
-          stream.on('data', (obj: BucketItem) => objectNames.push(obj.name));
+          const stream = minioClient.listObjectsV2(bucketName, '', true, '');
+          stream.on('data', (obj: BucketItem) => obj.name && objectNames.push(obj.name));
           stream.on('end', resolve);
           stream.on('error', reject);
         });
@@ -110,7 +107,7 @@ const sync = async (argv: string[]): Promise<void> => {
       };
 
       console.log('------------------------------------------------------------ ');
-      console.log(chalk.red(`All minio buckets are re-created !!! (${privateBucket}, ${publicBucket}) \n`));
+      console.log(chalk.red(`All minio buckets are re-created !!! (${buckets}) \n`));
       await Promise.all(
         buckets.map(async bucket =>
           (await minioClient.bucketExists(bucket))
@@ -179,39 +176,41 @@ const sync = async (argv: string[]): Promise<void> => {
     if (argv.includes('--migrate')) {
       console.log('------------------------------------------------------------ ');
 
-      const migrated = await Migration.find();
+      const migrations = await Migration.find({ migratedAt: { $exists: false } }).lean();
       const migratedFiles: string[] = [];
 
       const files = await fsPromises.readdir(path.join(__dirname, 'migration'), { withFileTypes: true });
-      for (const file of files) {
-        // migrate if it is not done so
-        if (!migrated.find(m => m.file === file.name)) {
+      const fileNames = files.map(f => f.name);
+
+      for (const migration of migrations) {
+        if (fileNames.includes(migration.file)) {
           try {
             // const message = await require(`./migration/${file.name}`).proceed();
-            const message = await (await import(`./migration/${file.name}`)).proceed();
+            const message = await (await import(`./migration/${migration.file}`)).proceed();
 
-            console.log(`migration > ${file.name} complete >> ${message}`);
-            await Migration.create<Partial<MigrationDocument>>({ file: file.name });
-            migratedFiles.push(file.name);
+            console.log(`migration > ${migration.file} complete >> ${message}`);
+            await Migration.updateOne({ _id: migration._id }, { migratedAt: new Date() });
+            migratedFiles.push(migration.file);
           } catch (error) {
             console.error(
-              `${chalk.red('FAIL to migrate')} ${file.name}. ${chalk.yellow('Trying to roll back')}:`,
+              `${chalk.red('FAIL to migrate')} ${migration.file}. ${chalk.yellow('Trying to roll back')}:`,
               error,
             );
 
             try {
-              // const message = await require(`./migration/${file.name}`).rollback();
-              const message = await (await import(`./migration/${file.name}`)).rollback();
+              // const message = await require(`./migration/${migration.file}`).rollback();
+              const message = await (await import(`./migration/${migration.file}`)).rollback();
 
-              console.log(`migration > ${file.name} ${chalk.red('RESTORED')} >> ${message}`);
-              throw `Error in Migration (rollback successful) ${file.name}`;
+              console.log(`migration > ${migration.file} ${chalk.red('RESTORED')} >> ${message}`);
+              throw `Error in Migration (rollback successful) ${migration.file}`;
             } catch (error) {
-              console.error(`${chalk.red('ERROR in migration ROLL-BACK')} ${file.name}: `, error);
-              throw `Error in Migration (fail to rollback) ${file.name}`;
+              console.error(`${chalk.red('ERROR in migration ROLL-BACK')} ${migration.file}: `, error);
+              throw `Error in Migration (fail to rollback) ${migration.file}`;
             }
           }
         }
       }
+
       console.log(chalk.green(`Migration >>> success:  (${migratedFiles.length}) ${migratedFiles}   \n`));
     }
   } catch (error) {

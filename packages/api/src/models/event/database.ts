@@ -3,54 +3,32 @@
  *
  */
 
-import type { Model, Types } from 'mongoose';
+import type { InferSchemaType, Model, Types } from 'mongoose';
 import { Schema } from 'mongoose';
 
-import type { Id } from '../common';
+import { discriminatorKey } from '../common';
 import type { GenericDocument } from './generic';
-import Generic, { options } from './generic';
+import Generic from './generic';
 
-export interface DatabaseEventDocument extends GenericDocument {
-  user?: string | Types.ObjectId;
-  jobId?: string; // jobId issued by satellite-sync sender
-  link: string;
-  action: string;
-  data?: unknown;
-}
-
-type Log = (
-  user: string | Types.ObjectId | null,
-  link: string,
-  action: string,
-  data?: unknown,
-  jobId?: string,
-) => Promise<DatabaseEventDocument & Id>;
+type Log = (user: Types.ObjectId | null, link: string, action: string, data: unknown) => Promise<DatabaseEventDocument>;
 
 interface DatabaseEventModel extends Model<DatabaseEventDocument> {
   log: Log;
 }
 
-const databaseEventSchema = new Schema<DatabaseEventDocument>(
+const databaseEventSchema = new Schema(
   {
-    user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
-    jobId: String,
-    link: String,
-    action: String,
-    data: Schema.Types.Mixed,
+    link: { type: String, required: true },
+    action: { type: String, required: true },
+    data: { type: Schema.Types.Mixed, required: true },
   },
-  options,
+  discriminatorKey,
 );
 
-const log: Log = (user, link, action, data, jobId) =>
-  DatabaseEvent.create<Partial<DatabaseEventDocument>>({
-    ...(user && { user }),
-    ...(jobId && { jobId }),
-    link,
-    action,
-    data,
-  });
+const log: Log = (user, link, action, data) => DatabaseEvent.create({ ...(user && { user }), link, action, data });
 databaseEventSchema.static('log', log);
 
+type DatabaseEventDocument = GenericDocument & InferSchemaType<typeof databaseEventSchema>;
 const DatabaseEvent = Generic.discriminator<DatabaseEventDocument, DatabaseEventModel>(
   'DatabaseEvent',
   databaseEventSchema,

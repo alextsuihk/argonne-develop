@@ -7,37 +7,27 @@
  *  our strategy is: indexing tokenExp or user, then query token
  */
 
-import type { Document, Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-
-export interface TokenDocument extends Document {
-  user: Types.ObjectId;
-  token: string;
-  expireAt: Date;
-  authUser: string | Types.ObjectId;
-  ip: string;
-  ua: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
+import type { Id } from './common';
 
 const { DEFAULTS } = configLoader;
 
-const tokenSchema = new Schema<TokenDocument>(
+const tokenSchema = new Schema(
   {
-    user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
-    token: String, // ! (accessToken) JWT is too long to be indexed
-    expireAt: { type: Date, expires: 5 }, // auto delete expireAt + 5 seconds
+    user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    token: { type: String, required: true }, // ! (accessToken) JWT is too long to be indexed
+    expireAt: { type: Date, required: true, expires: 5 }, // auto delete expireAt + 5 seconds
 
     authUser: { type: Schema.Types.ObjectId, ref: 'User' }, // original auth User in case of impersonated,
-    ip: String,
-    ua: String,
+    ip: { type: String, required: true },
+    ua: { type: String, required: true },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const Token = model<TokenDocument>('Token', tokenSchema);
-
+const Token = model('Token', tokenSchema);
+export type TokenDocument = InferSchemaType<typeof tokenSchema> & Id;
 export default Token;

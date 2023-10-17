@@ -13,7 +13,7 @@ import configLoader from '../config/config-loader';
 import District from '../models/district';
 import DatabaseEvent from '../models/event/database';
 import Level from '../models/level';
-import type { Id, SchoolDocument } from '../models/school';
+import type { SchoolDocument } from '../models/school';
 import School, { searchableFields } from '../models/school';
 import { messageToAdmins } from '../utils/chat';
 import { randomString } from '../utils/helper';
@@ -54,7 +54,7 @@ const validateInputs = async ({ school }: SchoolSchema) => {
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<SchoolDocument & Id> => {
+const addRemark = async (req: Request, args: unknown): Promise<SchoolDocument> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -74,7 +74,7 @@ const addRemark = async (req: Request, args: unknown): Promise<SchoolDocument & 
 /**
  * Create New School
  */
-const create = async (req: Request, args: unknown): Promise<SchoolDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<SchoolDocument> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req, 'ADMIN');
   const { school: inputFields } = await schoolSchema.validate(args);
@@ -107,7 +107,7 @@ const create = async (req: Request, args: unknown): Promise<SchoolDocument & Id>
     messageToAdmins(msg, userId, userLocale, true),
     DatabaseEvent.log(userId, `/schools/${_id}`, 'CREATE', { args }),
     syncToAllSatellites({
-      bulkWrite: { schools: [{ insertOne: { document: school.toObject() } }] satisfies BulkWrite<SchoolDocument> },
+      bulkWrite: { schools: [{ insertOne: { document: school } }] satisfies BulkWrite<SchoolDocument> },
       ...(inputFields.logoUrl && {
         minio: { serverUrl: config.server.minio.serverUrl, addObjects: [inputFields.logoUrl] },
       }),
@@ -131,7 +131,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple Schools (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<(SchoolDocument & Id)[]> => {
+const find = async (req: Request, args: unknown): Promise<SchoolDocument[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<SchoolDocument>(searchableFields, { query });
@@ -163,7 +163,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One School by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<(SchoolDocument & Id) | null> => {
+const findOne = async (req: Request, args: unknown): Promise<SchoolDocument | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<SchoolDocument>(searchableFields, { query }, { _id: id });
@@ -248,7 +248,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update School
  */
-const update = async (req: Request, args: unknown): Promise<SchoolDocument & Id> => {
+const update = async (req: Request, args: unknown): Promise<SchoolDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { id, school: inputFields } = await idSchema.concat(schoolSchema).validate(args);

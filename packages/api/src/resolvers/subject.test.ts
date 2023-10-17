@@ -25,7 +25,7 @@ import {
 } from '../jest';
 import Level from '../models/level';
 import Subject from '../models/subject';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import {
   ADD_SUBJECT,
   ADD_SUBJECT_REMARK,
@@ -40,7 +40,7 @@ const { MSG_ENUM } = LOCALE;
 // Top subject of this test suite:
 describe('Subject GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
 

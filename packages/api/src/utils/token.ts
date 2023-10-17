@@ -7,28 +7,24 @@ import { LOCALE } from '@argonne/common';
 import { addSeconds } from 'date-fns';
 import jwt from 'jsonwebtoken';
 import type { Types } from 'mongoose';
+import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import type { TokenDocument } from '../models/token';
 import Token from '../models/token';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import { latestSchoolHistory, randomString } from './helper';
 import { notifySync } from './notify-sync';
 
-type ApiPayload = {
-  userId: string;
-  scope: string;
-};
 export type Auth = {
   userExtra?: ReturnType<typeof latestSchoolHistory>; // UserDocument['schoolHistories'][number] | { school: string; level: string };
   userFlags: string[];
-  userId: string;
+  userId: Types.ObjectId;
   userLocale: string;
   userName: string;
   userRoles: string[];
-  userScopes: string[];
   userTenants: string[];
-  authUserId?: string;
+  authUserId?: Types.ObjectId;
 };
 
 type Extra = {
@@ -36,7 +32,7 @@ type Extra = {
   ua: string;
   isPublic?: boolean;
   expiresIn?: number;
-  authUserId?: string;
+  authUserId?: Types.ObjectId;
   force?: boolean;
 };
 
@@ -55,13 +51,17 @@ const { MSG_ENUM } = LOCALE;
 const { config, DEFAULTS } = configLoader;
 const { jwtSecret } = config;
 
-export const REFRESH_TOKEN = 'REFRESH_TOKEN';
+export const API_KEY_TOKEN_PREFIX = 'API_KEY';
+export const EMAIL_TOKEN_PREFIX = 'EMAIL';
+export const PASSWORD_TOKEN_PREFIX = 'PASSWORD';
+export const REFRESH_TOKEN_PREFIX = 'REFRESH';
+export const TENANT_BINDING_TOKEN_PREFIX = 'TENANT_BINDING';
 
 /**
  * Create Access & Refresh Tokens
  */
-const createTokens = async (user: UserDocument & Id, extra: Extra): Promise<TokensResponseSuccessful> => {
-  const { _id, flags, schoolHistories, locale, name, roles, scopes, tenants } = user;
+const createTokens = async (user: UserDocument, extra: Extra): Promise<TokensResponseSuccessful> => {
+  const { _id, flags, schoolHistories, locale, name, roles, tenants } = user;
   const { ip, ua, isPublic, expiresIn, authUserId } = extra;
 
   // generate access & refresh token
@@ -73,12 +73,11 @@ const createTokens = async (user: UserDocument & Id, extra: Extra): Promise<Toke
   const refreshTokenExpireAt = addSeconds(Date.now(), refreshExpiresIn - 5); // reduce 5-seconds for safety
 
   const payload: AuthPayload = {
-    userId: _id.toString(),
+    userId: _id,
     userFlags: flags,
     userLocale: locale,
     userName: name,
     userRoles: roles,
-    userScopes: scopes,
     userTenants: tenants.map(t => t.toString()),
     userExtra: latestSchoolHistory(schoolHistories),
     authUserId,
@@ -88,7 +87,7 @@ const createTokens = async (user: UserDocument & Id, extra: Extra): Promise<Toke
 
   const [accessToken, refreshToken] = await Promise.all([
     sign(payload, accessExpiresIn),
-    signStrings([REFRESH_TOKEN, _id.toString(), randomString()], refreshExpiresIn), // additional randomString() primarily for JEST testing
+    signStrings([REFRESH_TOKEN_PREFIX, _id.toString(), randomString()], refreshExpiresIn), // additional randomString() primarily for JEST testing
   ]);
 
   return { accessToken, accessTokenExpireAt, refreshToken, refreshTokenExpireAt };
@@ -98,13 +97,14 @@ const createTokens = async (user: UserDocument & Id, extra: Extra): Promise<Toke
  * Generate tokens (access + refresh)
  */
 type Generate = {
-  <T extends boolean>(user: UserDocument & Id, extra: Omit<Extra, 'force'> & { force: T }): Promise<
-    T extends true ? TokensResponseSuccessful : TokensResponseSuccessful | TokensResponseConflict
-  >;
-  (user: UserDocument & Id, extra: Extra): Promise<TokensResponseSuccessful | TokensResponseConflict>;
+  <T extends boolean>(
+    user: UserDocument,
+    extra: Omit<Extra, 'force'> & { force: T },
+  ): Promise<T extends true ? TokensResponseSuccessful : TokensResponseSuccessful | TokensResponseConflict>;
+  (user: UserDocument, extra: Extra): Promise<TokensResponseSuccessful | TokensResponseConflict>;
 };
 
-const generate: Generate = async (user: UserDocument & Id, extra: Extra) => {
+const generate: Generate = async (user: UserDocument, extra: Extra) => {
   const { ip, ua, authUserId, force } = extra;
   try {
     // if exceed maxLogin, void (kick out) old tokens
@@ -136,14 +136,14 @@ const generate: Generate = async (user: UserDocument & Id, extra: Extra) => {
         expireAt: refreshTokenExpireAt,
         ip,
         ua,
-        authUser: authUserId,
+        ...(authUserId && { authUser: authUserId }),
       }),
       differentIp && revokeOthers(user._id, refreshToken),
       differentIp &&
         notifySync(
           user.tenants[0] || null,
           { userIds: [user._id], event: 'AUTH-RENEW-TOKEN' },
-          { extra: { revokeAllTokensByUserId: user._id.toString() } },
+          { extra: { revokeAllTokensByUserId: user._id } },
         ), // force other clients to renew (logout), also kick out in satellite
     ]);
 
@@ -158,15 +158,9 @@ const generate: Generate = async (user: UserDocument & Id, extra: Extra) => {
 };
 
 /**
- * Generate API-Key tokens
- */
-const generateApi = async (payload: ApiPayload, expiresIn: number | string): Promise<string> =>
-  sign(payload, expiresIn);
-
-/**
  * List valid token of an user
  */
-const list = async (userId: string | Types.ObjectId): Promise<TokenDocument[]> => {
+const list = async (userId: Types.ObjectId): Promise<TokenDocument[]> => {
   try {
     const select = '_id authUser ip ua updatedAt';
     return Token.find({ user: userId, expireAt: { $gte: new Date() } }, select, { sort: { createdAt: 1 } }).lean();
@@ -183,11 +177,7 @@ const list = async (userId: string | Types.ObjectId): Promise<TokenDocument[]> =
  * Renew Access Token (also renew refreshToken)
  * if refreshToken is still valid, generate new accessToken AND refreshToken, and update Token collection
  */
-const renew = async (
-  user: UserDocument & Id,
-  oldRefreshToken: string,
-  extra: Extra,
-): Promise<TokensResponseSuccessful> => {
+const renew = async (user: UserDocument, oldRefreshToken: string, extra: Extra): Promise<TokensResponseSuccessful> => {
   try {
     // TODO: if userAgent not match Token document, throw error for re-login
     // generate access & refresh tokens
@@ -214,7 +204,7 @@ const renew = async (
  * Revoke All
  * logout all other devices
  */
-const revokeAll = async (userId: string | Types.ObjectId): Promise<void> => {
+const revokeAll = async (userId: Types.ObjectId): Promise<void> => {
   try {
     await Token.deleteMany({ user: userId });
   } catch (error) {
@@ -230,7 +220,7 @@ const revokeAll = async (userId: string | Types.ObjectId): Promise<void> => {
  * Revoke Current Token
  * ( Destroy this Session )
  */
-const revokeCurrent = async (userId: string | Types.ObjectId, refreshToken: string): Promise<void> => {
+const revokeCurrent = async (userId: Types.ObjectId, refreshToken: string): Promise<void> => {
   try {
     await Token.deleteOne({ user: userId, token: refreshToken });
   } catch (error) {
@@ -246,7 +236,7 @@ const revokeCurrent = async (userId: string | Types.ObjectId, refreshToken: stri
  * Revoke All Others JWT
  * (Destroy other Sessions except current token)
  */
-const revokeOthers = async (userId: string | Types.ObjectId, refreshToken: string): Promise<number> => {
+const revokeOthers = async (userId: Types.ObjectId, refreshToken: string): Promise<number> => {
   try {
     const { deletedCount } = await Token.deleteMany({ user: userId, token: { $ne: refreshToken } });
     return deletedCount;
@@ -263,7 +253,7 @@ const revokeOthers = async (userId: string | Types.ObjectId, refreshToken: strin
  * Sign Token (with optional expiresIn)
  */
 const sign = async (
-  payload: ApiPayload | AuthPayload | StringPayload,
+  payload: AuthPayload | StringPayload,
   expiresIn: number | string,
   secret = jwtSecret,
 ): Promise<string> =>
@@ -276,7 +266,7 @@ const sign = async (
 /**
  * Sign String[]
  */
-const signStrings = async (payload: string[], expiresIn: number | string): Promise<string> =>
+const signStrings = async (payload: (string | Types.ObjectId)[], expiresIn: number | string): Promise<string> =>
   sign({ data: payload.join('#') }, expiresIn);
 
 /**
@@ -303,20 +293,11 @@ const verify = async <T>(token: string, isDecodeAuth = false): Promise<T> =>
   );
 
 /**
- * Decode Api Token
- */
-const verifyApi = async (token: string): Promise<ApiPayload> => {
-  const decoded = await verify<ApiPayload>(token);
-  if (typeof decoded === 'object' && decoded.userId) return decoded;
-  throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
-};
-
-/**
  * Decode Auth Token
  */
 const verifyAuth = async (token: string): Promise<Auth> => {
   const decoded = await verify<Auth>(token, true);
-  if (typeof decoded === 'object' && decoded.userId) return decoded;
+  if (typeof decoded === 'object' && mongoose.isObjectIdOrHexString(decoded.userId)) return decoded;
   throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 };
 
@@ -334,7 +315,6 @@ const verifyStrings = async (token: string): Promise<string[]> => {
 export default {
   createTokens,
   generate,
-  generateApi,
   list,
   renew,
   revokeAll,
@@ -344,6 +324,5 @@ export default {
   signStrings,
   verify,
   verifyStrings,
-  verifyApi,
   verifyAuth,
 };

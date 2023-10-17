@@ -4,35 +4,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Locale, Point } from './common';
-import { baseDefinition, localeDefinition, pointSchema } from './common';
-
-export type { Id } from './common';
-
-export interface SchoolDocument extends BaseDocument {
-  code: string;
-  name: Locale;
-
-  address?: Locale;
-  district: Types.ObjectId;
-  location?: Point;
-
-  phones: string[];
-  emi?: boolean;
-  band: string;
-
-  logoUrl?: string;
-  website?: string;
-
-  funding: string;
-  gender: string;
-  religion: string;
-  levels: Types.ObjectId[];
-}
+import type { Id } from './common';
+import { baseDefinition, localeSchema, pointSchema } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -44,20 +21,20 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const schoolSchema = new Schema<SchoolDocument>(
+const schoolSchema = new Schema(
   {
     ...baseDefinition,
 
-    code: { type: String, uppercase: true, unique: true },
-    name: localeDefinition,
+    code: { type: String, uppercase: true, unique: true, required: true },
+    name: { type: localeSchema, required: true },
 
-    address: localeDefinition,
-    district: { type: Schema.Types.ObjectId, ref: 'District' },
+    address: { type: localeSchema },
+    district: { type: Schema.Types.ObjectId, ref: 'District', required: true },
     location: pointSchema,
 
     phones: [String],
     emi: Boolean, // English as Medium of Instruction School (英中)
-    band: String,
+    band: { type: String },
 
     logoUrl: String,
     website: String,
@@ -72,5 +49,6 @@ const schoolSchema = new Schema<SchoolDocument>(
 );
 
 schoolSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const School = model<SchoolDocument>('School', schoolSchema);
+const School = model('School', schoolSchema);
+export type SchoolDocument = InferSchemaType<typeof schoolSchema> & Id;
 export default School;

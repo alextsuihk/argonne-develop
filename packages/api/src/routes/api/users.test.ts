@@ -20,7 +20,7 @@ import {
 } from '../../jest';
 import School from '../../models/school';
 import Tenant from '../../models/tenant';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import { schoolYear } from '../../utils/helper';
 import commonTest from './rest-api-test';
@@ -33,10 +33,10 @@ const route = 'users';
 
 // Top level of this test suite:
 describe('User API Routes', () => {
-  let adminUser: (UserDocument & Id) | null;
-  let normalUser: (UserDocument & Id) | null;
-  let rootUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
+  let normalUser: UserDocument | null;
+  let rootUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantId: string | null;
 
   const expectedFormat = {
@@ -92,7 +92,7 @@ describe('User API Routes', () => {
     const nonSchoolTenant = await Tenant.findOne({ school: { $exists: false } }).lean();
     if (!nonSchoolTenant) throw 'Non-school tenant is required to proceed';
 
-    const admin = genUser(nonSchoolTenant._id);
+    const admin = genUser(nonSchoolTenant._id.toString());
     await Promise.all([
       admin.save(),
       Tenant.findByIdAndUpdate(nonSchoolTenant._id, { $addToSet: { admins: admin._id } }).lean(),
@@ -168,7 +168,7 @@ describe('User API Routes', () => {
     const { emails, name } = genUser(null);
     const create = { tenantId, email: emails[0]!, name, ...(prob(0.5) && { studentId: FAKE }) };
 
-    const user = await createUpdateDelete<UserDocument & Id>(route, { 'Jest-User': tenantAdmin!._id }, [
+    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
       {
         action: 'create',
         data: create,
@@ -190,7 +190,7 @@ describe('User API Routes', () => {
   test('should fail when school tenantAdmin creates an existing user (who NOT in tenant)', async () => {
     const { user } = await createUser(null); // create a new user (without tenants)
 
-    await createUpdateDelete<UserDocument & Id>(route, { 'Jest-User': tenantAdmin!._id }, [
+    await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
       {
         action: 'create',
         data: { tenantId: tenantId, email: user.emails[0], name: FAKE },
@@ -206,7 +206,7 @@ describe('User API Routes', () => {
   });
 
   test('should pass when school tenantAdmin creates an existing user (who already in tenant)', async () => {
-    const user = await createUpdateDelete<UserDocument & Id>(route, { 'Jest-User': tenantAdmin!._id }, [
+    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
       {
         action: 'create',
         data: { tenantId: tenantId, email: normalUser!.emails[0], name: 'whatever' },
@@ -274,7 +274,7 @@ describe('User API Routes', () => {
     const { id } = await createUser(tenantId);
 
     const feature = randomItem(Object.keys(USER.FEATURE));
-    await createUpdateDelete<UserDocument & Id>(
+    await createUpdateDelete<UserDocument>(
       route,
       { 'Jest-User': rootUser!._id },
       [
@@ -309,7 +309,7 @@ describe('User API Routes', () => {
   test('should pass when add remark', async () => {
     const { id } = await createUser(tenantId);
 
-    await createUpdateDelete<UserDocument & Id>(
+    await createUpdateDelete<UserDocument>(
       route,
       { 'Jest-User': rootUser!._id },
       [
@@ -342,7 +342,7 @@ describe('User API Routes', () => {
     const { id } = await createUser(tenantId);
 
     const flag = USER.FLAG.DEMO;
-    await createUpdateDelete<UserDocument & Id>(
+    await createUpdateDelete<UserDocument>(
       route,
       { 'Jest-User': rootUser!._id },
       [
@@ -384,7 +384,7 @@ describe('User API Routes', () => {
     const history = { year: schoolYear(), level: randomItem(school!.levels).toString() };
     const history2 = { year: schoolYear(1), level: randomItem(school!.levels).toString(), schoolClass: '1X' };
 
-    await createUpdateDelete<UserDocument & Id>(
+    await createUpdateDelete<UserDocument>(
       route,
       { 'Jest-User': tenantAdmin!._id },
       [
@@ -429,7 +429,7 @@ describe('User API Routes', () => {
   test('should pass when suspend user', async () => {
     const { id } = await createUser(tenantId);
 
-    await createUpdateDelete<UserDocument & Id>(
+    await createUpdateDelete<UserDocument>(
       route,
       { 'Jest-User': rootUser!._id },
       [
@@ -458,7 +458,7 @@ describe('User API Routes', () => {
   test('should pass when updateIdentifiedAt', async () => {
     const { id } = await createUser(tenantId);
 
-    await createUpdateDelete<UserDocument & Id>(
+    await createUpdateDelete<UserDocument>(
       route,
       { 'Jest-User': rootUser!._id },
       [

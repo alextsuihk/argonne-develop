@@ -12,9 +12,9 @@ import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import School from '../models/school';
-import type { Id, TenantDocument } from '../models/tenant';
+import type { TenantDocument } from '../models/tenant';
 import Tenant, { searchableFields } from '../models/tenant';
-import User from '../models/user';
+import User, { activeCond } from '../models/user';
 import { messageToAdmins } from '../utils/chat';
 import { randomString } from '../utils/helper';
 import log from '../utils/log';
@@ -40,9 +40,20 @@ export const select = (userRoles?: string[]) =>
   `${common.select(userRoles)} -apiKey -satelliteIp -satelliteVersion -seedings -meta`;
 
 /**
+ * sanitizeServices
+ *
+ */
+const sanitizeServices = (services: string[], isSchool = false) => {
+  const validServices = isSchool
+    ? Object.keys(TENANT.SERVICE).filter(s => s !== TENANT.SERVICE.TUTOR && s !== TENANT.SERVICE.QUESTION_BID)
+    : Object.keys(TENANT.SERVICE);
+  return services.map(s => s.toUpperCase()).filter(x => validServices.includes(x));
+};
+
+/**
  * (helper) transform
  */
-const transform = (tenant: TenantDocument & Id, showAuthServices = false): TenantDocument & Id => ({
+const transform = (tenant: TenantDocument, showAuthServices = false): TenantDocument => ({
   ...tenant,
   ...(showAuthServices
     ? tenant.authServices.map(authService => {
@@ -55,7 +66,7 @@ const transform = (tenant: TenantDocument & Id, showAuthServices = false): Tenan
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<TenantDocument & Id> => {
+const addRemark = async (req: Request, args: unknown): Promise<TenantDocument> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ROOT');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -75,7 +86,7 @@ const addRemark = async (req: Request, args: unknown): Promise<TenantDocument & 
 /**
  * Create New Tenant (core)
  */
-const create = async (req: Request, args: unknown): Promise<TenantDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<TenantDocument> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req, 'ROOT');
   const { tenant: inputFields } = await tenantCoreSchema.validate(args);
@@ -90,8 +101,7 @@ const create = async (req: Request, args: unknown): Promise<TenantDocument & Id>
     ...inputFields,
     code: inputFields.code.toUpperCase(),
     school: school?._id,
-    services: inputFields.services.map(s => s.toUpperCase()).filter(x => Object.keys(TENANT.SERVICE).includes(x)), // accept only intersected services
-    ...(inputFields.satelliteUrl && school && { apiKey: randomString() }), // never expires
+    services: sanitizeServices(inputFields.services),
   });
   const { _id, name } = tenant;
 
@@ -109,7 +119,6 @@ const create = async (req: Request, args: unknown): Promise<TenantDocument & Id>
     DatabaseEvent.log(userId, `/tenants/${_id}`, 'CREATE', { args }),
   ]);
 
-  if (tenant.apiKey) delete tenant.apiKey; // hide apiKey if exists
   return transform(tenant.toObject(), true);
 };
 
@@ -127,7 +136,7 @@ const create = async (req: Request, args: unknown): Promise<TenantDocument & Id>
 /**
  * Find Multiple Tenants (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<(TenantDocument & Id)[]> => {
+const find = async (req: Request, args: unknown): Promise<TenantDocument[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<TenantDocument>(searchableFields, { query });
@@ -182,8 +191,8 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
       htmlUrl: 1,
       logoUrl: 1,
       website: 1,
+      satelliteStatus: 1,
       satelliteUrl: 1,
-      userSelect: 1,
       meta: 1,
     },
     code: `${DELETED}#${randomString()}`,
@@ -245,7 +254,7 @@ const sendTestEmail = async (req: Request, args: unknown): Promise<StatusRespons
   const { email } = await emailSchema.validate(args);
 
   const [user, isTenantAdmin] = await Promise.all([
-    User.findOneActive({ _id: userId, emails: { $in: [email, email.toUpperCase()] } }),
+    User.findOne({ _id: userId, emails: { $in: [email, email.toUpperCase()] }, ...activeCond }).lean(),
     isAdmin(userRoles) || Tenant.exists({ admins: userId }),
   ]);
   if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
@@ -260,7 +269,7 @@ const sendTestEmail = async (req: Request, args: unknown): Promise<StatusRespons
  * Update Tenant (core)
  * !note: ONLY root could update
  */
-const updateCore = async (req: Request, args: unknown): Promise<TenantDocument & Id> => {
+const updateCore = async (req: Request, args: unknown): Promise<TenantDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ROOT');
   const {
@@ -279,10 +288,7 @@ const updateCore = async (req: Request, args: unknown): Promise<TenantDocument &
     zhHK: `剛更新學校資料 (core)：${common}。`,
   };
 
-  const update: UpdateQuery<TenantDocument> = {
-    ...inputFields,
-    services: inputFields.services.map(s => s.toUpperCase()).filter(x => Object.keys(TENANT.SERVICE).includes(x)), // accept only intersected services
-  };
+  const update: UpdateQuery<TenantDocument> = { ...inputFields, services: sanitizeServices(inputFields.services) };
 
   const [tenant] = await Promise.all([
     Tenant.findByIdAndUpdate(id, update, { fields: select(userRoles), new: true }).lean(),
@@ -304,7 +310,7 @@ const updateCore = async (req: Request, args: unknown): Promise<TenantDocument &
  * Update Tenant (non-core)
  * !note: for tenantAdmins to update non-core portion (either in satellite or HQ mode)
  */
-const updateExtra = async (req: Request, args: unknown): Promise<TenantDocument & Id> => {
+const updateExtra = async (req: Request, args: unknown): Promise<TenantDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const {
@@ -342,13 +348,15 @@ const updateExtra = async (req: Request, args: unknown): Promise<TenantDocument 
     zhHK: `剛更新組織 (non-core)： ${common}。`,
   };
 
+  const adminIds = admins.map(a => a._id);
+
   const unset = {
     ...(!logoUrl && { logoUrl: 1 }),
     ...(!htmlUrl && { htmlUrl: 1 }),
   };
   const update: UpdateQuery<TenantDocument> = {
     ...inputFields,
-    admins: admins.map(u => u._id),
+    admins: adminIds,
     supports: supports.map(u => u._id),
     counselors: counselors.map(u => u._id),
     marshals: marshals.map(u => u._id),
@@ -367,11 +375,11 @@ const updateExtra = async (req: Request, args: unknown): Promise<TenantDocument 
 
   const [tenant] = await Promise.all([
     Tenant.findByIdAndUpdate(id, update, { fields: select(userRoles), new: true }).lean(),
-    messageToAdmins(msg, userId, userLocale, isRoot(userRoles), inputFields.admins, `TENANT#${id}`),
+    messageToAdmins(msg, userId, userLocale, isRoot(userRoles), adminIds, `TENANT#${id}`),
     DatabaseEvent.log(userId, `/tenants/${id}`, 'UPDATE-EXTRA', { args, original }),
     notifySync(
       original._id,
-      { userIds: [userId, ...admins.map(u => u._id)], event: 'TENANT' },
+      { userIds: [userId, ...adminIds], event: 'TENANT' },
       { bulkWrite: { tenants: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TenantDocument> } },
     ),
   ]);

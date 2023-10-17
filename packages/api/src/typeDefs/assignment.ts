@@ -57,7 +57,7 @@ export default gql`
   }
 
   type AssignmentHomework {
-    # _id: ID! # one-to-many relationship, no need to normalize, just nest it
+    _id: String!
     flags: [String!]!
 
     user: String!

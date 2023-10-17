@@ -7,7 +7,7 @@ import { LOCALE } from '@argonne/common';
 import { faker } from '@faker-js/faker';
 import chalk from 'chalk';
 
-import type { BookAssignmentDocument, BookDocument, Id } from '../../models/book';
+import type { BookAssignmentDocument, BookDocument } from '../../models/book';
 import Book, { BookAssignment } from '../../models/book';
 import type { ChatGroupDocument } from '../../models/chat-group';
 import ChatGroup from '../../models/chat-group';
@@ -43,11 +43,11 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
   if (!levels.length) throw new Error('Level Collection is empty');
   if (!publishers.length) throw new Error('Publisher Collection is empty');
 
-  const books: (BookDocument & Id)[] = [];
-  const bookAssignments: (BookAssignmentDocument & Id)[] = [];
-  const chatGroups: (ChatGroupDocument & Id)[] = [];
-  const contents: (ContentDocument & Id)[] = [];
-  const contributions: (ContributionDocument & Id)[] = [];
+  const books: BookDocument[] = [];
+  const bookAssignments: BookAssignmentDocument[] = [];
+  const chatGroups: ChatGroupDocument[] = [];
+  const contents: ContentDocument[] = [];
+  const contributions: ContributionDocument[] = [];
 
   for (let i = 0; i < count; i++) {
     const bookId = mongoId();
@@ -56,7 +56,7 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
     const validSubjects = subjects.filter(subject => subject.levels.some(l => l.equals(level._id)));
     if (!validSubjects.length) continue; // skip this iteration if no validSubjects available (this is not a bug, it could happen)
 
-    const year = faker.datatype.number(20) + 2000;
+    const year = faker.number.int({ min: 2000, max: 2020 });
 
     const chatGroup = new ChatGroup<Partial<ChatGroupDocument>>({
       flags: [CHAT_GROUP.FLAG.BOOK],
@@ -74,32 +74,32 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
         const contribution = fakeContribution(randomItems(users, 3));
         contributions.push(contribution);
 
-        const [content, ...examples] = fakeContents('bookAssignments', bookAssignmentId, [systemId], 5);
+        const [content, ...examples] = fakeContents(`/bookAssignments/${bookAssignmentId}`, [systemId], 5);
         contents.push(content!, ...examples);
 
         const hasDynParams = prob(0.5);
 
-        return new BookAssignment<Partial<BookAssignmentDocument & Id>>({
+        return new BookAssignment<Partial<BookAssignmentDocument>>({
           _id: bookAssignmentId,
           contribution: contribution._id,
-          chapter: `${faker.datatype.number(10)}#${faker.datatype.number(20)}`,
+          chapter: `${faker.number.int({ min: 1, max: 10 })}#${faker.number.int({ min: 1, max: 20 })}`,
           content: content!._id,
 
           dynParams: Array(hasDynParams ? 3 : 0)
             .fill(0)
-            .map(() => faker.datatype.number(30).toString()),
+            .map(() => faker.number.int({ max: 30 }).toString()),
 
           solutions: Array(hasDynParams ? 3 : 1)
             .fill(0)
-            .map(() => faker.datatype.number(30).toString()),
+            .map(() => faker.number.int({ max: 30 }).toString()),
           examples: examples.map(e => e._id),
 
-          ...(prob(0.1) && { deletedAt: faker.date.recent(120) }),
+          ...(prob(0.1) && { deletedAt: faker.date.recent({ days: 120 }) }),
         });
       });
     bookAssignments.push(...assignments);
 
-    const book = new Book<Partial<BookDocument & Id>>({
+    const book = new Book<Partial<BookDocument>>({
       _id: bookId,
       publisher: randomItem(publishers)._id,
       level: level._id,
@@ -120,8 +120,8 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
           return {
             _id: mongoId(),
             contribution: contribution._id,
-            chapter: `${faker.datatype.number(10)}#${faker.datatype.number(20)}`,
-            ...(prob(0.1) && { deletedAt: faker.date.recent(120) }),
+            chapter: `${faker.number.int({ min: 1, max: 10 })}#${faker.number.int({ min: 1, max: 20 })}`,
+            ...(prob(0.1) && { deletedAt: faker.date.recent({ days: 120 }) }),
           };
         }),
 
@@ -134,8 +134,8 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
           year: year - idx,
           imageUrls: Array(2)
             .fill(0)
-            .map(() => faker.image.food()),
-          ...(prob(0.3) && { listPrice: faker.datatype.number({ min: 100, max: 200 }) * 1000 }),
+            .map(() => faker.image.urlLoremFlickr({ category: 'food' })),
+          ...(prob(0.3) && { listPrice: faker.number.int({ min: 100, max: 200 }) * 1000 }),
           createdAt: new Date(),
           updatedAt: new Date(),
         })),

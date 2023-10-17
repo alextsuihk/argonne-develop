@@ -14,7 +14,7 @@ import Assignment from '../../models/assignment';
 import Chat, { ChatDocument } from '../../models/chat';
 import ChatGroup from '../../models/chat-group';
 import Classroom from '../../models/classroom';
-import type { ContentDocument, Id } from '../../models/content';
+import type { ContentDocument } from '../../models/content';
 import Content from '../../models/content';
 import Homework from '../../models/homework';
 import Question from '../../models/question';
@@ -43,17 +43,15 @@ export const removeStale = async (): Promise<void> => {
   ]);
 
   // remove parents belong to chatGroups & classrooms (some chats are attached to other non-bygone chatGroups, classrooms)
-  const parentsTrimmedChats: (Pick<ChatDocument, 'parents' | 'contents'> & Id)[] = chats.map(
-    ({ _id, contents, parents }) => ({
-      _id,
-      contents,
-      parents: parents.filter(
-        p =>
-          !chatGroups.some(c => c._id.equals(p.replace('/chatGroups/', ''))) &&
-          !classrooms.some(c => c._id.equals(p.replace('/classrooms/', ''))),
-      ),
-    }),
-  );
+  const parentsTrimmedChats: Pick<ChatDocument, 'parents' | 'contents'>[] = chats.map(({ _id, contents, parents }) => ({
+    _id,
+    contents,
+    parents: parents.filter(
+      p =>
+        !chatGroups.some(c => c._id.equals(p.replace('/chatGroups/', ''))) &&
+        !classrooms.some(c => c._id.equals(p.replace('/classrooms/', ''))),
+    ),
+  }));
 
   // update allContents' parents
   const allContents = await Content.find(
@@ -70,7 +68,7 @@ export const removeStale = async (): Promise<void> => {
   ).lean();
 
   // remove parents which in the deleting chats, homeworks, questions
-  const parentsTrimmedContents: (Pick<ContentDocument, 'parents'> & Id)[] = allContents.map(({ _id, parents }) => ({
+  const parentsTrimmedContents: Pick<ContentDocument, 'parents'>[] = allContents.map(({ _id, parents }) => ({
     _id,
     parents: parents.filter(
       p =>

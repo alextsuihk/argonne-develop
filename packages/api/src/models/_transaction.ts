@@ -18,15 +18,9 @@
 // import mongoose, { Document, Schema } from 'mongoose';
 // import configLoader from '../config/config-loader';
 
-// export interface TransactionDocument extends Document {
-//   group: string;
-//   user:  Types.ObjectId;
-//   isReconciliated: boolean;
-// }
-
 // const { DEFAULTS } = configLoader;
 
-// const transactionSchema = new Schema<TransactionDocument>(
+// const transactionSchema = new Schema(
 //   {
 //     group: String, // a grouping reference (UUID)
 //     seq: { type: Number, default: 0 }, // sequence

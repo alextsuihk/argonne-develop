@@ -4,19 +4,11 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import { model, Schema } from 'mongoose';
+import { InferSchemaType, model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Locale } from './common';
-import { baseDefinition, localeDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface DistrictDocument extends BaseDocument {
-  region: Locale;
-  name: Locale;
-  rates: number[];
-}
+import type { Id } from './common';
+import { baseDefinition, localeSchema } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -28,11 +20,11 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const districtSchema = new Schema<DistrictDocument>(
+const districtSchema = new Schema(
   {
     ...baseDefinition,
-    region: localeDefinition,
-    name: localeDefinition,
+    region: { type: localeSchema, required: true },
+    name: { type: localeSchema, required: true },
     rates: [Number],
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
@@ -40,6 +32,6 @@ const districtSchema = new Schema<DistrictDocument>(
 
 // ! Caveat: mongo text-search treats (doc containing) "元朗區" as a single word, searching "元朗" will not work
 districtSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const District = model<DistrictDocument>('District', districtSchema);
-
+const District = model('District', districtSchema);
+export type DistrictDocument = InferSchemaType<typeof districtSchema> & Id;
 export default District;

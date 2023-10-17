@@ -10,7 +10,7 @@ import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
-import type { Id, TypographyDocument } from '../models/typography';
+import type { TypographyDocument } from '../models/typography';
 import Typography, { searchableFields } from '../models/typography';
 import { messageToAdmins } from '../utils/chat';
 import log from '../utils/log';
@@ -30,7 +30,7 @@ const { idSchema, querySchema, remarkSchema, removeSchema, tenantIdSchema, typog
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
+const addRemark = async (req: Request, args: unknown): Promise<TypographyDocument> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -50,7 +50,7 @@ const addRemark = async (req: Request, args: unknown): Promise<TypographyDocumen
 /**
  * Create New Typography
  */
-const create = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<TypographyDocument> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req, 'ADMIN');
   const { typography: inputFields } = await typographySchema.validate(args);
@@ -71,7 +71,7 @@ const create = async (req: Request, args: unknown): Promise<TypographyDocument &
     DatabaseEvent.log(userId, `/typographies/${_id}`, 'CREATE', { args }),
     syncToAllSatellites({
       bulkWrite: {
-        typographies: [{ insertOne: { document: typography.toObject() } }] satisfies BulkWrite<TypographyDocument>,
+        typographies: [{ insertOne: { document: typography } }] satisfies BulkWrite<TypographyDocument>,
       },
     }),
   ]);
@@ -93,7 +93,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple s (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<(TypographyDocument & Id)[]> => {
+const find = async (req: Request, args: unknown): Promise<TypographyDocument[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<TypographyDocument>(searchableFields, { query });
@@ -123,7 +123,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One Typography by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<(TypographyDocument & Id) | null> => {
+const findOne = async (req: Request, args: unknown): Promise<TypographyDocument | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<TypographyDocument>(searchableFields, { query }, { _id: id });
@@ -200,7 +200,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Typography
  */
-const update = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
+const update = async (req: Request, args: unknown): Promise<TypographyDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { id, typography: updateFields } = await idSchema.concat(typographySchema).validate(args);
@@ -234,7 +234,7 @@ const update = async (req: Request, args: unknown): Promise<TypographyDocument &
 /**
  * Add Custom Typography
  */
-const addCustom = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
+const addCustom = async (req: Request, args: unknown): Promise<TypographyDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const { id, tenantId, custom } = await idSchema.concat(tenantIdSchema).concat(typographyCustomSchema).validate(args);
@@ -300,7 +300,7 @@ const addCustom = async (req: Request, args: unknown): Promise<TypographyDocumen
 /**
  * Remove Custom Typography
  */
-const removeCustom = async (req: Request, args: unknown): Promise<TypographyDocument & Id> => {
+const removeCustom = async (req: Request, args: unknown): Promise<TypographyDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const { id, tenantId } = await idSchema.concat(tenantIdSchema).validate(args);

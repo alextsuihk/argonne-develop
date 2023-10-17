@@ -13,7 +13,7 @@ import chalk from 'chalk';
 
 import type { ChatDocument } from '../../models/chat';
 import Chat from '../../models/chat';
-import type { ChatGroupDocument, Id } from '../../models/chat-group';
+import type { ChatGroupDocument } from '../../models/chat-group';
 import ChatGroup from '../../models/chat-group';
 import type { ContentDocument } from '../../models/content';
 import Content from '../../models/content';
@@ -51,8 +51,7 @@ const fake = async (codes: string[], chatGroupCount = 5, chatMax = 5, contentMax
   const adminMessages = users.sort(shuffle).map(user => {
     const chatGroupId = mongoId();
     const { chats: newChats, contents: newContents } = fakeChatsWithContents(
-      'chatGroups',
-      chatGroupId,
+      `/chatGroups/${chatGroupId}`,
       [user._id],
       1,
       1,
@@ -62,7 +61,7 @@ const fake = async (codes: string[], chatGroupCount = 5, chatMax = 5, contentMax
     chats.push(...newChats);
     contents.push(...newContents);
 
-    return new ChatGroup<Partial<ChatGroupDocument & Id>>({
+    return new ChatGroup<Partial<ChatGroupDocument>>({
       _id: chatGroupId,
       key: `USER#${user._id}`,
       flags: [CHAT_GROUP.FLAG.ADMIN],
@@ -90,8 +89,7 @@ const fake = async (codes: string[], chatGroupCount = 5, chatMax = 5, contentMax
 
                 const chatGroupId = mongoId();
                 const { chats: newChats, contents: newContents } = fakeChatsWithContents(
-                  'chatGroups',
-                  chatGroupId,
+                  `/chatGroups/${chatGroupId}`,
                   [user, ...otherUsers].map(u => u._id),
                   chatMax,
                   contentMax,
@@ -101,7 +99,7 @@ const fake = async (codes: string[], chatGroupCount = 5, chatMax = 5, contentMax
                 chats.push(...newChats);
                 contents.push(...newContents);
 
-                return new ChatGroup<Partial<ChatGroupDocument & Id>>({
+                return new ChatGroup<Partial<ChatGroupDocument>>({
                   _id: chatGroupId,
                   tenant: tenant._id,
                   membership: prob(0.5)

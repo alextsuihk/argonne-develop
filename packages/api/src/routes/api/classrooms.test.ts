@@ -5,6 +5,7 @@
 
 import { LOCALE } from '@argonne/common';
 
+import type { ClassroomDocumentEx } from '../../controllers/classroom';
 import {
   expectedChatFormat,
   expectedIdFormat,
@@ -22,13 +23,11 @@ import {
   prob,
 } from '../../jest';
 import Book from '../../models/book';
-import type { ChatDocument } from '../../models/chat';
-import type { ClassroomDocument } from '../../models/classroom';
 import Classroom from '../../models/classroom';
 import Content from '../../models/content';
 import Level from '../../models/level';
 import Tenant from '../../models/tenant';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import { randomItem, schoolYear } from '../../utils/helper';
 import commonTest from './rest-api-test';
@@ -67,8 +66,8 @@ export const expectedMinFormat = {
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantId: string | null;
 
   beforeAll(async () => {
@@ -119,7 +118,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     await Promise.all([classroom.save(), source.save(), chat.save(), content.save()]);
     //! Note: at the point, classroom.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
 
-    await createUpdateDelete<ClassroomDocument & Id>(
+    await createUpdateDelete<ClassroomDocumentEx>(
       route,
       { 'Jest-User': normalUser!._id },
       [
@@ -154,7 +153,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     await Promise.all([classroom.save(), source.save(), chat.save(), content.save()]);
     //! Note: at the point, classroom.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
 
-    await createUpdateDelete<ClassroomDocument & Id>(
+    await createUpdateDelete<ClassroomDocumentEx>(
       route,
       { 'Jest-User': normalUser!._id },
       [
@@ -189,7 +188,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     await Promise.all([classroom.save(), assignment.save(), homework.save(), Content.insertMany(homeworkContents)]);
 
-    await createUpdateDelete<ClassroomDocument & Id>(
+    await createUpdateDelete<ClassroomDocumentEx>(
       route,
       { 'Jest-User': normalUser!._id },
       [
@@ -216,11 +215,14 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should pass when sharing question to classroom', async () => {
     const { classroom } = await genClassroom(tenantId!, normalUser!._id); // create a classroom
-    const { question, content } = genQuestion(tenantId!, normalUser!._id, classroom._id, 'tutor'); // create source question as tutor
+    const { question, content } = genQuestion(tenantId!, normalUser!._id, {
+      tutor: normalUser!._id,
+      classroom: classroom._id,
+    }); // create source question as tutor
 
     await Promise.all([classroom.save(), question.save(), content.save()]);
 
-    await createUpdateDelete<ClassroomDocument & Id>(
+    await createUpdateDelete<ClassroomDocumentEx>(
       route,
       { 'Jest-User': normalUser!._id },
       [
@@ -280,7 +282,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const flag = CHAT.MEMBER.FLAG.IMPORTANT;
 
-    const classroom = await createUpdateDelete<ClassroomDocument & Id>(
+    const classroom = await createUpdateDelete<ClassroomDocumentEx>(
       route,
       { 'Jest-User': tenantAdmin!._id },
       [
@@ -370,9 +372,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
 
     const classroomId = classroom!._id.toString();
-    const chatId = (classroom!.chats[0] as ChatDocument & Id)._id.toString();
+    const chatId = classroom!.chats[0]._id.toString();
 
-    const classroom2 = await createUpdateDelete<ClassroomDocument & Id>(
+    const classroom2 = await createUpdateDelete<ClassroomDocumentEx>(
       route,
       { 'Jest-User': student0!._id },
       [
@@ -405,8 +407,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       { overrideId: classroomId, skipAssertion: true },
     );
 
-    const contentIds = (classroom2!.chats[0] as ChatDocument & Id).contents;
-    await createUpdateDelete<ClassroomDocument & Id>(
+    const contentIds = classroom2!.chats[0].contents;
+    await createUpdateDelete<ClassroomDocumentEx>(
       route,
       { 'Jest-User': teacher0!._id },
       [

@@ -40,11 +40,15 @@ const seed = async (): Promise<string> => {
       description: 'TODO',
       fee: 100,
       venue: 'TBD',
+      schedule: 'TBD',
     },
     {
       status: ACTIVITY.STATUS.OPEN,
       title: 'Javascript for Beginner',
       description: 'TODO',
+      fee: 100,
+      venue: 'TBD',
+      schedule: 'TBD',
     },
   ];
 

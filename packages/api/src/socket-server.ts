@@ -6,12 +6,13 @@ import { LOCALE } from '@argonne/common';
 import { createAdapter } from '@socket.io/redis-adapter'; //! NOTE: need to use version 7.1.0
 import type { Server as HttpServer } from 'http';
 import Redis from 'ioredis';
+import type { Types } from 'mongoose';
 import type { Socket } from 'socket.io';
 import { Server } from 'socket.io';
 
 import type { SyncJobDocument } from './models/sync-job';
 import { SYNC_JOB_CHANNEL } from './models/sync-job';
-import Tenant from './models/tenant';
+import { findSatelliteTenantById } from './models/tenant';
 import User from './models/user';
 import { redisClient } from './redis';
 import { isDevMode } from './utils/environment';
@@ -28,14 +29,14 @@ let subClient: Redis | null = null;
  * Emit Message to all socket clients of a SINGLE User
  */
 const emit = ({ userIds, event, msg }: NonNullable<SyncJobDocument['notify']>): void =>
-  Array.from(new Set(userIds.map(u => u.toString()))).forEach(userId =>
-    io?.to(`user:${userId}`).emit<typeof event>(event, msg),
+  Array.from(new Set(userIds.map(u => u.toString()))).forEach(
+    userId => io?.to(`user:${userId}`).emit<typeof event>(event, msg),
   ); // socket-server is not available in test-mode (io is null for test-mode)
 
 /**
  * List SocketIds of a users
  */
-const listSockets = async (userId: string) =>
+const listSockets = async (userId: string | Types.ObjectId) =>
   io ? (await io.in(`user:${userId}`).fetchSockets()).map(socket => socket.id) : []; // socket-server is not available in test-mode
 
 /**
@@ -51,7 +52,7 @@ const start = async (httpServer: HttpServer): Promise<void> => {
     try {
       const { userId } = await token.verifyAuth(accessToken);
 
-      console.log('socketServer:join() >>>> welcome ', userId, socket.id);
+      console.log('DEBUG>> socketServer:join() >>>> welcome ', userId, socket.id);
 
       const user = await User.findOneAndUpdate({ _id: userId, status: USER.STATUS.ACTIVE }, { isOnline: true }).lean();
       if (!userId || !user) throw 'Invalid ID';
@@ -72,7 +73,7 @@ const start = async (httpServer: HttpServer): Promise<void> => {
   };
 
   const satelliteJoining = async (socket: Socket, tenantId: string, apiKey: string): Promise<void> => {
-    const tenant = await Tenant.findSatelliteById(tenantId);
+    const tenant = await findSatelliteTenantById(tenantId);
 
     if (tenant?.apiKey === apiKey) {
       redisClient.publish(SYNC_JOB_CHANNEL, tenantId); // satellite has (re)joined, initiate sync-jobs
@@ -86,7 +87,7 @@ const start = async (httpServer: HttpServer): Promise<void> => {
       .find(room => room.startsWith('user:'))
       ?.split(':')[1]; // get roomId starting with 'user:'. userId is undefined for improper joining
 
-    console.log('socketServer:leave() >>>> GoodBye ', userId, socket.rooms);
+    console.log('DEBUG>> socketServer:leave() >>>> GoodBye ', userId, socket.rooms);
 
     if (!userId) return; // for case of satellite-leaving
 
@@ -117,7 +118,7 @@ const start = async (httpServer: HttpServer): Promise<void> => {
   });
 
   io.on('connection', (socket: Socket) => {
-    console.log('socketServer: io.on("connection")', socket.id); // TODO
+    console.log('DEBUG>> socketServer: io.on("connection")', socket.id);
     socket.on('disconnecting', () => clientLeaving(socket)); // listening to 'disconnecting'
     socket.on('timeout', () => clientLeaving(socket)); // listening to 'timeout'
 

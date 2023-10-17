@@ -35,8 +35,8 @@ const fake = async (codes: string[], count = 10, tenantCount = 3): Promise<strin
             ...(tenant && { tenant }),
             title: faker.lorem.slug(5),
             message: faker.lorem.sentences(3),
-            beginAt: faker.date.soon(3),
-            endAt: faker.date.soon(30),
+            beginAt: faker.date.soon({ days: 3 }),
+            endAt: faker.date.soon({ days: 30 }),
           }),
       );
 

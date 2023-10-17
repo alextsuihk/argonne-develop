@@ -7,32 +7,22 @@
  * for EDA free gift-card, purchasedBy is Account
  */
 
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface GiftCardDocument extends BaseDocument {
-  createdBy: Types.ObjectId;
-  value: number;
-  recipient: Types.ObjectId;
-  givenAt: Date;
-  redeemedAt: Date;
-}
 
 const { DEFAULTS } = configLoader;
 
 // schema
-const GiftCardSchema = new Schema<GiftCardDocument>(
+const giftCardSchema = new Schema(
   {
     ...baseDefinition,
 
-    createdBy: { type: Schema.Types.ObjectId, ref: 'User', index: true }, // purchaser
-    value: Number,
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true }, // purchaser
+    value: { type: Number, required: true },
     recipient: { type: Schema.Types.ObjectId, ref: 'User' },
     givenAt: Date,
     redeemedAt: { type: Date, expires: DEFAULTS.MONGOOSE.EXPIRES.GIFT_CARD },
@@ -40,5 +30,6 @@ const GiftCardSchema = new Schema<GiftCardDocument>(
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const GiftCard = model<GiftCardDocument>('GiftCard', GiftCardSchema);
+const GiftCard = model('GiftCard', giftCardSchema);
+export type GiftCardDocument = InferSchemaType<typeof giftCardSchema> & Id;
 export default GiftCard;

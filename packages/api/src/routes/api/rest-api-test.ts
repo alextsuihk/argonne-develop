@@ -9,18 +9,11 @@ import type { Types } from 'mongoose';
 import request from 'supertest';
 
 import app from '../../app';
+import type { ConvertObjectIdToString } from '../../jest';
 import { FAKE, FAKE_ID, prob } from '../../jest';
-import type { BaseDocument } from '../../models/common/base';
+import type { BaseDocument } from '../../models/common';
 
 type LooseAutocomplete<T extends string> = T | Omit<string, T>;
-
-type ConvertObjectIdToString<T extends object> = {
-  [K in keyof T]: T[K] extends Types.ObjectId | undefined
-    ? string | undefined
-    : T[K] extends Types.ObjectId[]
-    ? string[]
-    : T[K];
-};
 
 const { MSG_ENUM } = LOCALE;
 
@@ -58,6 +51,7 @@ const createUpdateDelete = async <T extends BaseDocument>(
     const { action, data } = task;
 
     const [, extra] = action.split('#');
+
     const res = action.startsWith('create')
       ? await request(app)
           .post(extra ? `/api/${route}/${extra}` : `/api/${route}`)
@@ -74,11 +68,11 @@ const createUpdateDelete = async <T extends BaseDocument>(
           .send(data)
           .set(task.headers ?? headers)
       : await request(app)
-          .patch(action === 'update' ? `/api/${route}/${id!}` : `/api/${route}/${id!}/${action}`)
+          .patch(action === 'update' ? `/api/${route}/${id}` : `/api/${route}/${id!}/${action}`)
           .send(data)
           .set(task.headers ?? headers);
 
-    // console.log('restful debug [action, extra] >>> ', action, extra);
+    // console.log('restful debug [action, extra] >>> ', action, id, extra);
 
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
 

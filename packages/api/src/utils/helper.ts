@@ -4,10 +4,8 @@
 
 import dns from 'node:dns';
 
-import type { Types } from 'mongoose';
 import mongoose from 'mongoose';
 
-import type { BaseDocument, Id } from '../models/common';
 import type { UserDocument } from '../models/user';
 
 /**
@@ -20,18 +18,6 @@ export const containUtf8 = (text: string): boolean => text !== text.replace(/[^\
  */
 export const dnsLookup = async (url: string) =>
   new Promise<string>(resolve => dns.lookup(url, (_err, address, _family) => resolve(address)));
-
-/**
- * Convert ObjectId[] | Document[] to string[]
- */
-// export const idsToString = (items: (string | Types.ObjectId | Id)[]): string[] =>
-//   items.map(item => (typeof item === 'string' ? item : item._id.toString()));
-
-/**
- * Is it Mongoose Document
- */
-export const isDocument = <T extends BaseDocument>(data: string | Types.ObjectId | T) =>
-  typeof data === 'string' || data instanceof mongoose.Types.ObjectId;
 
 /**
  * Get the latest schoolHistory
@@ -48,14 +34,8 @@ export const latestSchoolHistory = (schoolHistories: UserDocument['schoolHistori
 /**
  * generate a new mongo ID or convert string to mongo ID
  */
-export const mongoId = (id?: string | Types.ObjectId | Id) =>
-  id instanceof mongoose.Types.ObjectId
-    ? id
-    : typeof id === 'string' || typeof id === 'undefined'
-    ? mongoose.isObjectIdOrHexString(id)
-      ? new mongoose.Types.ObjectId(id)
-      : new mongoose.Types.ObjectId()
-    : id._id;
+export const mongoId = (id?: string) =>
+  mongoose.isObjectIdOrHexString(id) ? new mongoose.Types.ObjectId(id) : new mongoose.Types.ObjectId();
 
 /**
  * Probability (0 - 1.0)
@@ -104,8 +84,3 @@ export const terminate = (message: string): never => {
   console.error(message);
   process.exit(1);
 };
-
-/**
- * Return unique IDs from Array<string> | Array<Document>
- */
-// export const uniqueIds = (ids: (string | Types.ObjectId | Id)[]): string[] => Array.from(new Set(idsToString(ids)));

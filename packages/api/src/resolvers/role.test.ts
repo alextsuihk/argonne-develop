@@ -6,7 +6,7 @@
 import { LOCALE } from '@argonne/common';
 
 import { apolloExpect, ApolloServer, jestSetup, jestTeardown } from '../jest';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import { ADD_ROLE, GET_ROLE, REMOVE_ROLE } from '../queries/role';
 
 const { MSG_ENUM } = LOCALE;
@@ -16,10 +16,10 @@ const { USER } = LOCALE.DB_ENUM;
 describe('Role GraphQL', () => {
   const role = USER.ROLE.JEST_FAKE_ROLE;
 
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let adminServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
 
   beforeAll(async () => {
     ({ adminServer, adminUser, normalServer, normalUser } = await jestSetup(['admin', 'normal'], { apollo: true }));

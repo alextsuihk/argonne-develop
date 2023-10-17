@@ -6,13 +6,13 @@ import { LOCALE } from '@argonne/common';
 
 import configLoader from '../../config/config-loader';
 import type { JobDocument } from '../../models/job';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import { sendmail } from './common';
 
 const { zhCN, zhHK } = LOCALE.DB_ENUM.SYSTEM.LOCALE;
 const { config } = configLoader;
 
-export default async (user: UserDocument & Id, job: JobDocument & Id): Promise<void> => {
+export default async (user: UserDocument, job: JobDocument): Promise<void> => {
   const { name, locale, emails } = user;
 
   if (emails[0]) {

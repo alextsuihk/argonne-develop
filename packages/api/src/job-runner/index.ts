@@ -14,7 +14,7 @@ import configLoader from '../config/config-loader';
 import type { JobDocument } from '../models/job';
 import Job, { NEW_JOB_CHANNEL } from '../models/job';
 import { SYNC_JOB_CHANNEL } from '../models/sync-job';
-import Tenant from '../models/tenant';
+import { findSatelliteTenants } from '../models/tenant';
 import { redisClient } from '../redis';
 import log from '../utils/log';
 import type { BulkWrite } from '../utils/notify-sync';
@@ -151,7 +151,7 @@ const start = async () => {
 
   // re-run at an interval
   timer = setInterval(async () => {
-    const satelliteTenants = await Tenant.findSatellites(); // tenant docs may get updated, refetch up-to-date docs
+    const satelliteTenants = await findSatelliteTenants('sync'); // tenant docs may get updated, refetch up-to-date docs
     await Promise.all([execute(), ...satelliteTenants.map(async ({ _id }) => sync(_id.toString()))]);
   }, DEFAULTS.JOB_RUNNER.INTERVAL);
 };

@@ -8,7 +8,7 @@ import type { Request, RequestHandler } from 'express';
 import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
-import type { DistrictDocument, Id } from '../models/district';
+import type { DistrictDocument } from '../models/district';
 import District, { searchableFields } from '../models/district';
 import DatabaseEvent from '../models/event/database';
 import { messageToAdmins } from '../utils/chat';
@@ -29,7 +29,7 @@ const select = (userRoles?: string[]) => `-rates ${common.select(userRoles)}`;
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<DistrictDocument & Id> => {
+const addRemark = async (req: Request, args: unknown): Promise<DistrictDocument> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -49,7 +49,7 @@ const addRemark = async (req: Request, args: unknown): Promise<DistrictDocument 
 /**
  * Create
  */
-const create = async (req: Request, args: unknown): Promise<DistrictDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<DistrictDocument> => {
   hubModeOnly();
   const { userId, userLocale } = auth(req, 'ADMIN');
   const { district: inputFields } = await districtSchema.validate(args);
@@ -70,7 +70,7 @@ const create = async (req: Request, args: unknown): Promise<DistrictDocument & I
     DatabaseEvent.log(userId, `/districts/${_id}`, 'CREATE', { args }),
     syncToAllSatellites({
       bulkWrite: {
-        districts: [{ insertOne: { document: district.toObject() } }] satisfies BulkWrite<DistrictDocument>,
+        districts: [{ insertOne: { document: district } }] satisfies BulkWrite<DistrictDocument>,
       },
     }),
   ]);
@@ -92,7 +92,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<DistrictDocument & Id[]> => {
+const find = async (req: Request, args: unknown): Promise<DistrictDocument[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<DistrictDocument>(searchableFields, { query });
@@ -123,7 +123,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<(DistrictDocument & Id) | null> => {
+const findOne = async (req: Request, args: unknown): Promise<DistrictDocument | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<DistrictDocument>(searchableFields, { query }, { _id: id });
@@ -201,7 +201,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update
  */
-const update = async (req: Request, args: unknown): Promise<DistrictDocument & Id> => {
+const update = async (req: Request, args: unknown): Promise<DistrictDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
   const { id, district: updateFields } = await districtSchema.concat(idSchema).validate(args);
@@ -227,6 +227,7 @@ const update = async (req: Request, args: unknown): Promise<DistrictDocument & I
       },
     }),
   ]);
+
   if (district) return district;
   log('error', `districtController:update()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };

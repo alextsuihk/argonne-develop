@@ -10,8 +10,8 @@ import type { Request } from 'express';
 import mongoose from 'mongoose';
 
 import Tenant from '../models/tenant';
-import type { Id, UserDocument } from '../models/user';
-import User, { userAuthServiceBaseSelect } from '../models/user';
+import type { UserDocument } from '../models/user';
+import User, { activeCond, userAuthServiceBaseSelect } from '../models/user';
 import { dataCipher } from '../utils/cipher';
 import tokenUtil from '../utils/token';
 import common from './common';
@@ -65,12 +65,15 @@ export const authServiceToken = async (
 /**
  * Return user info
  */
-export const authServiceUserInfo = async (req: Request, args: unknown): Promise<UserDocument & Id> => {
+export const authServiceUserInfo = async (req: Request, args: unknown): Promise<UserDocument> => {
   hubModeOnly();
   const { token } = await tokenSchema.validate(args);
   const [prefix, tenantId, schoolId, userId, select] = await verifyStrings(token);
 
-  const user = await User.findOneActive({ _id: userId }, select === 'BARE' ? userAuthServiceBaseSelect : select);
+  const user = await User.findOne(
+    { _id: userId, ...activeCond },
+    select === 'BARE' ? userAuthServiceBaseSelect : select,
+  ).lean();
   if (
     prefix !== AUTHORIZATION_TOKEN_PREFIX ||
     !tenantId ||

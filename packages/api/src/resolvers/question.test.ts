@@ -24,7 +24,7 @@ import {
 import Classroom from '../models/classroom';
 import Question from '../models/question';
 import Subject from '../models/subject';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import {
   ADD_QUESTION,
   ADD_QUESTION_BID_CONTENT,
@@ -48,7 +48,7 @@ const { QUESTION } = LOCALE.DB_ENUM;
 describe('ChatGroup GraphQL', () => {
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUsers: (UserDocument & Id)[] | null;
+  let normalUsers: UserDocument[] | null;
   let tenantId: string | null;
 
   const expectedFormat = {
@@ -88,9 +88,9 @@ describe('ChatGroup GraphQL', () => {
     bids: expect.any(Array),
     paidAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
 
-    correctness: expect.any(Number),
-    explicitness: expect.any(Number),
-    punctuality: expect.any(Number),
+    correctness: expect.toBeOneOf([null, expect.any(Number)]),
+    explicitness: expect.toBeOneOf([null, expect.any(Number)]),
+    punctuality: expect.toBeOneOf([null, expect.any(Number)]),
 
     contentsToken: expect.any(String),
   };

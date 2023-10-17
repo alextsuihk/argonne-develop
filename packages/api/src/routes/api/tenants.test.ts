@@ -29,7 +29,7 @@ import {
 } from '../../jest';
 import School from '../../models/school';
 import { TenantDocument } from '../../models/tenant';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -40,10 +40,10 @@ const route = 'tenants';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: (UserDocument & Id) | null;
-  let normalUser: (UserDocument & Id) | null;
-  let rootUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
+  let normalUser: UserDocument | null;
+  let rootUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let htmlUrl: string;
   let logoUrl: string;
 
@@ -151,7 +151,6 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       name: FAKE_LOCALE,
       ...(school && { school }),
       services: randomItems(Object.keys(TENANT.SERVICE), Math.random() * 3 + 1),
-      ...(prob(0.5) && { satelliteUrl: `https://satellite.${domain}` }),
     };
 
     const tenantCoreUpdate = {
@@ -159,10 +158,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       name: FAKE2_LOCALE,
       ...(school && { school }),
       services: randomItems(Object.keys(TENANT.SERVICE), Math.random() * 3 + 1),
-      ...(prob(0.5) && { satelliteUrl: `https://satellite2.${domain}` }),
     };
 
-    const tenant = await createUpdateDelete<TenantDocument & Id>(
+    const tenant = await createUpdateDelete<TenantDocument>(
       route,
       { 'Jest-User': rootUser!._id }, // as root
       [
@@ -196,10 +194,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const users = Array(2)
       .fill(0)
-      .map((_, idx) => genUser(tenant!._id, { name: `tenantAdmin (${idx})` }));
+      .map((_, idx) => genUser(tenant!._id.toString(), { name: `tenantAdmin (${idx})` }));
     await User.insertMany(users);
 
-    await createUpdateDelete<TenantDocument & Id>(
+    await createUpdateDelete<TenantDocument>(
       route,
       { 'Jest-User': rootUser!._id }, // add admins as root
       [
@@ -229,7 +227,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     };
     [htmlUrl, logoUrl] = await Promise.all([jestPutObject(users[0]._id), jestPutObject(users[0]._id)]);
 
-    await createUpdateDelete<TenantDocument & Id>(
+    await createUpdateDelete<TenantDocument>(
       route,
       { 'Jest-User': users[0]._id }, // as tenantAdmin
       [
@@ -248,7 +246,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
 
     // remove
-    await createUpdateDelete<TenantDocument & Id>(
+    await createUpdateDelete<TenantDocument>(
       route,
       { 'Jest-User': rootUser!._id }, //
       [{ action: 'delete', data: {} }],

@@ -16,7 +16,10 @@ const run = async (): Promise<void> => {
     Tenant.findOne().sort('createdAt'),
   ]);
 
-  const updatedAt = (rootTenant?.meta.get('adRateUpdatedAt') ?? subDays(new Date(), 7)) as Date;
+  // const savedValue = rootTenant?.meta && 'adRateUpdatedAt' in rootTenant.meta && rootTenant?.meta.adRateUpdatedAt;
+
+  // const updatedAt = savedValue instanceof Date ? savedValue : subDays(Date.now(), 7);
+
   for (const district of districts) {
     //
   }

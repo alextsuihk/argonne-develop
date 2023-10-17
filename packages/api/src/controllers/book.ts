@@ -10,7 +10,7 @@ import type { FilterQuery, Types, UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BookAssignmentDocument, BookDocument, Id } from '../models/book';
+import type { BookAssignmentDocument, BookDocument } from '../models/book';
 import Book, { BookAssignment, searchableFields } from '../models/book';
 import type { ChatGroupDocument } from '../models/chat-group';
 import ChatGroup from '../models/chat-group';
@@ -46,7 +46,12 @@ type Action =
   | 'removeRevisionImage'
   | 'removeSupplement';
 
-type BookDocumentEx = BookDocument & Id & { contentsToken: string };
+type Populate = {
+  assignments: (Omit<BookAssignmentDocument, 'contribution'> & { contribution: ContributionDocument })[];
+  supplements: (Omit<BookDocument['supplements'], 'contribution'> & { contribution: ContributionDocument })[];
+};
+type PopulatedBook = Omit<BookDocument, 'assignments' | 'supplements'> & Populate;
+export type BookDocumentEx = PopulatedBook & { contentsToken: string }; // export for JEST
 
 const { MSG_ENUM } = LOCALE;
 const { CHAT_GROUP, CONTRIBUTION, USER } = LOCALE.DB_ENUM;
@@ -54,37 +59,33 @@ const { config } = configLoader;
 const { assertUnreachable, auth, DELETED, hubModeOnly, isAdmin, isTeacher, paginateSort, searchFilter, select } =
   common;
 const {
-  bookAssignmentIdSchema,
   bookAssignmentSchema,
   bookIsbnSchema,
-  bookRevisionIdSchema,
   bookRevisionSchema,
-  bookSupplementIdSchema,
   bookSupplementSchema,
   bookSchema,
   idSchema,
   querySchema,
   remarkSchema,
   removeSchema,
+  subIdSchema,
   urlSchema,
 } = yupSchema;
 
 const adminSelect = select([USER.ROLE.ADMIN]);
 
 // nested populate
-const nestedPopulate = [
+const populate = [
   { path: 'assignments', select: adminSelect, populate: [{ path: 'contribution', select: adminSelect }] },
   { path: 'supplements.contribution', select: adminSelect },
 ];
-
-const findAndUpdateOpt = { fields: adminSelect, new: true, populate: nestedPopulate };
 
 /**
  * only publisher.admin or admin have permission to proceed
  */
 const checkPermission = async (
   id: string,
-  userId: string,
+  userId: Types.ObjectId,
   isAdmin: boolean,
   extraFilter: FilterQuery<BookDocument> = {},
 ) => {
@@ -102,10 +103,10 @@ const checkPermission = async (
  * (helper) hide solutions (to general students), hide remark, and generate contentsToken
  */
 const transform = async (
-  userId: string | null,
+  userId: Types.ObjectId | null,
   userRoles: string[],
-  book: BookDocument & Id,
-  publishers: (PublisherDocument & Id)[],
+  book: PopulatedBook,
+  publishers: PublisherDocument[],
   isTeacher = true,
 ): Promise<BookDocumentEx> => {
   const isPublisherAdmin =
@@ -115,46 +116,25 @@ const transform = async (
   const hideRemark = !isAdmin(userRoles) && !isPublisherAdmin;
 
   // optionally hide solutions
-  // assignment as (BookAssignmentDocument & Id)[]
-  const assignments = book.assignments.map(assignment =>
-    typeof assignment === 'string' || assignment instanceof mongoose.Types.ObjectId
-      ? assignment
-      : {
-          ...assignment,
-          ...(hideRemark && { remarks: [] }),
-          ...(!isAdmin(userRoles) && !isPublisherAdmin && !isTeacher && { solutions: [] }),
-          contribution:
-            typeof assignment.contribution === 'string' || assignment.contribution instanceof mongoose.Types.ObjectId
-              ? assignment.contribution
-              : { ...assignment.contribution, ...(hideRemark && { remarks: [] }) },
-        },
-  );
+  // assignment as (BookAssignmentDocument)[]
+  const assignments = book.assignments.map(assignment => ({
+    ...assignment,
+    ...(hideRemark && { remarks: [] }),
+    ...(!isAdmin(userRoles) && !isPublisherAdmin && !isTeacher && { solutions: [] }),
+    contribution: { ...assignment.contribution, ...(!isAdmin(userRoles) && { remarks: [] }) },
+  }));
 
   return {
     ...book,
     ...(hideRemark && { remarks: [] }),
     assignments,
-    supplements: book.supplements.map(supplement =>
-      typeof supplement === 'string' || supplement instanceof mongoose.Types.ObjectId
-        ? supplement
-        : {
-            ...supplement,
-            contribution:
-              typeof supplement.contribution === 'string' || supplement.contribution instanceof mongoose.Types.ObjectId
-                ? supplement.contribution
-                : { ...supplement.contribution, ...(hideRemark && { remarks: [] }) },
-          },
-    ),
+    supplements: book.supplements.map(supplement => ({
+      ...supplement,
+      contribution: { ...supplement.contribution, ...(!isAdmin(userRoles) && { remarks: [] }) },
+    })),
     contentsToken: await signContentIds(
       userId,
-      assignments
-        .map(assignment =>
-          typeof assignment === 'string' || assignment instanceof mongoose.Types.ObjectId
-            ? 'IMPOSSIBLE' // this is not possible (if populating correctly)
-            : [assignment.content, ...assignment.examples],
-        )
-        .flat()
-        .filter((x): x is Types.ObjectId => x !== 'IMPOSSIBLE'),
+      assignments.map(assignment => [assignment.content, ...assignment.examples]).flat(),
     ),
   };
 };
@@ -188,8 +168,10 @@ const addRemark = async (req: Request, args: unknown): Promise<BookDocumentEx> =
   const book = await Book.findByIdAndUpdate(
     id,
     { $push: { remarks: { t: new Date(), u: userId, m: remark } } },
-    findAndUpdateOpt,
-  ).lean();
+    { fields: adminSelect, new: true },
+  )
+    .populate<Populate>(populate)
+    .lean();
   if (book) {
     const [transformed] = await Promise.all([
       transform(userId, userRoles, book, [publisher]),
@@ -241,7 +223,7 @@ const create = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${book._id}`),
     DatabaseEvent.log(userId, `/books/${_id}`, 'CREATE', { args }),
     syncToAllSatellites({
-      bulkWrite: { books: [{ insertOne: { document: book.toObject() } }] satisfies BulkWrite<BookDocument> },
+      bulkWrite: { books: [{ insertOne: { document: book } }] satisfies BulkWrite<BookDocument> },
     }),
   ]);
 
@@ -269,7 +251,7 @@ const find = async (req: Request, args: unknown): Promise<BookDocumentEx[]> => {
 
   const { userId, userExtra, userRoles } = req;
   const [books, publishers, isActiveTeacher] = await Promise.all([
-    Book.find(filter, adminSelect).populate(nestedPopulate).lean(),
+    Book.find(filter, adminSelect).populate<Populate>(populate).lean(),
     userId ? Publisher.find({ admins: userId }).lean() : [],
     isTeacher(userExtra),
   ]);
@@ -292,7 +274,7 @@ const findMany: RequestHandler = async (req, res, next) => {
     const { userId, userExtra, userRoles } = req;
     const [total, books, publishers, isActiveTeacher] = await Promise.all([
       Book.countDocuments(filter),
-      Book.find(filter, adminSelect, options).populate(nestedPopulate).lean(),
+      Book.find(filter, adminSelect, options).populate<Populate>(populate).lean(),
       userId ? Publisher.find({ admins: userId }).lean() : [],
       isTeacher(userExtra),
     ]);
@@ -316,7 +298,7 @@ const findOne = async (req: Request, args: unknown): Promise<BookDocumentEx | nu
 
   const { userId, userExtra, userRoles } = req;
   const [book, publishers, isActiveTeacher] = await Promise.all([
-    Book.findOne(filter, adminSelect).populate(nestedPopulate).lean(),
+    Book.findOne(filter, adminSelect).populate<Populate>(populate).lean(),
     userId ? Publisher.find({ admins: userId }).lean() : [],
     isTeacher(userExtra),
   ]);
@@ -430,7 +412,7 @@ const update = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
     ...(inputFields.subTitle ? { subTitle: inputFields.subTitle } : { $unset: { subTitle: 1 } }),
   };
   const [book] = await Promise.all([
-    Book.findByIdAndUpdate(id, update, findAndUpdateOpt).lean(),
+    Book.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
     DatabaseEvent.log(userId, `/books/${id}`, 'UPDATE', { args, original }),
     syncToAllSatellites({
@@ -466,7 +448,7 @@ const addRevision = async (req: Request, args: unknown): Promise<BookDocumentEx>
     $push: { revisions: { _id: mongoId(), ...revision, imageUrls: [], createdAt: new Date() } },
   };
   const [book] = await Promise.all([
-    Book.findByIdAndUpdate(id, update, findAndUpdateOpt).lean(),
+    Book.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
     DatabaseEvent.log(userId, `/books/${id}`, 'addRevision', { args, originalRevisions: original.revisions }),
     syncToAllSatellites({
@@ -485,10 +467,10 @@ const addRevision = async (req: Request, args: unknown): Promise<BookDocumentEx>
 const removeRevision = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
-  const { id, revisionId, remark } = await bookRevisionIdSchema.concat(removeSchema).validate(args);
+  const { id, subId, remark } = await removeSchema.concat(subIdSchema).validate(args);
 
   const { book: original, publisher } = await checkPermission(id, userId, isAdmin(userRoles), {
-    'revisions._id': revisionId,
+    'revisions._id': subId,
   });
 
   const msg = {
@@ -497,17 +479,19 @@ const removeRevision = async (req: Request, args: unknown): Promise<BookDocument
     zhHK: `剛刪除教科書版本：${original.title} [/books/${id}]。`,
   };
 
-  // const imageUrls = original.revisions.find(rev => rev._id.equals(revisionId))?.imageUrls ?? [];
+  // const imageUrls = original.revisions.find(rev => rev._id.equals(subId))?.imageUrls ?? [];
   const [book] = await Promise.all([
     Book.findOneAndUpdate(
-      // { _id: id, revisions: { _id: revisionId } },
-      { _id: id, 'revisions._id': revisionId },
+      // { _id: id, revisions: { _id: subId } },
+      { _id: id, 'revisions._id': subId },
       {
         $set: { 'revisions.$.deletedAt': new Date(), 'revisions.$.isbn': DELETED },
         ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
       },
-      findAndUpdateOpt,
-    ).lean(),
+      { fields: adminSelect, new: true },
+    )
+      .populate<Populate>(populate)
+      .lean(),
     // ...imageUrls.map(async imageUrl => storage.removeObject(imageUrl)),
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
     DatabaseEvent.log(userId, `/books/${id}`, 'removeRevision', { args, originalRevisions: original.revisions }),
@@ -537,14 +521,14 @@ const removeRevision = async (req: Request, args: unknown): Promise<BookDocument
 const addRevisionImage = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
-  const { id, revisionId, url } = await bookRevisionIdSchema.concat(idSchema).concat(urlSchema).validate(args);
+  const { id, subId, url } = await idSchema.concat(subIdSchema).concat(urlSchema).validate(args);
 
   const [{ book: original, publisher }] = await Promise.all([
-    checkPermission(id, userId, isAdmin(userRoles), { 'revisions._id': revisionId }),
+    checkPermission(id, userId, isAdmin(userRoles), { 'revisions._id': subId }),
     storage.validateObject(url, userId), // check file is uploaded to Minio successfully
   ]);
 
-  const revision = original.revisions.find(r => r._id.equals(revisionId));
+  const revision = original.revisions.find(r => r._id.equals(subId));
   if (revision) {
     const msg = {
       enUS: `A book cover photo is added: ${original.title}, Rev: ${revision.rev} [/books/${id}].`,
@@ -554,10 +538,12 @@ const addRevisionImage = async (req: Request, args: unknown): Promise<BookDocume
 
     const [book] = await Promise.all([
       Book.findOneAndUpdate(
-        { _id: id, 'revisions._id': revisionId },
+        { _id: id, 'revisions._id': subId },
         { $push: { 'revisions.$.imageUrls': url } },
-        findAndUpdateOpt,
-      ).lean(),
+        { fields: adminSelect, new: true },
+      )
+        .populate<Populate>(populate)
+        .lean(),
       messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
       DatabaseEvent.log(userId, `/books/${id}`, 'addRevisionImage', { args }),
     ]);
@@ -588,17 +574,14 @@ const addRevisionImage = async (req: Request, args: unknown): Promise<BookDocume
 const removeRevisionImage = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
-  const { id, revisionId, remark, url } = await bookRevisionIdSchema
-    .concat(removeSchema)
-    .concat(urlSchema)
-    .validate(args);
+  const { id, subId, remark, url } = await removeSchema.concat(subIdSchema).concat(urlSchema).validate(args);
 
   const { book: original, publisher } = await checkPermission(id, userId, isAdmin(userRoles), {
-    'revisions._id': revisionId,
+    'revisions._id': subId,
     'revisions.imageUrls': url,
   });
 
-  const revision = original.revisions.find(r => r._id.equals(revisionId) && r.imageUrls.includes(url));
+  const revision = original.revisions.find(r => r._id.equals(subId) && r.imageUrls.includes(url));
   if (revision) {
     const msg = {
       enUS: `A book cover photo is removed: ${original.title} , Rev: ${revision.rev} [/books/${id}].`,
@@ -608,13 +591,15 @@ const removeRevisionImage = async (req: Request, args: unknown): Promise<BookDoc
 
     const [book] = await Promise.all([
       await Book.findOneAndUpdate(
-        { _id: id, 'revisions._id': revisionId },
+        { _id: id, 'revisions._id': subId },
         {
           $set: { 'revisions.$.imageUrls': `${CONTENT_PREFIX.BLOCKED}#${url}` },
           ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
         },
-        findAndUpdateOpt,
-      ).lean(),
+        { fields: adminSelect, new: true },
+      )
+        .populate<Populate>(populate)
+        .lean(),
       // storage.removeObject(url), // delete file in Minio if exists
       messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
       DatabaseEvent.log(userId, `/books/${id}`, 'removeRevisionImage', { args }),
@@ -671,7 +656,7 @@ const addAssignment = async (req: Request, args: unknown): Promise<BookDocumentE
   const content = new Content<Partial<ContentDocument>>({ parents, creator, data });
   const examples = examplesFields.map(data => new Content<Partial<ContentDocument>>({ parents, creator, data }));
 
-  const assignment = new BookAssignment<Partial<BookAssignmentDocument & Id>>({
+  const assignment = new BookAssignment<Partial<BookAssignmentDocument>>({
     _id: bookAssignmentId,
     ...assignmentFields,
     contribution: contribution._id,
@@ -684,7 +669,9 @@ const addAssignment = async (req: Request, args: unknown): Promise<BookDocumentE
   const update: UpdateQuery<BookDocument> = { $push: { assignments: assignment._id } };
   const msg = `A book assignment (${bookAssignmentId}) is added to book (${id})`;
   const [book] = await Promise.all([
-    Book.findOneAndUpdate({ _id: id, deletedAt: { $exists: false } }, update, findAndUpdateOpt).lean(),
+    Book.findOneAndUpdate({ _id: id, deletedAt: { $exists: false } }, update, { fields: adminSelect, new: true })
+      .populate<Populate>(populate)
+      .lean(),
     Content.insertMany([content, ...examples], { rawResult: true }),
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
     DatabaseEvent.log(userId, `/books/${id}`, 'addAssignment', { args, bookAssignmentId, contributionId }),
@@ -694,7 +681,7 @@ const addAssignment = async (req: Request, args: unknown): Promise<BookDocumentE
         bookAssignments: [
           { insertOne: { document: assignment.toObject() } },
         ] satisfies BulkWrite<BookAssignmentDocument>,
-        contributions: [{ insertOne: { document: contribution.toObject() } }] satisfies BulkWrite<ContributionDocument>,
+        contributions: [{ insertOne: { document: contribution } }] satisfies BulkWrite<ContributionDocument>,
       },
       contentsToken: await signContentIds(
         null,
@@ -716,21 +703,20 @@ const addAssignment = async (req: Request, args: unknown): Promise<BookDocumentE
 const removeAssignment = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN'); // only isAdmin could proceed
-  const { id, assignmentId, remark } = await bookAssignmentIdSchema
-    .concat(idSchema)
-    .concat(removeSchema)
-    .validate(args);
+  const { id, subId, remark } = await idSchema.concat(removeSchema).concat(subIdSchema).validate(args);
 
-  const { publisher } = await checkPermission(id, userId, isAdmin(userRoles), { assignments: assignmentId });
-  await BookAssignment.updateOne({ _id: assignmentId }, { deletedAt: new Date() }); // mark BookAssignment deleted before populating
+  const { publisher } = await checkPermission(id, userId, isAdmin(userRoles), { assignments: subId });
+  await BookAssignment.updateOne({ _id: subId }, { deletedAt: new Date() }); // mark BookAssignment deleted before populating
 
-  const msg = `A book assignment (${assignmentId}) is removed from book (${id})`;
+  const msg = `A book assignment (${subId}) is removed from book (${id})`;
   const [book] = await Promise.all([
     Book.findByIdAndUpdate(
       id,
       { updatedAt: new Date(), ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
-      findAndUpdateOpt,
-    ).lean(),
+      { fields: adminSelect, new: true },
+    )
+      .populate<Populate>(populate)
+      .lean(),
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
     DatabaseEvent.log(userId, `/books/${id}`, 'removeAssignment', { args }),
     syncToAllSatellites({
@@ -739,7 +725,7 @@ const removeAssignment = async (req: Request, args: unknown): Promise<BookDocume
           { updateOne: { filter: { _id: id }, update: { updatedAt: new Date() } } },
         ] satisfies BulkWrite<BookDocument>,
         bookAssignments: [
-          { updateOne: { filter: { _id: assignmentId }, update: { deletedAt: new Date() } } },
+          { updateOne: { filter: { _id: subId }, update: { deletedAt: new Date() } } },
         ] satisfies BulkWrite<BookAssignmentDocument>,
       },
     }),
@@ -783,7 +769,9 @@ const addSupplement = async (req: Request, args: unknown): Promise<BookDocumentE
   const msg = `A book supplement is added to book (${id})`;
   await contribution.save(); // need to save before population
   const [book] = await Promise.all([
-    Book.findOneAndUpdate({ _id: id, deletedAt: { $exists: false } }, update, findAndUpdateOpt).lean(),
+    Book.findOneAndUpdate({ _id: id, deletedAt: { $exists: false } }, update, { fields: adminSelect, new: true })
+      .populate<Populate>(populate)
+      .lean(),
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
     DatabaseEvent.log(userId, `/books/${id}`, 'addSupplement', { args }),
     syncToAllSatellites({
@@ -805,20 +793,22 @@ const addSupplement = async (req: Request, args: unknown): Promise<BookDocumentE
  */
 const removeSupplement = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
   const { userId, userLocale, userRoles } = auth(req, 'ADMIN');
-  const { id, supplementId, remark } = await bookSupplementIdSchema.concat(removeSchema).validate(args);
+  const { id, subId, remark } = await subIdSchema.concat(removeSchema).validate(args);
 
-  const { publisher } = await checkPermission(id, userId, isAdmin(userRoles), { 'supplements._id': supplementId });
+  const { publisher } = await checkPermission(id, userId, isAdmin(userRoles), { 'supplements._id': subId });
 
-  const msg = `A book supplement (${supplementId}) is removed from book (${id})`;
+  const msg = `A book supplement (${subId}) is removed from book (${id})`;
   const [book] = await Promise.all([
     Book.findOneAndUpdate(
-      { _id: id, 'supplements._id': supplementId, deletedAt: { $exists: false } },
+      { _id: id, 'supplements._id': subId, deletedAt: { $exists: false } },
       {
         $set: { 'supplements.$.deletedAt': new Date() },
         ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
       },
-      findAndUpdateOpt,
-    ).lean(),
+      { fields: adminSelect, new: true },
+    )
+      .populate<Populate>(populate)
+      .lean(),
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
     DatabaseEvent.log(userId, `/books/${id}`, 'removeSupplement', { args }),
     syncToAllSatellites({
@@ -826,7 +816,7 @@ const removeSupplement = async (req: Request, args: unknown): Promise<BookDocume
         books: [
           {
             updateOne: {
-              filter: { _id: id, 'supplements._id': supplementId },
+              filter: { _id: id, 'supplements._id': subId },
               update: { $set: { 'supplements.$.deletedAt': new Date() } },
             },
           },

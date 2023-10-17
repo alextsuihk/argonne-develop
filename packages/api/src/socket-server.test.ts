@@ -9,7 +9,7 @@ import configLoader from './config/config-loader';
 import { apolloExpect, ApolloServer, FAKE, FAKE_LOCALE, jestSetup, jestTeardown } from './jest';
 import type { TenantDocument } from './models/tenant';
 import Tenant from './models/tenant';
-import type { Id, UserDocument } from './models/user';
+import type { UserDocument } from './models/user';
 import { LIST_SOCKETS } from './queries/auth';
 import socketServer from './socket-server';
 import { mongoId } from './utils/helper';
@@ -18,15 +18,15 @@ import token from './utils/token';
 const { MSG_ENUM } = LOCALE;
 const { DEFAULTS } = configLoader;
 
-const generateAccessToken = async (user: UserDocument & Id) => {
+const generateAccessToken = async (user: UserDocument) => {
   const { accessToken } = await token.createTokens(user, { ip: '127.0.0.1', ua: 'Jest-User-Agent', expiresIn: 5 });
   return accessToken;
 };
 
-// const refreshToken = async (userId: string) => token.signStrings([REFRESH_TOKEN, userId, randomString()], 5);
+// const refreshToken = async (userId: string) => token.signStrings([REFRESH_TOKEN_PREFIX, userId, randomString()], 5);
 
 describe('Basic Test on Socket client connectivity', () => {
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
   let userId: string;
   let normalServer: ApolloServer | null;
   let serverUrl: string;

@@ -1,13 +1,13 @@
 /**
- * Scrambling any mongoId
+ * Iterate & Scramble ObjectId
  *
  */
 
 import mongoose, { Types } from 'mongoose';
 
-const hack = async (data: unknown, userId: string | Types.ObjectId) => `hack-${data}-${userId}`;
+const hack = async (data: unknown, userId: Types.ObjectId) => `hack-${data}-${userId}`;
 
-const scramble = async (data: unknown, userId: string | Types.ObjectId): Promise<unknown> =>
+const scramble = async (data: unknown, userId: Types.ObjectId): Promise<unknown> =>
   mongoose.isObjectIdOrHexString(data)
     ? hack(data, userId)
     : Array.isArray(data)

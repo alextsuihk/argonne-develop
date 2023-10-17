@@ -1,5 +1,3 @@
-console.log('TODO: placeholder for assignment.test');
-
 /**
  * Jest: /resolvers/assignment
  *
@@ -25,39 +23,57 @@ import {
   randomItem,
 } from '../jest';
 import District from '../models/district';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import {
-  ADD_DISTRICT,
-  ADD_DISTRICT_REMARK,
-  GET_DISTRICT,
-  GET_DISTRICTS,
-  REMOVE_DISTRICT,
-  UPDATE_DISTRICT,
-} from '../queries/district';
+  ADD_ASSIGNMENT,
+  GET_ASSIGNMENT,
+  GET_ASSIGNMENTS,
+  GRADE_ASSIGNMENT,
+  REMOVE_ASSIGNMENT,
+  UPDATE_ASSIGNMENT,
+} from '../queries/assignment';
 
 const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('District GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
 
-  const expectedNormalFormat = {
+  const expectedFormat = {
     _id: expectedIdFormat,
     flags: expect.any(Array),
-    name: expectedLocaleFormat,
-    region: expectedLocaleFormat,
-    remarks: null,
+    classroom: expectedIdFormat,
+    title: expect.toBeOneOf([null, expect.any(String)]),
+    deadline: expectedDateFormat(true),
+
+    bookAssignments: expect.any(Array), // could be empty array
+    manualAssignments: expect.any(Array),
+    maxScores: expect.any(Number),
+
+    job: expect.toBeOneOf([null, expectedIdFormat]),
+    homeworks: expect.arrayContaining([
+      {
+        _id: expectedIdFormat,
+        flags: expect.any(Array),
+        users: expectedIdFormat,
+        assignmentIdx: expect.any(Number),
+        dynParamIdx: expect.toBeOneOf([null, expect.any(Number)]),
+        answer: expect.toBeOneOf([null, expect.any(Number)]),
+        answeredAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
+        viewedExamples: expect.any(Array),
+        scores: expect.any(Array),
+        questions: expect.any(Array), // could be empty array
+      },
+    ]),
+
     createdAt: expectedDateFormat(true),
     updatedAt: expectedDateFormat(true),
     deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
-  };
 
-  const expectedAdminFormat = {
-    ...expectedNormalFormat,
-    remarks: expect.any(Array), // could be empty array without any remarks
+    contentsToken: expect.any(String),
   };
 
   beforeAll(async () => {

@@ -13,7 +13,7 @@ import type { Types } from 'mongoose';
 import configLoader from '../config/config-loader';
 import type { PresignedUrlDocument } from '../models/presigned-url';
 import PresignedUrl from '../models/presigned-url';
-import { mongoId, randomString } from './helper';
+import { randomString } from './helper';
 import log from './log';
 export type { BucketItem } from 'minio';
 
@@ -64,7 +64,7 @@ const downloadFromUrlAndSave = async (url: string, bucketType: BucketType = 'pub
 const presignedPutObject = async (
   bucketType: BucketType,
   ext: string,
-  userId: string,
+  userId: Types.ObjectId,
 ): Promise<PresignedUrlWithExpiry> => {
   const bucketName = bucketType === 'private' ? privateBucket : publicBucket;
   if (!(await client.bucketExists(bucketName))) throw { statusCode: 500, code: MSG_ENUM.MINIO_ERROR };
@@ -74,7 +74,7 @@ const presignedPutObject = async (
   const [presignedUrl] = await Promise.all([
     client.presignedPutObject(bucketName, objectName, expiry),
     PresignedUrl.create<Partial<PresignedUrlDocument>>({
-      user: mongoId(userId),
+      user: userId,
       url: `/${bucketName}/${objectName}`,
       expireAt: addSeconds(Date.now(), DEFAULTS.STORAGE.PRESIGNED_URL_PUT_EXPIRY + 5),
     }),
@@ -156,7 +156,7 @@ export const signUrls = async (urls: string[]): Promise<string[]> =>
  *
  * @param url (e.g. /bucketName/objectName)
  */
-const validateObject = async (url: string, userId: string | Types.ObjectId, skipCheck = false): Promise<string> => {
+const validateObject = async (url: string, userId: Types.ObjectId, skipCheck = false): Promise<string> => {
   const [bucketName, ...rest] = url.split('/').slice(1) ?? [];
 
   if (!bucketName || !rest.length || !buckets.includes(bucketName))

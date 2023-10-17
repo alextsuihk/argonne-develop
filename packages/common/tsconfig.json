@@ -1,18 +1,25 @@
 {
   "compilerOptions": {
-    "target": "esnext" /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019', 'ES2020', or 'ESNEXT'. */,
-    "module": "commonjs",
-    "composite": true,
-    "allowSyntheticDefaultImports": true,
+    /* Base Options */
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "removeComments": true,
-    "resolveJsonModule": true /* allow importing JSON file */,
     "skipLibCheck": true,
+    "target": "esnext" /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019', 'ES2020', or 'ESNEXT'. */,
+    "resolveJsonModule": true /* allow importing JSON file */,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Strictness */
     "strict": true,
+
+    /* transpiling with typescript */
+    "moduleResolution": "node",
+    "module": "commonjs",
     "rootDir": "./src" /* Specify the root directory of input files. Use to control the output directory structure with --outDir. */,
-    "outDir": "./dist" /* Redirect output structure to the directory. */
+    "outDir": "./dist" /* Redirect output structure to the directory. */,
+
+    /* monorepo */
+    "composite": true,
+    "declarationMap": true
   },
   "include": ["src"]
 }

@@ -10,7 +10,7 @@ import axios from 'axios';
 import configLoader from '../config/config-loader';
 import { SyncResponse } from '../controllers/satellite';
 import SyncJob from '../models/sync-job';
-import Tenant from '../models/tenant';
+import { findSatelliteTenantById } from '../models/tenant';
 import log from '../utils/log';
 
 const { config, DEFAULTS } = configLoader;
@@ -31,7 +31,7 @@ export const sync = async (tenantId: string) => {
       .sort('createdAt')
       .lean();
 
-  const tenant = await Tenant.findSatelliteById(tenantId);
+  const tenant = await findSatelliteTenantById(tenantId, 'sync');
 
   const destination = tenant
     ? {
@@ -45,13 +45,15 @@ export const sync = async (tenantId: string) => {
 
     while (syncJob) {
       const { _id, attempt, notify, sync } = syncJob;
+      const syncJobId = syncJob._id.toString();
+
       try {
         const { data } = await axios.patch<SyncResponse>(
           `${destination.url}/api/satellite/sync`,
           {
             apiKey: destination.apiKey,
             attempt: attempt + 1,
-            syncJobId: _id.toString(),
+            syncJobId,
             stringifiedNotify: attempt < 1 ? JSON.stringify(notify) : null, // do notify() ONLY for first 2 attempts
             stringifiedSync: JSON.stringify(sync),
             tenantId,
@@ -71,7 +73,7 @@ export const sync = async (tenantId: string) => {
 
           !((attempt + 1) % DEFAULTS.JOB_RUNNER.SYNC.ATTEMPT_FAILURE_WRITE_LOG) && // for error, log every n attempts
             log('error', `satellite sync error (too many attempts)`, {
-              syncJobId: _id.toString(),
+              syncJobId,
               attempt: attempt + 1,
               error: JSON.stringify(error),
             }),

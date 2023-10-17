@@ -8,37 +8,27 @@
  * TODO: model/inventory to trace in/out and actual cost
  */
 
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Locale } from './common';
-import { baseDefinition, localeDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface MerchandiseDocument extends BaseDocument {
-  owner: Types.ObjectId;
-  name: Locale;
-
-  amount: number;
-  availability: number;
-}
+import type { Id } from './common';
+import { baseDefinition, localeSchema } from './common';
 
 const { DEFAULTS } = configLoader;
 
-const merchandiseSchema = new Schema<MerchandiseDocument>(
+const merchandiseSchema = new Schema(
   {
     ...baseDefinition,
-    owner: { type: Schema.Types.ObjectId, ref: 'Ref', index: true },
-    name: localeDefinition,
+    owner: { type: Schema.Types.ObjectId, ref: 'Ref', required: true, index: true },
+    name: { type: localeSchema, required: true },
 
-    amount: Number,
-    availability: Number,
+    amount: { type: Number, required: true },
+    availability: { type: Number, required: true },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const Merchandise = model<MerchandiseDocument>('Merchandise', merchandiseSchema);
-
+const Merchandise = model('Merchandise', merchandiseSchema);
+export type MerchandiseDocument = InferSchemaType<typeof merchandiseSchema> & Id;
 export default Merchandise;

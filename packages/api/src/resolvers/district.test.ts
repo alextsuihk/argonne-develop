@@ -23,7 +23,7 @@ import {
   randomItem,
 } from '../jest';
 import District from '../models/district';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import {
   ADD_DISTRICT,
   ADD_DISTRICT_REMARK,
@@ -38,7 +38,7 @@ const { MSG_ENUM } = LOCALE;
 // Top level of this test suite:
 describe('District GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
 
@@ -123,12 +123,13 @@ describe('District GraphQL', () => {
     const newId: string = createdRes.data!.addDistrict._id;
 
     // add remark
+    const remark = `addRemark: ${FAKE}`;
     const addRemarkRes = await adminServer!.executeOperation({
       query: ADD_DISTRICT_REMARK,
-      variables: { id: newId, remark: FAKE },
+      variables: { id: newId, remark },
     });
     apolloExpect(addRemarkRes, 'data', {
-      addDistrictRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
+      addDistrictRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, remark, true) },
     });
 
     // update newly created document
@@ -141,7 +142,7 @@ describe('District GraphQL', () => {
     // delete newly created document
     const removedRes = await adminServer!.executeOperation({
       query: REMOVE_DISTRICT,
-      variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) },
+      variables: { id: newId, ...(prob(0.5) && { remark: `remove: ${FAKE}` }) },
     });
     apolloExpect(removedRes, 'data', { removeDistrict: { code: MSG_ENUM.COMPLETED } });
   });

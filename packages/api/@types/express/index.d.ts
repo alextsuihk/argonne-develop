@@ -6,14 +6,15 @@
  * note: declare as global
  */
 
-import type { Id, UserDocument } from '../../src/models/user';
+import type { UserDocument } from '../../src/models/user';
 import type { Auth } from '../../src/utils/token';
 
 declare global {
   namespace Express {
     interface Request extends Partial<Auth> {
+      apiScope?: string;
       ua: string;
-      user?: UserDocument & Id;
+      user?: UserDocument;
       isMobile?: boolean;
       isApollo?: boolean;
     }

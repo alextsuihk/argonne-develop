@@ -10,7 +10,7 @@ import type { Types, UpdateQuery } from 'mongoose';
 import { signContentIds } from '../controllers/content';
 import type { ChatDocument } from '../models/chat';
 import Chat from '../models/chat';
-import type { ChatGroupDocument, Id } from '../models/chat-group';
+import type { ChatGroupDocument } from '../models/chat-group';
 import ChatGroup from '../models/chat-group';
 import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
@@ -36,21 +36,15 @@ export const extract = (msg: Locale | string, userLocale?: string) =>
     : msg.enUS;
 
 /**
- * Determine whether chats[] includes chatId
- */
-// export const includesChat = (chats: (string | Types.ObjectId | Id)[], chatId: string) =>
-//   chats.map(chat => (typeof chat === 'string' ? chat : chat._id.toString())).includes(chatId);
-
-/**
  * Send Message to System Admins
  * only notify without sync to satellite
  */
 export const messageToAdmins = async (
   msg: Locale | string,
-  userId: string,
+  userId: Types.ObjectId,
   userLocale: string,
   isAdmin = false,
-  userIds: (string | Types.ObjectId)[] = [],
+  userIds: Types.ObjectId[] = [],
   key = '(CORE Info)',
   title?: Locale | string,
 ) => {
@@ -75,14 +69,14 @@ export const messageToAdmins = async (
 
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/chats/${chatId}`],
-    creator: mongoId(userId),
+    creator: userId,
     data: extract(msg, userLocale),
   });
 
-  const chat = new Chat<Partial<ChatDocument & Id>>({
+  const chat = new Chat<Partial<ChatDocument>>({
     _id: chatId,
     parents: [`/chatGroups/${chatGroup._id}`],
-    members: [{ user: mongoId(userId), flags: [], lastViewedAt: new Date() }],
+    members: [{ user: userId, flags: [], lastViewedAt: new Date() }],
     contents: [content._id],
   });
 
@@ -99,9 +93,9 @@ export const messageToAdmins = async (
  * Start ChatGroup (with content)
  */
 export const startChatGroup = async (
-  tenantId: string | Types.ObjectId | null,
+  tenantId: Types.ObjectId | null,
   msg: Locale | string,
-  userIds: (string | Types.ObjectId)[],
+  userIds: Types.ObjectId[],
   userLocale: string,
   key: string,
   flag?: string,
@@ -119,13 +113,13 @@ export const startChatGroup = async (
 
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/chats/${chatId}`],
-    creator: mongoId(user0Id),
+    creator: user0Id,
     data: extract(msg, userLocale),
   });
-  const chat = new Chat<Partial<ChatDocument & Id>>({
+  const chat = new Chat<Partial<ChatDocument>>({
     _id: chatId,
     parents: [`/chatGroups/${chatGroup._id}`],
-    members: [{ user: mongoId(user0Id), flags: [], lastViewedAt: new Date() }],
+    members: [{ user: user0Id, flags: [], lastViewedAt: new Date() }],
     contents: [content._id],
   });
 
@@ -140,7 +134,7 @@ export const startChatGroup = async (
           chatGroups: [
             { updateOne: { filter: { _id: chatGroup._id }, update, upsert: true } },
           ] satisfies BulkWrite<ChatGroupDocument>,
-          chats: [{ insertOne: { document: chat.toObject() } }] satisfies BulkWrite<ChatDocument>,
+          chats: [{ insertOne: { document: chat } }] satisfies BulkWrite<ChatDocument>,
         },
         contentsToken: await signContentIds(null, [content._id]),
       },

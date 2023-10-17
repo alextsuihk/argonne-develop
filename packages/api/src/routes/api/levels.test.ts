@@ -17,7 +17,7 @@ import {
   jestTeardown,
 } from '../../jest';
 import type { LevelDocument } from '../../models/level';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -26,7 +26,7 @@ const route = 'levels';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
 
   // expected MINIMUM single level format
   const expectedMinFormat = {

@@ -21,7 +21,7 @@ import {
 } from '../jest';
 import type { AnnouncementDocument } from '../models/announcement';
 import Announcement from '../models/announcement';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import { ADD_ANNOUNCEMENT, GET_ANNOUNCEMENT, GET_ANNOUNCEMENTS, REMOVE_ANNOUNCEMENT } from '../queries/announcement';
 
 const { MSG_ENUM } = LOCALE;
@@ -31,8 +31,8 @@ describe('Announcement GraphQL', () => {
   let adminServer: ApolloServer | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantAdminServer: ApolloServer | null;
   let tenantId: string | null;
 

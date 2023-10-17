@@ -8,7 +8,29 @@ import { gql } from 'apollo-server-core';
 import { REMARK, STATUS_RESPONSE } from './common';
 import { CONTRIBUTION_FIELDS } from './contribution';
 
+export const BOOK_ASSIGNMENT_FIELDS = gql`
+  fragment BookAssignmentFields on BookAssignment {
+    _id
+    flags
+    contribution {
+      ...ContributionFields
+    }
+    chapter
+    content
+    dynParams
+    solutions
+    examples
+    remarks {
+      ...RemarkFields
+    }
+    createdAt
+    updatedAt
+    deletedAt
+  }
+`;
+
 const BOOK_FIELDS = gql`
+  ${BOOK_ASSIGNMENT_FIELDS}
   ${CONTRIBUTION_FIELDS}
   ${REMARK}
   fragment BookFields on Book {
@@ -22,22 +44,7 @@ const BOOK_FIELDS = gql`
     chatGroup
 
     assignments {
-      _id
-      flags
-      contribution {
-        ...ContributionFields
-      }
-      chapter
-      content
-      dynParams
-      solutions
-      examples
-      remarks {
-        ...RemarkFields
-      }
-      createdAt
-      updatedAt
-      deletedAt
+      ...BookAssignmentFields
     }
 
     supplements {
@@ -108,8 +115,8 @@ export const ADD_BOOK_REVISION = gql`
 
 export const ADD_BOOK_REVISION_IMAGE = gql`
   ${BOOK_FIELDS}
-  mutation AddBookRevisionImage($id: ID!, $revisionId: String!, $url: String!) {
-    addBookRevisionImage(id: $id, revisionId: $revisionId, url: $url) {
+  mutation AddBookRevisionImage($id: ID!, $subId: String!, $url: String!) {
+    addBookRevisionImage(id: $id, subId: $subId, url: $url) {
       ...BookFields
     }
   }
@@ -159,8 +166,8 @@ export const REMOVE_BOOK = gql`
 
 export const REMOVE_BOOK_ASSIGNMENT = gql`
   ${BOOK_FIELDS}
-  mutation RemoveBookAssignment($id: ID!, $assignmentId: String!, $remark: String) {
-    removeBookAssignment(id: $id, assignmentId: $assignmentId, remark: $remark) {
+  mutation RemoveBookAssignment($id: ID!, $subId: String!, $remark: String) {
+    removeBookAssignment(id: $id, subId: $subId, remark: $remark) {
       ...BookFields
     }
   }
@@ -168,8 +175,8 @@ export const REMOVE_BOOK_ASSIGNMENT = gql`
 
 export const REMOVE_BOOK_REVISION = gql`
   ${BOOK_FIELDS}
-  mutation RemoveBookRevision($id: ID!, $revisionId: String!, $remark: String) {
-    removeBookRevision(id: $id, revisionId: $revisionId, remark: $remark) {
+  mutation RemoveBookRevision($id: ID!, $subId: String!, $remark: String) {
+    removeBookRevision(id: $id, subId: $subId, remark: $remark) {
       ...BookFields
     }
   }
@@ -177,8 +184,8 @@ export const REMOVE_BOOK_REVISION = gql`
 
 export const REMOVE_BOOK_REVISION_IMAGE = gql`
   ${BOOK_FIELDS}
-  mutation RemoveBookRevisionImage($id: ID!, $revisionId: String!, $url: String!, $remark: String) {
-    removeBookRevisionImage(id: $id, revisionId: $revisionId, url: $url, remark: $remark) {
+  mutation RemoveBookRevisionImage($id: ID!, $subId: String!, $url: String!, $remark: String) {
+    removeBookRevisionImage(id: $id, subId: $subId, url: $url, remark: $remark) {
       ...BookFields
     }
   }
@@ -186,8 +193,8 @@ export const REMOVE_BOOK_REVISION_IMAGE = gql`
 
 export const REMOVE_BOOK_SUPPLEMENT = gql`
   ${BOOK_FIELDS}
-  mutation RemoveBookSupplement($id: ID!, $supplementId: String!, $remark: String) {
-    removeBookSupplement(id: $id, supplementId: $supplementId, remark: $remark) {
+  mutation RemoveBookSupplement($id: ID!, $subId: String!, $remark: String) {
+    removeBookSupplement(id: $id, subId: $subId, remark: $remark) {
       ...BookFields
     }
   }

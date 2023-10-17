@@ -6,25 +6,22 @@
  *
  */
 
-import mongoose, { Document, Schema } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
+import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-
-export type { Id } from './common';
-
-export interface MigrationDocument extends Document {
-  file: string;
-  migratedAt: Date;
-}
+import type { Id } from './common';
 
 const { DEFAULTS } = configLoader;
 
-const migrationSchema = new Schema<MigrationDocument>(
+const migrationSchema = new Schema(
   {
-    file: String,
-    migratedAt: { type: Date, default: Date.now },
+    file: { type: String, required: true },
+    migratedAt: { type: Date },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-export default mongoose.model<MigrationDocument>('Migration', migrationSchema);
+const Migration = model('Migration', migrationSchema);
+export type MigrationDocument = InferSchemaType<typeof migrationSchema> & Id;
+export default Migration;

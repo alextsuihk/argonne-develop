@@ -5,6 +5,7 @@
  */
 
 import { LOCALE } from '@argonne/common';
+import { addDays } from 'date-fns';
 
 import configLoader from '../config/config-loader';
 import {
@@ -22,7 +23,7 @@ import {
   randomItem,
   randomString,
 } from '../jest';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import VerificationToken from '../models/verification-token';
 import {
   ADD_API_KEY,
@@ -30,12 +31,14 @@ import {
   ADD_MESSENGER,
   ADD_PAYMENT_METHOD,
   IS_EMAIL_AVAILABLE,
+  LIST_API_KEYS,
   // OAUTH2_LINK,
   // OAUTH2_UNLINK,
   REMOVE_API_KEY,
   REMOVE_EMAIL,
   REMOVE_MESSENGER,
   REMOVE_PAYMENT_METHOD,
+  // REMOVE_PUSH_SUBSCRIPTIONS,
   SEND_EMAIL_VERIFICATION,
   SEND_MESSENGER_VERIFICATION,
   UPDATE_AVAILABILITY,
@@ -45,8 +48,7 @@ import {
   VERIFY_EMAIL,
   VERIFY_MESSENGER,
 } from '../queries/auth';
-import { EMAIL_TOKEN_PREFIX } from '../utils/sendmail';
-import token from '../utils/token';
+import token, { EMAIL_TOKEN_PREFIX } from '../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 const { MESSENGER, SYSTEM, USER } = LOCALE.DB_ENUM;
@@ -54,7 +56,7 @@ const { DEFAULTS } = configLoader;
 
 describe('Auth-Extra GraphQL (token)', () => {
   let guestServer: ApolloServer | null;
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
   let normalServer: ApolloServer | null;
   let url: string | undefined;
 
@@ -63,35 +65,35 @@ describe('Auth-Extra GraphQL (token)', () => {
   });
   afterAll(async () => Promise.all([url && jestRemoveObject(url), jestTeardown()]));
 
-  console.log('WIP: OAUTH2_LINK & OAUTH2_UNLINK (Apollo)');
+  console.log('WIP: REMOVE_PUSH_SUBSCRIPTIONS, OAUTH2_LINK & OAUTH2_UNLINK (Apollo)');
 
-  test('should pass when add and remove apiKey', async () => {
-    expect.assertions(2);
+  test('should pass when add, list and remove apiKey', async () => {
+    expect.assertions(3);
 
     // add apiKey
-    const apiKey = { scope: FAKE, ...(prob(0.5) && { note: FAKE2 }), expireAt: new Date() };
-    const addRes = await normalServer!.executeOperation({ query: ADD_API_KEY, variables: apiKey });
-    apolloExpect(addRes, 'data', {
-      addApiKey: expect.objectContaining({
-        ...expectedUserFormat,
-        apiKeys: [
-          ...normalUser!.apiKeys,
-          {
-            _id: expectedIdFormat,
-            value: expect.any(String),
-            ...apiKey,
-            note: apiKey.note || null,
-            expireAt: apiKey.expireAt.getTime(), // convert expireAt to number
-          },
-        ],
-      }),
-    });
+    const add = { scope: FAKE, expireAt: addDays(Date.now(), 1), ...(prob(0.5) && { note: FAKE2 }) };
+    const apiKeys = [
+      ...normalUser!.apiKeys.map(api => ({ ...api, token: expect.any(String), note: api.note || null })),
+      {
+        _id: expectedIdFormat,
+        token: expect.any(String),
+        scope: add.scope,
+        expireAt: add.expireAt.getTime(),
+        note: add.note || null,
+      },
+    ];
+    const addRes = await normalServer!.executeOperation({ query: ADD_API_KEY, variables: add });
+    apolloExpect(addRes, 'data', { addApiKey: apiKeys });
+
+    // list apiKeys
+    const listRes = await normalServer!.executeOperation({ query: LIST_API_KEYS });
+    apolloExpect(listRes, 'data', { listApiKeys: apiKeys });
 
     // remove apiKey
-    const id = addRes.data!.addApiKey.apiKeys.at(-1)._id;
+    const id = listRes.data!.listApiKeys.at(-1)._id;
     const removeRes = await normalServer!.executeOperation({ query: REMOVE_API_KEY, variables: { id } });
     apolloExpect(removeRes, 'data', {
-      removeApiKey: expect.objectContaining({ ...expectedUserFormat, apiKeys: normalUser!.apiKeys }),
+      removeApiKey: normalUser!.apiKeys.map(api => ({ ...api, token: expect.any(String), note: api.note ?? null })),
     });
   });
 
@@ -278,11 +280,11 @@ describe('Auth-Extra GraphQL (token)', () => {
   test('should pass when update locale', async () => {
     expect.assertions(2);
 
-    let locale = randomItem(Object.keys(SYSTEM.LOCALE).filter(l => l !== DEFAULTS.LOCALE));
+    let locale = randomItem(Object.keys(SYSTEM.LOCALE).filter(l => l !== DEFAULTS.USER.LOCALE));
     const res1 = await normalServer!.executeOperation({ query: UPDATE_LOCALE, variables: { locale } });
     apolloExpect(res1, 'data', { updateLocale: expect.objectContaining({ ...expectedUserFormat, locale }) });
 
-    locale = DEFAULTS.LOCALE;
+    locale = DEFAULTS.USER.LOCALE;
     const res2 = await normalServer!.executeOperation({ query: UPDATE_LOCALE, variables: { locale } });
     apolloExpect(res2, 'data', { updateLocale: expect.objectContaining({ ...expectedUserFormat, locale }) });
   });
@@ -320,7 +322,7 @@ describe('Auth-Extra GraphQL (token)', () => {
     apolloExpect(res1, 'data', { updateProfile: expect.objectContaining({ ...expectedUserFormat, ...update, dob }) });
 
     // clear out profile (except name is not clearable)
-    const res2 = await normalServer!.executeOperation({ query: UPDATE_PROFILE });
+    const res2 = await normalServer!.executeOperation({ query: UPDATE_PROFILE, variables: { name: FAKE } });
     apolloExpect(res2, 'data', {
       updateProfile: expect.objectContaining({ ...expectedUserFormat, formalName: null, yob: null, dob: null }),
     });

@@ -3,13 +3,12 @@
  *
  */
 
-import type { Model, Types } from 'mongoose';
+import type { InferSchemaType, Model, Types } from 'mongoose';
 import { Schema } from 'mongoose';
 
-import type { Point } from '../common';
-import { pointSchema } from '../common';
+import { discriminatorKey, pointSchema } from '../common';
 import type { GenericDocument } from './generic';
-import Generic, { options } from './generic';
+import Generic from './generic';
 
 type AuthEventType =
   | 'deregister'
@@ -28,17 +27,8 @@ type AuthEventType =
   | 'register'
   | 'renew';
 
-export interface AuthEventDocument extends GenericDocument {
-  event: AuthEventType;
-  token: string;
-  ua: string;
-  ip: string;
-  location: Point;
-  remark?: string;
-}
-
 type Log = (
-  userId: string | Types.ObjectId,
+  user: Types.ObjectId,
   event: AuthEventType,
   ua: string,
   ip: string,
@@ -49,7 +39,7 @@ interface AuthEventModel extends Model<AuthEventDocument> {
   log: Log;
 }
 
-const authEventSchema = new Schema<AuthEventDocument>(
+const authEventSchema = new Schema(
   {
     event: String,
     token: String,
@@ -58,19 +48,20 @@ const authEventSchema = new Schema<AuthEventDocument>(
     location: pointSchema,
     remark: String,
   },
-  options,
+  discriminatorKey,
 );
 
-const log: Log = async (user, event, ua, ip, coordinates, remark) =>
+const log: Log = async (user, event, ua, ip, coord, remark) =>
   AuthEvent.create<Partial<AuthEventDocument>>({
     user,
     event,
     ua,
     ip,
     ...(remark && { remark }),
-    ...(coordinates && { type: 'Point', coordinates: [coordinates.lng, coordinates.lat] }),
+    ...(coord && { type: 'Point', coordinates: [coord.lng, coord.lat] }),
   });
-authEventSchema.static('log', log);
 
+authEventSchema.static('log', log);
+export type AuthEventDocument = GenericDocument & InferSchemaType<typeof authEventSchema>;
 const AuthEvent = Generic.discriminator<AuthEventDocument, AuthEventModel>('AuthEvent', authEventSchema);
 export default AuthEvent;

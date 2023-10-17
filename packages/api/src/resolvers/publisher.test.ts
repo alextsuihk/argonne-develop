@@ -26,7 +26,7 @@ import {
   randomItem,
 } from '../jest';
 import Publisher from '../models/publisher';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import {
   ADD_PUBLISHER,
   ADD_PUBLISHER_REMARK,
@@ -41,10 +41,10 @@ const { MSG_ENUM } = LOCALE;
 // Top publisher of this test suite:
 describe('Publisher GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
   let url: string | undefined;
   let url2: string | undefined;
 

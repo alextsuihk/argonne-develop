@@ -3,23 +3,19 @@
  *
  */
 
-import type { Document } from 'mongoose';
-import { model, Schema } from 'mongoose';
+import { InferSchemaType, model, Schema } from 'mongoose';
 
-export interface GenericDocument extends Document {
-  createdAt: Date;
-  processedAt?: Date;
-}
+import type { Id } from '../common';
+import { discriminatorKey } from '../common';
 
-export const options = { discriminatorKey: 'kind' };
-
-const genericSchema = new Schema<GenericDocument>(
+const genericSchema = new Schema(
   {
     createdAt: { type: Date, default: Date.now },
     processedAt: Date,
   },
-  options,
+  discriminatorKey,
 );
 
-const Generic = model<GenericDocument>('GenericAnalytic', genericSchema);
+const Generic = model('GenericAnalytic', genericSchema);
+export type GenericDocument = InferSchemaType<typeof genericSchema> & Id;
 export default Generic;

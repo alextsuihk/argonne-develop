@@ -10,9 +10,9 @@ import request from 'supertest';
 
 import app from '../../app';
 import { expectedDateFormat, genUser, jestSetup, jestTeardown, prob, randomString } from '../../jest';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
-import token, { REFRESH_TOKEN } from '../../utils/token';
+import token, { REFRESH_TOKEN_PREFIX } from '../../utils/token';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -22,8 +22,8 @@ const route = 'tenant-binding';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: (UserDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantId: string | null;
 
   beforeAll(async () => {
@@ -81,7 +81,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const user = genUser(null); // create a new user (without tenants)
     const [refreshToken] = await Promise.all([
-      token.signStrings([REFRESH_TOKEN, user._id.toString(), randomString()], 10),
+      token.signStrings([REFRESH_TOKEN_PREFIX, user._id.toString(), randomString()], 10),
       user.save(),
     ]);
 
@@ -106,7 +106,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect(bindRes.status).toBe(200);
 
     // check if binding is successful
-    const updatedUser = await User.findOneActive({ _id: user._id });
+    const updatedUser = await User.findOne({ _id: user._id }).lean();
     expect(updatedUser?.tenants.some(t => t.equals(tenantId!))).toBeTrue();
 
     // tenantAdmin unbinds user
@@ -119,7 +119,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect(unBindRes.status).toBe(200);
 
     // check if unbinding is successful
-    const updated2User = await User.findOneActive({ _id: user._id });
+    const updated2User = await User.findOne({ _id: user._id }).lean();
     expect(updated2User?.tenants.some(t => t.equals(tenantId!))).toBeFalse();
 
     // clean up

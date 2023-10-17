@@ -25,7 +25,7 @@ import {
   testServer,
 } from '../jest';
 import Tag from '../models/tag';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import { ADD_TAG, ADD_TAG_REMARK, GET_TAG, GET_TAGS, REMOVE_TAG, UPDATE_TAG } from '../queries/tag';
 
 const { MSG_ENUM } = LOCALE;
@@ -34,9 +34,9 @@ const { DEFAULTS } = configLoader;
 // Top level of this test suite:
 describe('Tag GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
-  let normalUsers: (UserDocument & Id)[] | null;
+  let normalUsers: UserDocument[] | null;
 
   const expectedNormalFormat = {
     _id: expectedIdFormat,

@@ -17,7 +17,7 @@ import {
   shuffle,
   testServer,
 } from '../jest';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_CONTACT,
@@ -34,8 +34,8 @@ const { MSG_ENUM } = LOCALE;
 describe('Contact GraphQL', () => {
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
-  let normalUser: (UserDocument & Id) | null;
-  let normalUsers: (UserDocument & Id)[] | null;
+  let normalUser: UserDocument | null;
+  let normalUsers: UserDocument[] | null;
 
   const expectedFormat = {
     _id: expectedIdFormat,

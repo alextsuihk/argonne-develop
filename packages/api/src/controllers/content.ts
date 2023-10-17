@@ -3,14 +3,14 @@
  *
  */
 
-import { LOCALE, yupSchema } from '@argonne/common';
+import { CONTENT_PREFIX, LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
 import type { Types } from 'mongoose';
 
-import type { ContentDocument, Id } from '../models/content';
+import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
 import type { CensorTask } from '../models/job';
-import Job from '../models/job';
+import { queueJob } from '../models/job';
 import token from '../utils/token';
 import common from './common';
 
@@ -29,10 +29,9 @@ export const censorContent = async (
   tenantId: CensorTask['tenantId'],
   userId: CensorTask['userId'],
   userLocale: CensorTask['userLocale'],
-  model: CensorTask['model'],
-  parentId: CensorTask['parentId'],
+  parent: CensorTask['parent'],
   contentId: CensorTask['contentId'],
-) => Job.queue({ type: 'censor', tenantId, userId, userLocale, model, parentId, contentId });
+) => queueJob({ type: 'censor', tenantId, userId, userLocale, parent, contentId });
 
 const findCommon = async (req: Request, args: unknown) => {
   const { ids, query, token: tok } = await querySchema.concat(optionalIdsSchema).concat(tokenSchema).validate(args);
@@ -53,7 +52,7 @@ const findCommon = async (req: Request, args: unknown) => {
 /**
  * Find Multiple Contents (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<(ContentDocument & Id)[]> => {
+const find = async (req: Request, args: unknown): Promise<ContentDocument[]> => {
   const filter = await findCommon(req, args);
   return Content.find(filter, select()).lean();
 };
@@ -77,10 +76,22 @@ const findMany: RequestHandler<{ token: string }> = async (req, res, next) => {
   }
 };
 
+export const receiveContent = async (
+  userId: Types.ObjectId,
+  parent: string,
+  data: string,
+): Promise<ContentDocument> => {
+  if (data.startsWith(CONTENT_PREFIX.URL)) {
+    // TODO: read from minio, and save to content
+  }
+
+  return Content.create<Partial<ContentDocument>>({ parents: [parent], creator: userId, data });
+};
+
 /**
  * Sign ContentIds
  */
-export const signContentIds = async (userId: string | null, contents: Types.ObjectId[]) =>
-  token.signStrings([CONTENT_IDS_TOKEN_PREFIX, userId || PUBLIC, ...contents.map(c => c.toString())], 0);
+export const signContentIds = async (userId: Types.ObjectId | null, contents: Types.ObjectId[]) =>
+  token.signStrings([CONTENT_IDS_TOKEN_PREFIX, userId?.toString() || PUBLIC, ...contents.map(c => c.toString())], 0);
 
 export default { find, findMany };

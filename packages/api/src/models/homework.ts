@@ -5,33 +5,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { AssignmentDocument } from './assignment';
-import type { BaseDocument, Id } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface HomeworkDocument extends BaseDocument {
-  assignment: Types.ObjectId | (AssignmentDocument & Id);
-
-  user: Types.ObjectId; // student's userId
-  assignmentIdx: number;
-  dynParamIdx?: number;
-
-  contents: Types.ObjectId[];
-  answer?: string;
-  answeredAt?: Date;
-
-  timeSpent?: number;
-  viewedExamples: number[]; // viewed example index
-
-  scores: number[]; // graded by system or teacher
-  questions: Types.ObjectId[];
-}
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -43,13 +22,13 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const homeworkSchema = new Schema<HomeworkDocument>(
+const homeworkSchema = new Schema(
   {
     ...baseDefinition,
 
-    assignment: { type: Schema.Types.ObjectId, ref: 'Assignment' },
+    assignment: { type: Schema.Types.ObjectId, ref: 'Assignment', required: true },
 
-    user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     assignmentIdx: { type: Number, default: 0 },
     dynParamIdx: Number,
 
@@ -66,6 +45,6 @@ const homeworkSchema = new Schema<HomeworkDocument>(
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const Homework = model<HomeworkDocument>('Homework', homeworkSchema);
-
+const Homework = model('Homework', homeworkSchema);
+export type HomeworkDocument = InferSchemaType<typeof homeworkSchema> & Id;
 export default Homework;

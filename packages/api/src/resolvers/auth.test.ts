@@ -20,13 +20,10 @@ import {
   testServer,
 } from '../jest';
 import Token from '../models/token';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   DEREGISTER,
-  // OAUTH2,
-  IMPERSONATE_START,
-  IMPERSONATE_STOP,
   LIST_TOKENS,
   LOGIN,
   LOGIN_TOKEN,
@@ -61,7 +58,7 @@ console.log('auth.test IMPERSONATE_START, IMPERSONATE_STOP, OAUTH2, OAUTH2_CONNE
 describe('Authentication GraphQL (token)', () => {
   let guestServer: ApolloServer | null;
   let tenantAdminServer: ApolloServer | null;
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
   let tenantId: string | null;
 
   beforeAll(async () => {
@@ -87,7 +84,7 @@ describe('Authentication GraphQL (token)', () => {
     const { refreshToken } = loginRes.data!.login;
 
     // fail to renew without refreshToken
-    const user = await User.findOneActive({ _id: registerRes.data!.register.user });
+    const user = await User.findOne({ _id: registerRes.data!.register.user }).lean();
     const userServer = testServer(user);
     const failRenewRes = await userServer.executeOperation({ query: RENEW_TOKEN });
     apolloExpect(
@@ -139,7 +136,7 @@ describe('Authentication GraphQL (token)', () => {
     apolloExpect(deregisterRes, 'data', { deregister: { code: MSG_ENUM.COMPLETED, days: expect.any(Number) } });
   });
 
-  test('should pass when LoginWithStudentId', async () => {
+  test('should pass when loginWithStudentId', async () => {
     expect.assertions(1);
 
     // create a new user (with loginStudentIds)
@@ -149,11 +146,11 @@ describe('Authentication GraphQL (token)', () => {
     await user.save();
 
     // LoginWithStudentId
-    const LoginWithStudentIdRes = await guestServer!.executeOperation({
+    const loginWithStudentIdRes = await guestServer!.executeOperation({
       query: LOGIN_WITH_STUDENT_ID,
       variables: { studentId, password, tenantId },
     });
-    apolloExpect(LoginWithStudentIdRes, 'data', { loginWithStudentId: { ...expectedAuthResponse, conflict: null } });
+    apolloExpect(loginWithStudentIdRes, 'data', { loginWithStudentId: { ...expectedAuthResponse, conflict: null } });
 
     // clean-up deregister (remove) test user
     await User.deleteOne({ _id: user });
@@ -262,7 +259,7 @@ describe('Authentication GraphQL (token)', () => {
     });
 
     // clean-up deregister (remove) test user
-    const user = await User.findOneActive({ _id: registerRes.data!.register.user });
+    const user = await User.findOne({ _id: registerRes.data!.register.user }).lean();
     await testServer(user).executeOperation({ query: DEREGISTER, variables: { password } });
   });
   test('should report conflict when login with different IP', async () => {
@@ -289,7 +286,7 @@ describe('Authentication GraphQL (token)', () => {
     });
 
     // clean-up deregister (remove) test user
-    const user = await User.findOneActive({ _id: registerRes.data!.register.user });
+    const user = await User.findOne({ _id: registerRes.data!.register.user }).lean();
     await testServer(user).executeOperation({ query: DEREGISTER, variables: { password } });
   });
 

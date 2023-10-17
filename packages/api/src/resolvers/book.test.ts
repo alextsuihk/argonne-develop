@@ -10,6 +10,7 @@ import { CONTENT_PREFIX, LOCALE } from '@argonne/common';
 import {
   apolloExpect,
   ApolloServer,
+  expectedBookAssignmentFormat,
   expectedContributionFormat,
   expectedDateFormat,
   expectedIdFormat,
@@ -30,7 +31,7 @@ import Level from '../models/level';
 import Publisher from '../models/publisher';
 import School from '../models/school';
 import Subject from '../models/subject';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_BOOK,
@@ -55,9 +56,9 @@ const { MSG_ENUM } = LOCALE;
 // Top level of this test suite:
 describe('Book GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
-  let normalUsers: (UserDocument & Id)[] | null;
+  let normalUsers: UserDocument[] | null;
   let normalServer: ApolloServer | null;
   let url: string | undefined;
 
@@ -81,21 +82,6 @@ describe('Book GraphQL', () => {
     deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
 
     contentsToken: expect.any(String),
-  };
-
-  const expectedAssignmentFormat = {
-    _id: expectedIdFormat,
-    flags: expect.any(Array),
-    contribution: expectedContributionFormat,
-    chapter: expect.any(String),
-    content: expectedIdFormat,
-    dynParams: expect.any(Array),
-    solutions: expect.any(Array),
-    examples: expect.any(Array),
-    remarks: expect.any(Array),
-    createdAt: expectedDateFormat(true),
-    updatedAt: expectedDateFormat(true),
-    deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
   const expectRevisionFormat = {
@@ -140,7 +126,7 @@ describe('Book GraphQL', () => {
     const resAll = await testServer(nonTeacher).executeOperation({ query: GET_BOOKS });
     apolloExpect(resAll, 'data', {
       books: expect.arrayContaining([
-        { ...expectedFormat, remarks: [], assignments: expect.arrayContaining([expectedAssignmentFormat]) },
+        { ...expectedFormat, remarks: [], assignments: expect.arrayContaining([expectedBookAssignmentFormat]) },
       ]),
     });
 
@@ -151,7 +137,7 @@ describe('Book GraphQL', () => {
       variables: { id: randomItem(books)._id.toString() },
     });
     apolloExpect(resOne, 'data', {
-      book: { ...expectedFormat, remarks: [], assignments: expect.arrayContaining([expectedAssignmentFormat]) },
+      book: { ...expectedFormat, remarks: [], assignments: expect.arrayContaining([expectedBookAssignmentFormat]) },
     });
   });
 
@@ -174,7 +160,7 @@ describe('Book GraphQL', () => {
         ...expectedFormat,
         remarks: [],
         assignments: expect.arrayContaining([
-          { ...expectedAssignmentFormat, solutions: expect.arrayContaining([expect.any(String)]) },
+          { ...expectedBookAssignmentFormat, solutions: expect.arrayContaining([expect.any(String)]) },
         ]),
       },
     });
@@ -338,7 +324,12 @@ describe('Book GraphQL', () => {
         addBookAssignment: {
           ...expectedFormat,
           assignments: [
-            { ...expectedAssignmentFormat, chapter: FAKE, dynParams: ['A', 'B', 'C'], solutions: ['AA', 'BB', 'CC'] },
+            {
+              ...expectedBookAssignmentFormat,
+              chapter: FAKE,
+              dynParams: ['A', 'B', 'C'],
+              solutions: ['AA', 'BB', 'CC'],
+            },
           ],
         },
       });
@@ -347,12 +338,12 @@ describe('Book GraphQL', () => {
       // removeAssignment (admin ONLY)
       const removeAssignmentRes = await adminServer!.executeOperation({
         query: REMOVE_BOOK_ASSIGNMENT,
-        variables: { id: newId, assignmentId, ...(prob(0.5) && { remark: FAKE2 }) },
+        variables: { id: newId, subId: assignmentId, ...(prob(0.5) && { remark: FAKE2 }) },
       });
       apolloExpect(removeAssignmentRes, 'data', {
         removeBookAssignment: {
           ...expectedFormat,
-          assignments: [{ ...expectedAssignmentFormat, deletedAt: expectedDateFormat(true) }],
+          assignments: [{ ...expectedBookAssignmentFormat, deletedAt: expectedDateFormat(true) }],
         },
       });
 
@@ -386,7 +377,7 @@ describe('Book GraphQL', () => {
       // removeSupplement (admin ONLY)
       const removeSupplementRes = await adminServer!.executeOperation({
         query: REMOVE_BOOK_SUPPLEMENT,
-        variables: { id: newId, supplementId, ...(prob(0.5) && { remark: FAKE2 }) },
+        variables: { id: newId, subId: supplementId, ...(prob(0.5) && { remark: FAKE2 }) },
       });
       apolloExpect(removeSupplementRes, 'data', {
         removeBookSupplement: {
@@ -427,7 +418,7 @@ describe('Book GraphQL', () => {
     // addRevisionImage
     const addRevisionImageRes = await server.executeOperation({
       query: ADD_BOOK_REVISION_IMAGE,
-      variables: { id: newId, revisionId, url },
+      variables: { id: newId, subId: revisionId, url },
     });
     apolloExpect(addRevisionImageRes, 'data', {
       addBookRevisionImage: {
@@ -439,7 +430,7 @@ describe('Book GraphQL', () => {
     // removeRevisionImage
     const removeRevisionImageRes = await server.executeOperation({
       query: REMOVE_BOOK_REVISION_IMAGE,
-      variables: { id: newId, revisionId, url },
+      variables: { id: newId, subId: revisionId, url },
     });
     apolloExpect(removeRevisionImageRes, 'data', {
       removeBookRevisionImage: {
@@ -451,7 +442,7 @@ describe('Book GraphQL', () => {
     // removeRevision
     const removeRevisionRes = await server.executeOperation({
       query: REMOVE_BOOK_REVISION,
-      variables: { id: newId, revisionId, ...(prob(0.5) && { remark: FAKE2 }) },
+      variables: { id: newId, subId: revisionId, ...(prob(0.5) && { remark: FAKE2 }) },
     });
     apolloExpect(removeRevisionRes, 'data', {
       removeBookRevision: {

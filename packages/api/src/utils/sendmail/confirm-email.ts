@@ -6,13 +6,11 @@ import { LOCALE } from '@argonne/common';
 import { addSeconds } from 'date-fns';
 
 import configLoader from '../../config/config-loader';
-import token from '../token';
+import token, { EMAIL_TOKEN_PREFIX } from '../token';
 import { sendmail } from './common';
 
 const { zhCN, zhHK } = LOCALE.DB_ENUM.SYSTEM.LOCALE;
 const { config, DEFAULTS } = configLoader;
-
-export const EMAIL_TOKEN_PREFIX = 'EMAIL';
 
 export default async (name: string, locale: string, email: string): Promise<boolean> => {
   const expiresBy = addSeconds(new Date(), DEFAULTS.AUTH.EMAIL_CONFIRM_EXPIRES_IN);

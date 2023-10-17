@@ -16,7 +16,7 @@ import {
   jestTeardown,
 } from '../../jest';
 import type { DistrictDocument } from '../../models/district';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { createUpdateDelete, getMany } = commonTest;
@@ -25,7 +25,7 @@ const route = 'assignments';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
 
   // expected MINIMUM single district format
   const expectedMinFormat = {

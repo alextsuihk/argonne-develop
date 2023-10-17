@@ -15,7 +15,7 @@ import type { ChatDocument } from '../models/chat';
 import Chat from '../models/chat';
 import type { ChatGroupDocument } from '../models/chat-group';
 import ChatGroup from '../models/chat-group';
-import type { ClassroomDocument, Id } from '../models/classroom';
+import type { ClassroomDocument } from '../models/classroom';
 import Classroom, { searchableFields } from '../models/classroom';
 import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
@@ -28,7 +28,7 @@ import type { TenantDocument } from '../models/tenant';
 import Tenant from '../models/tenant';
 import User from '../models/user';
 import { extract } from '../utils/chat';
-import { mongoId, schoolYear } from '../utils/helper';
+import { schoolYear } from '../utils/helper';
 import log from '../utils/log';
 import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
@@ -54,7 +54,9 @@ type Action =
   | 'updateStudents'
   | 'updateTeachers';
 
-type ClassroomDocumentEx = ClassroomDocument & Id & { contentsToken: string };
+type Populate = { chats: ChatDocument[] };
+type PopulatedClassroom = Omit<ClassroomDocument, 'chats'> & Populate;
+export type ClassroomDocumentEx = PopulatedClassroom & { contentsToken: string }; // export for JEST
 
 const { MSG_ENUM } = LOCALE;
 const { CHAT, CONTENT, TENANT, USER } = LOCALE.DB_ENUM;
@@ -84,7 +86,7 @@ const populate = [{ path: 'chats', select: select() }];
  */
 const findOneClassroom = async (
   id: string,
-  userId: string,
+  userId: Types.ObjectId,
   userTenants: string[],
   extraFilter: FilterQuery<ClassroomDocument> = {},
   opts?: { isDeleted?: boolean },
@@ -107,7 +109,7 @@ const findOneClassroom = async (
 /**
  * (helper) get parentId from chat.parents
  */
-const otherParentIds = (chat: ChatDocument & Id, classroomId: Types.ObjectId) => {
+const otherParentIds = (chat: ChatDocument, classroomId: Types.ObjectId) => {
   const chatGroupIds = chat.parents.filter(p => p.startsWith('/chatGroups')).map(p => p.replace('/chatGroups/', ''));
   const classroomIds = chat.parents.filter(p => p.startsWith('/classrooms')).map(p => p.replace('/classrooms/', ''));
   const otherClassroomIds = classroomIds.filter(id => !classroomId.equals(id));
@@ -119,9 +121,9 @@ const otherParentIds = (chat: ChatDocument & Id, classroomId: Types.ObjectId) =>
  * (helper) generate contentsToken
  */
 const transform = async (
-  userId: string,
-  classroom: ClassroomDocument & Id,
-  tenants: (TenantDocument & Id)[],
+  userId: Types.ObjectId,
+  classroom: PopulatedClassroom,
+  tenants: TenantDocument[],
 ): Promise<ClassroomDocumentEx> => ({
   ...classroom,
   remarks:
@@ -129,13 +131,7 @@ const transform = async (
     (tenants.find(t => t._id.equals(classroom.tenant))?.admins || []).some(t => t.equals(userId))
       ? classroom.remarks
       : [],
-  contentsToken: await signContentIds(
-    userId,
-    classroom.chats
-      .map(chat => (typeof chat === 'string' || chat instanceof mongoose.Types.ObjectId ? 'IMPOSSIBLE' : chat.contents))
-      .flat()
-      .filter((x): x is Types.ObjectId => x !== 'IMPOSSIBLE'),
-  ),
+  contentsToken: await signContentIds(userId, classroom.chats.map(chat => chat.contents).flat()),
 });
 
 /**
@@ -164,7 +160,7 @@ const addContent = async (req: Request, args: unknown): Promise<ClassroomDocumen
 
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/chats/${chatId}`],
-    creator: mongoId(userId),
+    creator: userId,
     data,
     visibleAfter,
   });
@@ -178,14 +174,16 @@ const addContent = async (req: Request, args: unknown): Promise<ClassroomDocumen
       }),
       $push: {
         contents: content._id,
-        ...(!memberExists && { members: { user: mongoId(userId), flags: [], lastViewedAt: new Date() } }),
+        ...(!memberExists && { members: { user: userId, flags: [], lastViewedAt: new Date() } }),
       },
     },
   ); // must update chat before chatGroup populating
 
   const { classroomIds, otherClassroomIds, chatGroupIds } = otherParentIds(chat, original._id);
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true })
+      .populate<Populate>(populate)
+      .lean(),
     Tenant.findByTenantId(original.tenant),
     otherClassroomIds.length && Classroom.updateMany({ _id: { $in: otherClassroomIds } }, { updatedAt: new Date() }),
     chatGroupIds.length && ChatGroup.updateMany({ _id: { $in: chatGroupIds } }, { updatedAt: new Date() }),
@@ -251,12 +249,12 @@ const addContentWithNewChat = async (req: Request, args: unknown): Promise<Class
   }).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const content = new Content<Partial<ContentDocument>>({ creator: mongoId(userId), data, visibleAfter });
+  const content = new Content<Partial<ContentDocument>>({ creator: userId, data, visibleAfter });
 
   // must create chat before classroom update & populate
   const chat = await Chat.create<Partial<ChatDocument>>({
     parents: [`/classrooms/${id}`],
-    members: [{ user: mongoId(userId), flags: [], lastViewedAt: new Date() }],
+    members: [{ user: userId, flags: [], lastViewedAt: new Date() }],
     contents: [content._id],
     ...(title && { title }),
   });
@@ -265,7 +263,7 @@ const addContentWithNewChat = async (req: Request, args: unknown): Promise<Class
   const { otherClassroomIds, chatGroupIds } = otherParentIds(chat, original._id);
   const update: UpdateQuery<ClassroomDocument> = { $push: { chats: chat._id } };
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     Tenant.findByTenantId(original.tenant),
     otherClassroomIds.length && Classroom.updateMany({ _id: { $in: otherClassroomIds } }, { updatedAt: new Date() }),
     chatGroupIds.length && ChatGroup.updateMany({ _id: { $in: chatGroupIds } }, { updatedAt: new Date() }),
@@ -280,7 +278,7 @@ const addContentWithNewChat = async (req: Request, args: unknown): Promise<Class
               updateMany: { filter: { _id: { $in: chatGroupIds } }, update: { updatedAt: new Date() } },
             },
           ] satisfies BulkWrite<ChatGroupDocument>,
-          chats: [{ insertOne: { document: chat.toObject() } }] satisfies BulkWrite<ChatDocument>,
+          chats: [{ insertOne: { document: chat } }] satisfies BulkWrite<ChatDocument>,
           classrooms: [
             { updateOne: { filter: { _id: id }, update } },
             { updateMany: { filter: { _id: { $in: otherClassroomIds } }, update: { updatedAt: new Date() } } },
@@ -307,7 +305,7 @@ const addRemark = async (req: Request, args: unknown): Promise<ClassroomDocument
 
   const update: UpdateQuery<ClassroomDocument> = { $push: { remarks: { t: new Date(), u: userId, m: remark } } };
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     Tenant.findByTenantId(original.tenant),
     DatabaseEvent.log(userId, `/classrooms/${id}`, 'REMARK', { args }),
     notifySync(
@@ -370,7 +368,7 @@ const attach = async (
 
   const update: UpdateQuery<ClassroomDocument> = { $push: { chats: chat._id } };
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     Tenant.findByTenantId(original.tenant),
     notifySync(
       original.tenant,
@@ -430,8 +428,10 @@ const blockContent = async (req: Request, args: unknown): Promise<ClassroomDocum
           $push: { remarks: { t: new Date(), u: userId, m: `blockContent (${chatId}-${contentId}): ${remark}` } },
         }),
       },
-      { fields: adminSelect, new: true, populate },
-    ).lean(), // indicating there is an update (in grandchild)
+      { fields: adminSelect, new: true },
+    )
+      .populate<Populate>(populate)
+      .lean(), // indicating there is an update (in grandchild)
     Tenant.findByTenantId(original.tenant),
     otherClassroomIds.length && Classroom.updateMany({ _id: { $in: otherClassroomIds } }, { updatedAt: new Date() }),
     chatGroupIds.length && ChatGroup.updateMany({ _id: { $in: chatGroupIds } }, { updatedAt: new Date() }),
@@ -464,7 +464,7 @@ const blockContent = async (req: Request, args: unknown): Promise<ClassroomDocum
 /**
  * Create New Classroom
  */
-const create = async (req: Request, args: unknown): Promise<ClassroomDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<PopulatedClassroom> => {
   const { userId, userTenants } = auth(req);
   const { tenantId, ...inputFields } = await classroomCoreSchema.concat(classroomExtraSchema).validate(args);
 
@@ -505,7 +505,7 @@ const create = async (req: Request, args: unknown): Promise<ClassroomDocument & 
       { userIds: [userId], event: 'CLASSROOM' },
       {
         bulkWrite: {
-          classrooms: [{ insertOne: { document: classroom.toObject() } }] satisfies BulkWrite<ClassroomDocument>,
+          classrooms: [{ insertOne: { document: classroom } }] satisfies BulkWrite<ClassroomDocument>,
         },
       },
     ),
@@ -555,7 +555,7 @@ const find = async (req: Request, args: unknown): Promise<ClassroomDocumentEx[]>
   const filter = await findCommon(req, args);
 
   const [classrooms, tenants] = await Promise.all([
-    Classroom.find(filter, adminSelect).populate(populate).lean(), // always get remarks (for now)
+    Classroom.find(filter, adminSelect).populate<Populate>(populate).lean(), // always get remarks (for now)
     Tenant.findAdminTenants(userId, userTenants),
   ]);
 
@@ -574,7 +574,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 
     const [total, classrooms, tenants] = await Promise.all([
       Classroom.countDocuments(filter),
-      Classroom.find(filter, adminSelect, options).populate(populate).lean(), // always get remarks, transform() might hide remarks
+      Classroom.find(filter, adminSelect, options).populate<Populate>(populate).lean(), // always get remarks, transform() might hide remarks
       Tenant.findAdminTenants(userId, userTenants),
     ]);
 
@@ -594,7 +594,7 @@ const findOne = async (req: Request, args: unknown): Promise<ClassroomDocumentEx
   const { userId } = auth(req);
   const filter = await findCommon(req, args, true);
 
-  const classroom = await Classroom.findOne(filter, adminSelect).populate(populate).lean(); // always get remarks (for now)
+  const classroom = await Classroom.findOne(filter, adminSelect).populate<Populate>(populate).lean(); // always get remarks (for now)
   if (!classroom) return null;
 
   const tenant = await Tenant.findByTenantId(classroom.tenant);
@@ -634,7 +634,7 @@ const recallContent = async (req: Request, args: unknown): Promise<ClassroomDocu
     Content.findOne({
       _id: contentId,
       parents: `/chats/${chatId}`,
-      creator: mongoId(userId),
+      creator: userId,
       flags: { $nin: [CONTENT.FLAG.BLOCKED, CONTENT.FLAG.RECALLED] },
     }).lean(),
   ]);
@@ -646,7 +646,9 @@ const recallContent = async (req: Request, args: unknown): Promise<ClassroomDocu
     data: `${CONTENT_PREFIX.RECALLED}#${Date.now()}###${userId}`,
   };
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true, populate }).lean(), // indicating there is an update (in grandchild)
+    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true })
+      .populate<Populate>(populate)
+      .lean(), // indicating there is an update (in grandchild)
     Tenant.findByTenantId(original.tenant),
     otherClassroomIds.length && Classroom.updateMany({ _id: { $in: otherClassroomIds } }, { updatedAt: new Date() }),
     chatGroupIds.length && ChatGroup.updateMany({ _id: { $in: chatGroupIds } }, { updatedAt: new Date() }),
@@ -691,7 +693,7 @@ const recover = async (req: Request, args: unknown): Promise<ClassroomDocumentEx
     ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: `recover: ${remark}` } } }),
   };
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     Tenant.findByTenantId(original.tenant),
     DatabaseEvent.log(userId, `/classrooms/${id}`, 'RECOVER', { args }),
     notifySync(
@@ -777,9 +779,9 @@ const shareHomework = async (req: Request, args: unknown): Promise<ClassroomDocu
 
   // create a new chat from assignment & homework, and then attach to classroom
   const msg = { enUS: `Sharing Homework`, zhCN: `分享功課`, zhHK: `分享功課` };
-  const content = new Content<Partial<ContentDocument>>({ creator: mongoId(userId), data: extract(msg, userLocale) });
+  const content = new Content<Partial<ContentDocument>>({ creator: userId, data: extract(msg, userLocale) });
 
-  const chat = new Chat<Partial<ChatDocument & Id>>({ parents: [`/classrooms/${id}`], contents: [content._id] });
+  const chat = new Chat<Partial<ChatDocument>>({ parents: [`/classrooms/${id}`], contents: [content._id] });
   content.parents = [`/chats/${chat._id}`];
 
   // if using Book Assignment
@@ -789,9 +791,9 @@ const shareHomework = async (req: Request, args: unknown): Promise<ClassroomDocu
 
   const dynIdxContent =
     bookAssignment && typeof homework.dynParamIdx === 'number'
-      ? new Content<Partial<ContentDocument & Id>>({
+      ? new Content<Partial<ContentDocument>>({
           parents: [`/chats/${chat._id}`],
-          creator: mongoId(userId),
+          creator: userId,
           data: `dynParamIdx:${homework.dynParamIdx}`,
         })
       : null;
@@ -800,9 +802,9 @@ const shareHomework = async (req: Request, args: unknown): Promise<ClassroomDocu
   // if using manual assignment
   const manualAssignment = assignment.manualAssignments[homework.assignmentIdx];
   const assignmentContent = manualAssignment
-    ? new Content<Partial<ContentDocument & Id>>({
+    ? new Content<Partial<ContentDocument>>({
         parents: [`/chats/${chat._id}`],
-        creator: mongoId(userId),
+        creator: userId,
         data: manualAssignment,
       })
     : null;
@@ -817,7 +819,7 @@ const shareHomework = async (req: Request, args: unknown): Promise<ClassroomDocu
   const update: UpdateQuery<ClassroomDocument> = { $push: { chats: chat._id } };
   const contentUpdate: UpdateQuery<ContentDocument> = { $addToSet: { parents: `/chats/${chat._id}` } };
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     Tenant.findByTenantId(original.tenant),
     Content.insertMany(newContents, { rawResult: true }),
     Content.updateMany({ _id: { $in: homework.contents } }, contentUpdate),
@@ -826,12 +828,12 @@ const shareHomework = async (req: Request, args: unknown): Promise<ClassroomDocu
       { userIds: [...original.teachers, ...original.students], event: 'CLASSROOM' },
       {
         bulkWrite: {
-          chats: [{ insertOne: { document: chat.toObject() } }] satisfies BulkWrite<ChatDocument>,
+          chats: [{ insertOne: { document: chat } }] satisfies BulkWrite<ChatDocument>,
           classrooms: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<ClassroomDocument>,
           contents: [
             { updateMany: { filter: { _id: { $in: homework.contents } }, update: contentUpdate } },
-            ...(assignmentContent ? [{ insertOne: { document: assignmentContent.toObject() } }] : []),
-            ...(dynIdxContent ? [{ insertOne: { document: dynIdxContent.toObject() } }] : []),
+            ...(assignmentContent ? [{ insertOne: { document: assignmentContent } }] : []),
+            ...(dynIdxContent ? [{ insertOne: { document: dynIdxContent } }] : []),
           ] satisfies BulkWrite<ContentDocument>,
         },
         contentsToken: await signContentIds(
@@ -858,14 +860,13 @@ const shareQuestion = async (req: Request, args: unknown): Promise<ClassroomDocu
     findOneClassroom(id, userId, userTenants),
     Question.findOne({ _id: questionId, classroom: id, tutor: userId, deletedAt: { $exists: false } }).lean(),
   ]);
-
   if (!question || !original.tenant.equals(question.tenant)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   // must create chat before classroom populating
   const msg = { enUS: `Sharing Question`, zhCN: `分享提问`, zhHK: `分享提問` };
-  const content = new Content<Partial<ContentDocument>>({ creator: mongoId(userId), data: extract(msg, userLocale) });
+  const content = new Content<Partial<ContentDocument>>({ creator: userId, data: extract(msg, userLocale) });
 
-  const chat = await Chat.create<Partial<ChatDocument & Id>>({
+  const chat = await Chat.create<Partial<ChatDocument>>({
     parents: [`/classrooms/${id}`],
     contents: [content._id, ...question.contents],
   });
@@ -875,7 +876,7 @@ const shareQuestion = async (req: Request, args: unknown): Promise<ClassroomDocu
   const contentUpdate: UpdateQuery<ContentDocument> = { $addToSet: { parents: `/chats/${chat._id}` } };
 
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     Tenant.findByTenantId(original.tenant),
     Content.updateMany({ _id: { $in: question.contents } }, contentUpdate),
     Content.insertMany(content),
@@ -885,7 +886,7 @@ const shareQuestion = async (req: Request, args: unknown): Promise<ClassroomDocu
       {
         bulkWrite: {
           classrooms: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<ClassroomDocument>,
-          chats: [{ insertOne: { document: chat.toObject() } }] satisfies BulkWrite<ChatDocument>,
+          chats: [{ insertOne: { document: chat } }] satisfies BulkWrite<ChatDocument>,
           contents: [
             { updateMany: { filter: { _id: { $in: question.contents } }, update: contentUpdate } },
           ] satisfies BulkWrite<ContentDocument>,
@@ -923,11 +924,7 @@ const update = async (req: Request, args: unknown): Promise<ClassroomDocumentEx>
 
   const update = { ...inputFields, books: books.map(b => b._id) };
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, update, {
-      fields: adminSelect,
-      new: true,
-      populate,
-    }).lean(),
+    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     Tenant.findByTenantId(original.tenant),
     DatabaseEvent.log(userId, `/classrooms/${id}`, 'UPDATE', { original, args }),
     notifySync(
@@ -986,7 +983,9 @@ const updateChatFlag = async (
 
   const { classroomIds, otherClassroomIds, chatGroupIds } = otherParentIds(chat, original._id);
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true })
+      .populate<Populate>(populate)
+      .lean(),
     Tenant.findByTenantId(original.tenant),
     otherClassroomIds.length && Classroom.updateMany({ _id: { $in: otherClassroomIds } }, { updatedAt: new Date() }),
     chatGroupIds.length && ChatGroup.updateMany({ _id: { $in: chatGroupIds } }, { updatedAt: new Date() }),
@@ -1061,12 +1060,14 @@ const updateChatLastViewedAt = async (req: Request, args: unknown): Promise<Clas
     { _id: chatId },
     chat.members.some(m => m.user.equals(userId))
       ? { members: chat.members.map(m => (m.user.equals(userId) ? { ...m, lastViewedAt: timestamp } : m)) }
-      : { $push: { members: { user: mongoId(userId), flags: [], lastViewedAt: timestamp } } },
+      : { $push: { members: { user: userId, flags: [], lastViewedAt: timestamp } } },
   );
 
   const { classroomIds, otherClassroomIds, chatGroupIds } = otherParentIds(chat, original._id);
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true })
+      .populate<Populate>(populate)
+      .lean(),
     Tenant.findByTenantId(original.tenant),
     otherClassroomIds.length && Classroom.updateMany({ _id: { $in: otherClassroomIds } }, { updatedAt: new Date() }),
     chatGroupIds.length && ChatGroup.updateMany({ _id: { $in: chatGroupIds } }, { updatedAt: new Date() }),
@@ -1126,7 +1127,9 @@ const updateChatTitle = async (req: Request, args: unknown): Promise<ClassroomDo
 
   const { classroomIds, otherClassroomIds, chatGroupIds } = otherParentIds(chat, original._id);
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true, populate }).lean(), // indicating there is an update (in grandchild)
+    Classroom.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: adminSelect, new: true })
+      .populate<Populate>(populate)
+      .lean(), // indicating there is an update (in grandchild)
     Tenant.findByTenantId(original.tenant),
     otherClassroomIds.length && Classroom.updateMany({ _id: { $in: otherClassroomIds } }, { updatedAt: new Date() }),
     chatGroupIds.length && ChatGroup.updateMany({ _id: { $in: chatGroupIds } }, { updatedAt: new Date() }),
@@ -1165,17 +1168,16 @@ const updateMembers = async (
   const { id, userIds } = await idSchema.concat(userIdsSchema).validate(args);
 
   const original = await findOneClassroom(id, userId, userTenants);
-
   const { students, teachers } = original;
 
-  if (action === 'updateTeachers' && teachers.some(t => t.equals(userId))) userIds.push(userId); // for teacher (not tenantAdmin), ensure userId remaining in teachers
+  if (action === 'updateTeachers' && teachers.some(t => t.equals(userId))) userIds.push(userId.toString());
   const users = await User.find({ _id: { $in: userIds }, tenants: original.tenant }, '_id').lean();
   const updatedUserIds = users.map(u => u._id);
 
   const update: UpdateQuery<ClassroomDocument> =
     action === 'updateStudents' ? { students: updatedUserIds } : { teachers: updatedUserIds };
   const [classroom, tenant] = await Promise.all([
-    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true, populate }).lean(),
+    Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
     Tenant.findByTenantId(original.tenant),
     DatabaseEvent.log(userId, `/classrooms/${id}`, action, {
       args,
@@ -1183,7 +1185,7 @@ const updateMembers = async (
     }), // backup original teachers & students
     notifySync(
       original.tenant,
-      { userIds: [...teachers, ...students, ...userIds, userId], event: 'CLASSROOM' },
+      { userIds: [...teachers, ...students, ...updatedUserIds, userId], event: 'CLASSROOM' },
       {
         bulkWrite: {
           classrooms: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<ClassroomDocument>,

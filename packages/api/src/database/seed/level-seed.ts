@@ -6,13 +6,13 @@
 import chalk from 'chalk';
 import type { Types } from 'mongoose';
 
-import type { Id, LevelDocument } from '../../models/level';
+import type { LevelDocument } from '../../models/level';
 import Level from '../../models/level';
 
 /**
  * Find Levels (na, primary, junior, senior)
  */
-let levels: (LevelDocument & Id)[] = [];
+let levels: LevelDocument[] = [];
 export const findLevels = async () => {
   // simple caching
   levels = levels.length

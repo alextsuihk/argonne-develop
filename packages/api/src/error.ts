@@ -121,7 +121,7 @@ export const formatError = async (req: Request, err: ControllerError): Promise<C
     return { type: customError.type, statusCode: customError.statusCode, errors: customError.errors };
 
   // send statusCode: 500 to log server for further analysis
-  if (isProdMode) await log('error', `Error ${customError.statusCode}`, customError, req.originalUrl);
+  if (isProdMode) await log('error', `Error ${customError.statusCode}`, customError, undefined, req.originalUrl);
 
   return {
     type: customError.type,

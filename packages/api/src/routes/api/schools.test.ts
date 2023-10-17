@@ -24,7 +24,7 @@ import {
 import District from '../../models/district';
 import Level from '../../models/level';
 import type { SchoolDocument } from '../../models/school';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -35,7 +35,7 @@ const route = 'schools';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let url: string | undefined;
   let url2: string | undefined;
 
@@ -46,7 +46,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     code: expect.any(String),
     name: expectedLocaleFormat,
     district: expectedIdFormat,
-    levels: expect.arrayContaining([expectedIdFormat]),
+    phones: expect.any(Array),
+
+    // levels: expect.arrayContaining([expectedIdFormat]),
+    levels: expect.any(Array), // could be empty for universities
     band: expect.toBeOneOf(Object.keys(SCHOOL.BAND)),
     funding: expect.toBeOneOf(Object.keys(SCHOOL.FUNDING)),
     gender: expect.toBeOneOf(Object.keys(SCHOOL.GENDER)),
@@ -91,7 +94,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const create = fake('create');
     const update = fake('update');
 
-    await createUpdateDelete<SchoolDocument & Id>(route, { 'Jest-User': adminUser!._id }, [
+    await createUpdateDelete<SchoolDocument>(route, { 'Jest-User': adminUser!._id }, [
       { action: 'create', data: create, expectedMinFormat: { ...expectedMinFormat, ...create } },
       {
         action: 'addRemark',

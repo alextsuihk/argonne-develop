@@ -1,20 +1,30 @@
 {
   "compilerOptions": {
-    "target": "es2022",
-    "module": "CommonJS",
-    "composite": true,
-    "allowSyntheticDefaultImports": true,
+    /* Base Options */
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "lib": ["es2023"],
-    "moduleResolution": "node",
-    "noUncheckedIndexedAccess": true,
-    "removeComments": true,
-    "resolveJsonModule": true,
     "skipLibCheck": true,
+    "target": "es2022",
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Strictness */
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+
+    /* If transpiling with Typescript */
+    /* https://www.youtube.com/watch?v=eJXVEju3XLM */
+    "moduleResolution": "node",
+    "module": "CommonJS",
     "rootDir": "./src",
     "outDir": "dist",
+
+    "lib": ["es2023"],
+
+    /* monorepo */
+    "composite": true,
+    "declarationMap": true,
+
     "typeRoots": ["@types", "node_modules/@types", "node_modules/jest-extended/types"]
   },
   "references": [{ "path": "../common" }],

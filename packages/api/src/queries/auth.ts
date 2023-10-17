@@ -7,6 +7,16 @@ import { gql } from 'apollo-server-core';
 
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
+const API_KEY_FIELDS = gql`
+  fragment ApiKeyFields on ApiKey {
+    _id
+    token
+    scope
+    note
+    expireAt
+  }
+`;
+
 const AUTH_USER_FIELDS = gql`
   ${LOCALE}
   ${REMARK}
@@ -33,16 +43,8 @@ const AUTH_USER_FIELDS = gql`
     darkMode
     theme
 
-    apiKeys {
-      _id
-      value
-      scope
-      note
-      expireAt
-    }
     roles
     features
-    scopes
 
     yob
     dob
@@ -60,16 +62,12 @@ const AUTH_USER_FIELDS = gql`
       receivable
     }
     preference
-    subscriptions {
-      token
-      subscription
-      enabled
-      permission
-      ip
-      ua
+    pushSubscriptions {
+      endpoint
+      p256dh
+      auth
     }
 
-    interests
     supervisors
     staffs
 
@@ -135,13 +133,23 @@ const AUTH_RESPONSE_FIELDS = gql`
   }
 `;
 
+// query
+
 export const IS_EMAIL_AVAILABLE = gql`
   query IsEmailAvailable($email: String!) {
     isEmailAvailable(email: $email)
   }
 `;
 
-// query
+export const LIST_API_KEYS = gql`
+  ${API_KEY_FIELDS}
+  query ListApiKeys {
+    listApiKeys {
+      ...ApiKeyFields
+    }
+  }
+`;
+
 export const LIST_SOCKETS = gql`
   query ListSockets {
     listSockets
@@ -346,10 +354,10 @@ export const SEND_MESSENGER_VERIFICATION = gql`
 
 // update
 export const ADD_API_KEY = gql`
-  ${AUTH_USER_FIELDS}
+  ${API_KEY_FIELDS}
   mutation AddApiKey($scope: String!, $note: String, $expireAt: DateInput!) {
     addApiKey(scope: $scope, note: $note, expireAt: $expireAt) {
-      ...AuthUserFields
+      ...ApiKeyFields
     }
   }
 `;
@@ -387,6 +395,15 @@ export const ADD_PAYMENT_METHOD = gql`
   }
 `;
 
+export const ADD_PUSH_SUBSCRIPTION = gql`
+  ${AUTH_USER_FIELDS}
+  mutation AddPushSubscription($endpoint: String!, $p256dh: String!, $auth: String!) {
+    addPushSubscription(endpoint: $endpoint, p256dh: $p256dh, auth: $auth) {
+      ...AuthUserFields
+    }
+  }
+`;
+
 export const OAUTH2_LINK = gql`
   ${AUTH_USER_FIELDS}
   mutation OAuth2Link($provider: String!, $code: String!) {
@@ -406,10 +423,10 @@ export const OAUTH2_UNLINK = gql`
 `;
 
 export const REMOVE_API_KEY = gql`
-  ${AUTH_USER_FIELDS}
+  ${API_KEY_FIELDS}
   mutation RemoveApiKey($id: String!) {
     removeApiKey(id: $id) {
-      ...AuthUserFields
+      ...ApiKeyFields
     }
   }
 `;
@@ -436,6 +453,15 @@ export const REMOVE_PAYMENT_METHOD = gql`
   ${AUTH_USER_FIELDS}
   mutation RemovePaymentMethod($id: String!) {
     removePaymentMethod(id: $id) {
+      ...AuthUserFields
+    }
+  }
+`;
+
+export const REMOVE_PUSH_SUBSCRIPTIONS = gql`
+  ${AUTH_USER_FIELDS}
+  mutation RemovePushSubscriptions {
+    removePushSubscriptions {
       ...AuthUserFields
     }
   }

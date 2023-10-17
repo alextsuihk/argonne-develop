@@ -9,10 +9,12 @@ import { tryCatch } from './root';
 
 type unk = unknown;
 
-const { setup } = satelliteController;
+const { createToken, setup } = satelliteController;
 
 export default {
-  Query: {},
+  Query: {
+    satelliteToken: (_: unk, args: unk, { req }: Ctx) => tryCatch(() => createToken(req, args)),
+  },
 
   Mutation: {
     setupSatellite: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => setup(req, args)),

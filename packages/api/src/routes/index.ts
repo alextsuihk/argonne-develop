@@ -32,12 +32,10 @@ import systemRoutes from './api/systems';
 import tagRoutes from './api/tags';
 import tenantBindingRoutes from './api/tenant-binding';
 import tenantRoutes from './api/tenants';
-import tutorRankingRoutes from './api/tutor-rankings';
+import tutorInverseRankingRoutes from './api/tutor-inverse-rankings';
 import tutorRoutes from './api/tutors';
 import typographyRoutes from './api/typographies';
 import userRoutes from './api/users';
-
-// import webpushRoutes from './api/webpush';
 
 export default (app: Application): void => {
   app.use('/api/analytics', analyticRoutes);
@@ -72,10 +70,9 @@ export default (app: Application): void => {
       app.use('/api/roles', roleRoutes);
       app.use('/api/satellite', satelliteRoutes);
       app.use('/api/tenant-binding', tenantBindingRoutes);
-      app.use('/api/tutor-rankings', tutorRankingRoutes);
+      app.use('/api/tutor-inverse-rankings', tutorInverseRankingRoutes);
       app.use('/api/tutors', tutorRoutes);
       app.use('/api/users', userRoutes);
-      // app.use('/api', webpushRoutes);
     }
   }
 

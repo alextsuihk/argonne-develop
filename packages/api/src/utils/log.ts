@@ -21,13 +21,7 @@ const { instance, pm2 } = config;
 /**
  * Send { msg, optional fields } to Logger Server
  */
-const log = async (
-  level: Level,
-  msg: string,
-  extra?: unknown,
-  user?: string | Types.ObjectId,
-  url?: string,
-): Promise<void> => {
+const log = async (level: Level, msg: string, extra?: unknown, user?: Types.ObjectId, url?: string): Promise<void> => {
   try {
     await Promise.all([
       config.loggerApiKey &&

@@ -4,20 +4,12 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Locale } from './common';
-import { baseDefinition, localeDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface LevelDocument extends BaseDocument {
-  code: string;
-  name: Locale;
-  nextLevel?: Types.ObjectId;
-}
+import type { Id } from './common';
+import { baseDefinition, localeSchema } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -29,17 +21,18 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const levelSchema = new Schema<LevelDocument>(
+const levelSchema = new Schema(
   {
     ...baseDefinition,
 
-    code: { type: String, uppercase: true, unique: true },
-    name: localeDefinition,
+    code: { type: String, uppercase: true, required: true, unique: true },
+    name: { type: localeSchema, required: true },
     nextLevel: { type: Schema.Types.ObjectId, ref: 'Level' },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
 levelSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const Level = model<LevelDocument>('Level', levelSchema);
+const Level = model('Level', levelSchema);
+export type LevelDocument = InferSchemaType<typeof levelSchema> & Id;
 export default Level;

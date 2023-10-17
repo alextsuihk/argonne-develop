@@ -6,18 +6,20 @@
 import 'jest-extended';
 
 import { LOCALE } from '@argonne/common';
+import { addSeconds } from 'date-fns';
 import request from 'supertest';
 
 import app from '../../app';
-import { jestSetup, jestTeardown } from '../../jest';
-import type { Id, UserDocument } from '../../models/user';
-import token from '../../utils/token';
+import { jestSetup, jestTeardown, mongoId } from '../../jest';
+import type { UserDocument } from '../../models/user';
+import User from '../../models/user';
+import token, { API_KEY_TOKEN_PREFIX } from '../../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('System API Routes', () => {
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
 
   const expectedMemoryUsage = {
     rss: expect.any(Number),
@@ -94,11 +96,21 @@ describe('System API Routes', () => {
   test('should return system status when Get Status', async () => {
     expect.assertions(3);
 
-    const apiKey = await token.generateApi({ userId: normalUser!._id.toString(), scope: 'systems:r' }, '5s');
+    const scope = 'systems:r';
+    const apiKey = await token.signStrings([API_KEY_TOKEN_PREFIX, normalUser!._id, scope], 5);
+    const _id = mongoId();
+    await User.updateOne(
+      { _id: normalUser!._id },
+      { $push: { apiKeys: { _id, token: apiKey, expireAt: addSeconds(new Date(), 5), scope } } },
+    );
+
     const res = await request(app).get(`/api/systems/status`).set({ 'x-api-key': apiKey });
     expect(res.body).toEqual({ data: expectedStatusFormat });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(200);
+
+    // clean up
+    await User.updateOne({ _id: normalUser!._id }, { $pull: { apiKeys: { _id } } });
   });
 
   test('should respond with serverInfo', async () => {
@@ -133,7 +145,7 @@ describe('System API Routes', () => {
   test('should fail when Get Status with expired API Key', async () => {
     expect.assertions(3);
 
-    const apiKey = await token.generateApi({ userId: 'whatever', scope: 'systems:r' }, '50ms');
+    const apiKey = await token.signStrings([API_KEY_TOKEN_PREFIX, normalUser!._id, 'systems:r'], '50ms');
     await new Promise(resolve => setTimeout(resolve, 100)); // wait until API JWT expires
 
     const res = await request(app).get(`/api/systems/status`).set({ 'x-api-key': apiKey });

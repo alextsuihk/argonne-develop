@@ -16,8 +16,9 @@ import AuthEvent from '../models/event/auth';
 import DatabaseEvent from '../models/event/database';
 import Tenant from '../models/tenant';
 import type { TokenDocument } from '../models/token';
-import type { Id, UserDocument } from '../models/user';
-import User, { userLoginSelect, userNormalSelect } from '../models/user';
+import Tutor from '../models/tutor';
+import type { UserDocument } from '../models/user';
+import User, { activeCond, userLoginSelect, userNormalSelect } from '../models/user';
 import socketServer from '../socket-server';
 import authenticateClient from '../utils/authenticate-client';
 import { extract } from '../utils/chat';
@@ -28,10 +29,13 @@ import { notifySync } from '../utils/notify-sync';
 import mail from '../utils/sendmail';
 import storage from '../utils/storage';
 import type { TokensResponseConflict, TokensResponseSuccessful } from '../utils/token';
-import token, { REFRESH_TOKEN } from '../utils/token';
+import token, { REFRESH_TOKEN_PREFIX } from '../utils/token';
 import type { GetExtraAction, PostExtraAction } from './auth-extra';
 import {
+  addApiKey,
   isEmailAvailable,
+  listApiKeys,
+  removeApiKey,
   sendEmailVerification,
   sendMessengerVerification,
   update,
@@ -44,8 +48,8 @@ import { authServiceToken, authServiceUserInfo } from './auth-service';
 import type { StatusResponse } from './common';
 import common from './common';
 
-type AuthResponse = { user: UserDocument & Id } & (TokensResponseConflict | TokensResponseSuccessful); // response of login or register
-type AuthSuccessfulResponse = { user: UserDocument & Id } & TokensResponseSuccessful; // response of login or register
+type AuthResponse = { user: UserDocument } & (TokensResponseConflict | TokensResponseSuccessful); // response of login or register
+type AuthSuccessfulResponse = { user: UserDocument } & TokensResponseSuccessful; // response of login or register
 
 type GetAction = GetAuthServiceAction | GetExtraAction | 'listSockets' | 'listTokens' | 'loginToken';
 
@@ -111,7 +115,7 @@ const loginMsg = (locale: string, ip: string) =>
  * Clear expired user.suspendUtil
  * ! note: user document might contain subset of fields
  */
-const clearExpiredUserSuspension = async (user: UserDocument & Id): Promise<UserDocument & Id> =>
+const clearExpiredUserSuspension = async (user: UserDocument): Promise<UserDocument> =>
   user.suspendUtil && user.suspendUtil < new Date()
     ? (await User.findByIdAndUpdate(
         user,
@@ -161,6 +165,7 @@ const deregister = async (req: Request, res: Response, args: unknown): Promise<S
     User.updateOne(user, update),
     User.updateMany({ _id: { $in: contactIds } }, removeContactsUpdate),
     User.updateMany({ _id: { $in: user.supervisors } }, removeStaffUpdate),
+    Tutor.updateOne({ user: user._id }, { deletedAt: new Date() }),
     DatabaseEvent.log(user._id, '/auth', 'deregister', { oAuth2s, emails, messengers }),
     AuthEvent.log(user._id, 'deregister', req.ua, req.ip, coordinates),
     notifySync(
@@ -174,7 +179,7 @@ const deregister = async (req: Request, res: Response, args: unknown): Promise<S
             { updateMany: { filter: { _id: { $in: user.supervisors } }, update: removeStaffUpdate } },
           ] satisfies BulkWrite<UserDocument>,
         },
-        extra: { revokeAllTokensByUserId: user._id.toString() },
+        extra: { revokeAllTokensByUserId: user._id },
       },
     ),
   ]);
@@ -189,16 +194,14 @@ const deregister = async (req: Request, res: Response, args: unknown): Promise<S
  * ! TODO: root could impersonate anyone
  */
 const impersonateStart = async (req: Request, res: Response, args: unknown): Promise<AuthSuccessfulResponse> => {
-  const { userId, userName, userTenants, authUserId } = auth(req);
+  const { userId, userName, authUserId } = auth(req);
   const [user, { userId: impersonatedAsId, coordinates, clientHash }] = await Promise.all([
     authGetUser(req),
     impersonateSchema.validate(args),
   ]);
 
   const [impersonatedUser] = await Promise.all([
-    isRoot(userTenants)
-      ? User.findById(impersonatedAsId, userNormalSelect).lean() // ROOT could impersonate tenantAdmin[0] (non-login-able)
-      : User.findOneActive({ _id: impersonatedAsId }, userNormalSelect),
+    User.findOne({ _id: impersonatedAsId, ...activeCond }, userNormalSelect).lean(),
     authenticateClient(clientHash),
   ]);
 
@@ -305,7 +308,7 @@ const login = async (req: Request, res: Response, args: unknown): Promise<AuthRe
 
   // accept verified (lower-cased) & unverified email (upper-cased)
   const [user] = await Promise.all([
-    User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, userLoginSelect),
+    User.findOne({ emails: { $in: [email, email.toUpperCase()] }, ...activeCond }, userLoginSelect).lean(),
     authenticateClient(clientHash),
   ]);
 
@@ -341,7 +344,10 @@ const loginWithStudentId = async (req: Request, res: Response, args: unknown): P
     await loginWithStudentIdSchema.validate(args);
 
   const [user, tenant] = await Promise.all([
-    User.findOneActive({ 'tenants.0': tenantId, studentIds: `${tenantId}#${studentId}` }, userLoginSelect),
+    User.findOne(
+      { 'tenants.0': tenantId, studentIds: `${tenantId}#${studentId}`, ...activeCond },
+      userLoginSelect,
+    ).lean(),
     Tenant.findByTenantId(tenantId),
     authenticateClient(clientHash),
   ]);
@@ -384,7 +390,7 @@ const loginToken = async (req: Request, args: unknown): Promise<string> => {
   } = await optionalExpiresInSchema.concat(tenantIdSchema).concat(userIdSchema).validate(args);
 
   const [user, tenant] = await Promise.all([
-    User.findOneActive({ _id: userId, tenants: tenantId }),
+    User.findOne({ _id: userId, tenants: tenantId, ...activeCond }).lean(),
     Tenant.findByTenantId(tenantId, tenantAdminId),
   ]);
 
@@ -408,7 +414,7 @@ const loginWithToken = async (req: Request, res: Response, args: unknown): Promi
   const [[prefix, userId]] = await Promise.all([token.verifyStrings(loginToken), authenticateClient(clientHash)]);
   if (prefix !== LOGIN_TOKEN_PREFIX || !userId) throw { statusCode: 422, code: MSG_ENUM.TOKEN_ERROR };
 
-  const user = await User.findOneActive({ _id: userId }, userNormalSelect);
+  const user = await User.findOne({ _id: userId, ...activeCond }, userNormalSelect).lean();
   if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const [tokensResponse, updatedUser] = await Promise.all([
@@ -481,7 +487,7 @@ const oAuth2 = async (req: Request, res: Response, args: unknown): Promise<AuthR
   const [oAuthPayload] = await Promise.all([oAuth2Decode(provider, code), authenticateClient(clientHash)]);
 
   const oAuthId = `${provider}#${oAuthPayload.subId}`;
-  const existingUser = await User.findOneActive({ oAuth2s: oAuthId }, userNormalSelect);
+  const existingUser = await User.findOne({ oAuth2s: oAuthId, ...activeCond }, userNormalSelect).lean();
 
   // login if user exists
   if (existingUser) {
@@ -522,7 +528,7 @@ const oAuth2 = async (req: Request, res: Response, args: unknown): Promise<AuthR
 
   const [tokensResponse, registeredUser] = await Promise.all([
     token.generate(createdUser, { isPublic, force: true, ip: req.ip, ua: req.ua }),
-    User.findOneActive({ _id: createdUser }, userNormalSelect), // read back with proper selected fields
+    User.findOne({ _id: createdUser, ...activeCond }, userNormalSelect).lean(), // read back with proper selected fields
     AuthEvent.log(createdUser._id, 'oauth', req.ua, req.ip, coordinates, `oauth register ${oAuthId}`),
   ]);
 
@@ -540,7 +546,7 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
 
   // check if email already exists
   const [existingUser] = await Promise.all([
-    User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, '_id'), // check if either lowerCase() or upperCase() email is taken
+    User.findOne({ emails: { $in: [email, email.toUpperCase()] }, ...activeCond }, '_id').lean(), // check if either lowerCase() or upperCase() email is taken
     authenticateClient(clientHash),
   ]);
 
@@ -558,7 +564,7 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
 
   const [tokensResponse, createdUserReadBack] = await Promise.all([
     token.generate(createdUser, { isPublic, force: true, ip: req.ip, ua: req.ua }),
-    User.findOneActive({ _id: createdUser }, userNormalSelect), // read back with proper selected fields
+    User.findOne({ _id: createdUser, ...activeCond }, userNormalSelect).lean(), // read back with proper selected fields
     AuthEvent.log(createdUser._id, 'register', req.ua, req.ip, coordinates),
   ]);
   mail.confirmEmail(name, createdUser.locale, email); // no need to wait, sending email takes time
@@ -580,9 +586,9 @@ const renewToken = async (req: Request, res: Response, args: unknown): Promise<A
   const { refreshToken, isPublic, coordinates, clientHash } = await renewTokenSchema.validate(args);
 
   const [[prefix, userId]] = await Promise.all([token.verifyStrings(refreshToken), authenticateClient(clientHash)]);
-  if (prefix !== REFRESH_TOKEN || !userId) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
+  if (prefix !== REFRESH_TOKEN_PREFIX || !userId) throw { statusCode: 400, code: MSG_ENUM.TOKEN_ERROR };
 
-  const user = await User.findOneActive({ _id: userId }, userNormalSelect);
+  const user = await User.findOne({ _id: userId, ...activeCond }, userNormalSelect).lean();
   if (!user) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const tokensResponse = await token.renew(user, refreshToken, { isPublic, ip: req.ip, ua: req.ua });
@@ -591,7 +597,7 @@ const renewToken = async (req: Request, res: Response, args: unknown): Promise<A
   const [updatedUser] = await Promise.all([
     clearExpiredUserSuspension(user),
     AuthEvent.log(user._id, 'renew', req.ua, req.ip, coordinates, remark),
-    notifySync(null, { userIds: [userId], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
+    notifySync(null, { userIds: [user._id], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
   res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions);
@@ -612,14 +618,16 @@ const getHandler: RequestHandler<{ action: GetAction; extra?: string }> = async 
         return res.redirect(200, `${redirectUri}?clientId=${clientId}&token=${token}`);
       case 'authServiceUserInfo':
         return res.status(200).json({ data: await authServiceUserInfo(req, { token: extra }) });
+      case 'isEmailAvailable':
+        return res.status(200).json({ data: await isEmailAvailable(req, { email: extra }) });
+      case 'listApiKeys':
+        return res.status(200).json({ data: await listApiKeys(req) });
       case 'listSockets':
         return res.status(200).json({ data: await listSockets(req) });
       case 'listTokens':
         return res.status(200).json({ data: await listTokens(req) });
       case 'loginToken':
         return res.status(200).json({ data: await loginToken(req, req.body) });
-      case 'isEmailAvailable':
-        return res.status(200).json({ data: await isEmailAvailable(req, { email: extra }) });
       default:
         assertUnreachable(action);
     }
@@ -670,6 +678,9 @@ const postHandler: RequestHandler<{ action: PostAction }> = async (req, res, nex
 };
 
 export default {
+  addApiKey,
+  removeApiKey,
+  listApiKeys,
   authServiceToken,
   authServiceUserInfo,
   getHandler,

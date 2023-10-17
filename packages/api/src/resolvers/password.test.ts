@@ -8,8 +8,7 @@ import configLoader from '../config/config-loader';
 import { apolloExpect, ApolloServer, genUser, jestSetup, jestTeardown, randomString, testServer } from '../jest';
 import User from '../models/user';
 import { CHANGE_PASSWORD, RESET_PASSWORD_CONFIRM, RESET_PASSWORD_REQUEST } from '../queries/password';
-import { PASSWORD_TOKEN_PREFIX } from '../utils/sendmail';
-import token, { REFRESH_TOKEN } from '../utils/token';
+import token, { PASSWORD_TOKEN_PREFIX, REFRESH_TOKEN_PREFIX } from '../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 const { DEFAULTS } = configLoader;
@@ -26,7 +25,7 @@ describe('Authentication GraphQL (token)', () => {
     ({ guestServer } = await jestSetup(['guest'], { apollo: true }));
 
     [refreshToken] = await Promise.all([
-      token.signStrings([REFRESH_TOKEN, _id.toString(), randomString()], DEFAULTS.JWT.EXPIRES.REFRESH),
+      token.signStrings([REFRESH_TOKEN_PREFIX, _id.toString(), randomString()], DEFAULTS.JWT.EXPIRES.REFRESH),
       user.save(),
     ]);
   });

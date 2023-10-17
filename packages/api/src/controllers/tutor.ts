@@ -1,28 +1,28 @@
 /**
  * Controller: Tutor
  *
- * note: tutoring schools are ONLY supported in Hub mode, no need to sync satellite
+ * !note: id is referencing to tutor.user
+ *
+ * note: tutoring schools are ONLY supported in Hub mode, school-tenant does not support tutor, no need to sync satellite
  */
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import { addYears } from 'date-fns';
 import type { Request, RequestHandler } from 'express';
-import mongoose, { Types, UpdateQuery } from 'mongoose';
+import type { Types, UpdateQuery } from 'mongoose';
+import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
+import type { Id } from '../models/common';
 import DatabaseEvent from '../models/event/database';
 import Level from '../models/level';
 import Subject from '../models/subject';
 import Tenant from '../models/tenant';
-import type { Id, TutorDocument } from '../models/tutor';
+import type { TutorDocument } from '../models/tutor';
 import Tutor, { searchableFields } from '../models/tutor';
-import User from '../models/user';
-import { startChatGroup } from '../utils/chat';
+import User, { activeCond } from '../models/user';
+import { messageToAdmins } from '../utils/chat';
 import { mongoId } from '../utils/helper';
-import log from '../utils/log';
-import type { BulkWrite } from '../utils/notify-sync';
-import { notifySync } from '../utils/notify-sync';
-import type { StatusResponse } from './common';
 import common from './common';
 
 type Action =
@@ -33,221 +33,111 @@ type Action =
   | 'removeSpecialty'
   | 'verifyCredential';
 
+type Populate = { user: Id & { name: string } };
+type PopulatedTutor = Omit<TutorDocument, 'user'> & Populate;
+type TutorDocumentEx = Omit<TutorDocument, 'user'> & { name: string };
+
 const { MSG_ENUM } = LOCALE;
-const { QUESTION, TENANT, USER } = LOCALE.DB_ENUM;
+const { QUESTION } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
 
-const { assertUnreachable, auth, hubModeOnly, paginateSort, searchFilter, select } = common;
-const {
-  idSchema,
-  querySchema,
-  remarkSchema,
-  removeSchema,
-  tenantIdSchema,
-  tutorCredentialIdSchema,
-  tutorCredentialSchema,
-  tutorSchema,
-  tutorSpecialtyIdSchema,
-  tutorSpecialtySchema,
-  userIdSchema,
-} = yupSchema;
+const { auth, authGetUser, hubModeOnly, isAdmin, paginateSort, searchFilter, select } = common;
+const { idSchema, querySchema, remarkSchema, subIdSchema, tutorCredentialSchema, tutorSchema, tutorSpecialtySchema } =
+  yupSchema;
+
+const populate = [{ path: 'user', select: '_id name' }];
 
 /**
- * hide deleted specialties ; hide credential's proofs for non-owner, non tenantAdmin, remove deleted specialties
+ * (helper) transform
+ * show credential.proofs to owner & admins only
+ * show specialties with intersected tenants
  */
-const transform = (tutor: TutorDocument & Id, userId: string | Types.ObjectId, isAdmin?: boolean) => ({
+const transform = (
+  { user, ...tutor }: PopulatedTutor,
+  userId: Types.ObjectId,
+  userTenants: string[],
+  isAdmin?: boolean,
+): TutorDocumentEx => ({
   ...tutor,
+  _id: user._id,
+  name: user.name,
 
   credentials: tutor.credentials.map(({ proofs, ...rest }) => ({
     ...rest,
-    proofs: isAdmin || tutor.user.equals(userId) ? proofs : [], // show only to owner (or admin)
+    proofs: isAdmin || userId.equals(user._id) ? proofs : [], // only owner or admin could see proofs
   })),
 
-  specialties: tutor.specialties.filter(s => !s.deletedAt),
-
-  remarks: isAdmin ? tutor.remarks : [], // show for admin only
+  specialties: isAdmin
+    ? tutor.specialties // admin could see everything
+    : tutor.specialties.filter(({ tenant }) => userTenants.some(t => tenant.equals(t))), // show intersected userTenants
 });
-
-/**
- * Add Remark
- * only tenantAdmin could addRemark
- */
-const addRemark = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
-  hubModeOnly();
-  const { userId } = auth(req);
-  const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
-
-  const original = await Tutor.findOne({ _id: id, deleted: { $exists: false } }).lean();
-  if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  const { admins } = await Tenant.findByTenantId(original.tenant, userId);
-
-  const update: UpdateQuery<TutorDocument> = { $push: { remarks: { t: new Date(), u: userId, m: remark } } };
-  const [tutor] = await Promise.all([
-    Tutor.findByIdAndUpdate(id, update, { fields: select([USER.ROLE.ADMIN]), new: true }).lean(),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'REMARK', { args }),
-    notifySync(
-      original.tenant,
-      { userIds: [...admins, original.user], event: 'TUTOR' },
-      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
-    ),
-  ]);
-  if (tutor) return transform(tutor, userId, true);
-  log('error', 'tutorController:addRemark()', args, userId);
-  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
-};
-
-/**
- * Create
- * only tenantAdmin could add tutor
- * note!: if tutor exists, just un-delete & return (keeping all statistics)
- *
- * ! ONLY identifiable User could be added as tutor
- */
-const create = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
-  hubModeOnly();
-
-  const { userId, userLocale } = auth(req);
-  const { tenantId, userId: tutorUserId } = await tenantIdSchema.concat(userIdSchema).validate(args);
-
-  const [tenant, existingTutor, tutorUser] = await Promise.all([
-    Tenant.findByTenantId(tenantId, userId),
-    Tutor.findOne({ tenant: tenantId, user: tutorUserId }).lean(),
-    User.findOneActive({
-      _id: tutorUserId,
-      identifiedAt: { $gte: addYears(Date.now(), -1 * DEFAULTS.USER.IDENTIFIABLE_EXPIRY) },
-    }),
-  ]);
-
-  if (!tenant.services.includes(TENANT.SERVICE.TUTOR)) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
-  if (!tutorUser) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const newTutor = new Tutor<Partial<TutorDocument>>({ user: tutorUser._id, tenant: tenant._id });
-  const tutorId = (existingTutor ?? newTutor)._id;
-
-  const msg = {
-    enUS: `${tutorUser.name}, you are now a tutor of ${tenant.name.enUS}.`,
-    zhCN: `${tutorUser.name},你已成为${tenant.name.zhCN}之导师。`,
-    zhHK: `${tutorUser.name},你已成為${tenant.name.zhHK}的導師。`,
-  };
-
-  const update: UpdateQuery<TutorDocument> = existingTutor
-    ? {
-        $unset: { deletedAt: 1 },
-        specialties: existingTutor.specialties.map(({ deletedAt: _, ...specialty }) => specialty),
-      }
-    : {};
-  const [updatedTutor] = await Promise.all([
-    existingTutor &&
-      Tutor.findByIdAndUpdate(existingTutor, update, { fields: select([USER.ROLE.ADMIN]), new: true }).lean(),
-    !existingTutor && newTutor.save(), // save as new tutor if not previously exists
-    startChatGroup(tenant._id, msg, [...tenant.admins, tutorUserId], userLocale, `TUTOR#${tutorId}`),
-    DatabaseEvent.log(userId, `/tutors/${tutorId}`, 'CREATE', { args }),
-    notifySync(
-      tenant._id,
-      { userIds: [...tenant.admins, tutorUserId], event: 'TUTOR' },
-      {
-        bulkWrite: {
-          tutors: [
-            existingTutor
-              ? { updateOne: { filter: { _id: existingTutor._id }, update } }
-              : { insertOne: { document: newTutor.toObject() } },
-          ] satisfies BulkWrite<TutorDocument>,
-        },
-      },
-    ),
-  ]);
-
-  if (updatedTutor) return transform(updatedTutor, userId, true);
-  if (!existingTutor) return transform(newTutor.toObject(), userId, true);
-  log('error', 'tutorController:create()', args, userId);
-  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
-};
-
-/**
- * Create New Tutor (RESTful)
- */
-const createNew: RequestHandler = async (req, res, next) => {
-  try {
-    res.status(201).json({ data: await create(req, req.body) });
-  } catch (error) {
-    next(error);
-  }
-};
 
 // common filter for find() & findMany()
 const findCommonFilter = async (req: Request, args: unknown) => {
-  const { userId, userExtra, userTenants } = auth(req);
-  const [{ query }, levels, adminTenants] = await Promise.all([
-    querySchema.validate(args),
+  const { userId, userExtra, userRoles, userTenants } = auth(req);
+
+  const { query } = await querySchema.validate(args);
+  if (isAdmin(userRoles)) return searchFilter<TutorDocument>(searchableFields, { query }); // admin see everything
+
+  const [levels, adminTenants] = await Promise.all([
     Level.find({ deletedAt: { $exists: false } }).lean(),
     Tenant.findAdminTenants(userId, userTenants),
   ]);
 
   const teacherLevelId = levels.find(({ code }) => code === 'TEACHER')?._id;
   const naLevelId = levels.find(({ code }) => code === 'NA')?._id;
-  const adminTenantIds = adminTenants.map(t => t._id.toString()); // cast toString() because of merge.all() limitation
+  const adminTenantIds = adminTenants.map(t => t._id);
   if (!teacherLevelId || !naLevelId) throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 
   const extra: Record<'$or', Record<string, unknown>[]> = {
     $or: [
       { user: userId },
       {
-        tenant: { $in: userTenants },
+        'specialties.tenant': { $in: userTenants },
         'specialties.level':
           !!userExtra?.level && !teacherLevelId.equals(userExtra.level)
-            ? { $in: [userExtra.level.toString(), naLevelId.toString()] } // cast toString() because of merge.all() limitation in searchFilter() [merge.all cannot handle ObjectId()]
-            : naLevelId.toString(), // cast toString() because of merge.all() limitation in searchFilter()
+            ? { $in: [userExtra.level, naLevelId] }
+            : naLevelId,
       },
-      ...(adminTenantIds.length ? [{ tenant: { $in: adminTenantIds } }] : []), // tenantAdmin could get all tutors of his/her tenants
+      ...(adminTenantIds.length ? [{ 'specialties.tenant': { $in: adminTenantIds } }] : []), // tenantAdmin could get all tutors of his/her tenants
     ],
   };
 
-  // tenantAdmin could get all tutors of his/her tenants
-  // if (adminTenantIds.length) extra.$or = [...extra.$or, { tenant: { $in: adminTenantIds } }];
-  return { filter: searchFilter<TutorDocument>(searchableFields, { query }, extra), adminTenantIds };
+  return searchFilter<TutorDocument>(searchableFields, { query }, extra);
 };
 
 /**
  * Find Multiple Tutors (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<(TutorDocument & Id)[]> => {
-  const { userId } = auth(req);
-  const { filter, adminTenantIds } = await findCommonFilter(req, args);
+const find = async (req: Request, args: unknown): Promise<TutorDocumentEx[]> => {
+  hubModeOnly();
 
-  const tutors = await Tutor.find(filter, select([USER.ROLE.ADMIN])).lean();
+  const { userId, userRoles, userTenants } = auth(req);
+  const filter = await findCommonFilter(req, args);
 
-  return tutors.map(tutor =>
-    transform(
-      tutor,
-      userId,
-      adminTenantIds.some(tid => tutor.tenant.equals(tid)),
-    ),
-  );
+  const tutors = await Tutor.find(filter, select(userRoles)).populate<Populate>(populate).lean();
+  return tutors.map(tutor => transform(tutor, userId, userTenants, isAdmin(userRoles)));
 };
 
 /**
  * Find Multiple Tutors with queryString (RESTful)
  */
 const findMany: RequestHandler = async (req, res, next) => {
+  hubModeOnly();
+
   try {
-    const { userId } = auth(req);
-    const { filter, adminTenantIds } = await findCommonFilter(req, { query: req.query });
+    const { userId, userRoles, userTenants } = auth(req);
+    const filter = await findCommonFilter(req, { query: req.query });
     const options = paginateSort(req.query);
 
     const [total, tutors] = await Promise.all([
       Tutor.countDocuments(filter),
-      Tutor.find(filter, select([USER.ROLE.ADMIN]), options).lean(),
+      Tutor.find(filter, select(userRoles), options).populate<Populate>(populate).lean(),
     ]);
 
     res.status(200).json({
       meta: { total, ...options },
-      data: tutors.map(tutor =>
-        transform(
-          tutor,
-          userId,
-          adminTenantIds.some(tid => tutor.tenant.equals(tid)),
-        ),
-      ),
+      data: tutors.map(tutor => transform(tutor, userId, userTenants, isAdmin(userRoles))),
     });
   } catch (error) {
     next(error);
@@ -256,25 +146,22 @@ const findMany: RequestHandler = async (req, res, next) => {
 
 /**
  * Find One Tutor by ID
+ * as long as within userTenants, will show it
  */
-const findOne = async (req: Request, args: unknown): Promise<(TutorDocument & Id) | null> => {
-  const { userId, userTenants } = auth(req);
+const findOne = async (req: Request, args: unknown): Promise<TutorDocumentEx | null> => {
+  hubModeOnly();
+
+  const { userId, userRoles, userTenants } = auth(req);
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
-  const filter = searchFilter<TutorDocument>(searchableFields, { query }, { _id: id, tenant: { $in: userTenants } });
-  const [adminTenants, tutor] = await Promise.all([
-    Tenant.findAdminTenants(userId, userTenants),
-    Tutor.findOne(filter, select([USER.ROLE.ADMIN])).lean(),
-  ]);
-
-  return (
-    tutor &&
-    transform(
-      tutor,
-      userId,
-      adminTenants.some(t => t._id.equals(tutor.tenant.toString())),
-    )
+  const filter = searchFilter<TutorDocument>(
+    searchableFields,
+    { query },
+    { user: id, ...(!isAdmin(userRoles) && { 'specialties.tenant': { $in: userTenants } }) },
   );
+  const tutor = await Tutor.findOne(filter, select(userRoles)).populate<Populate>(populate).lean();
+
+  return tutor && transform(tutor, userId, userTenants, isAdmin(userRoles));
 };
 
 /**
@@ -292,414 +179,171 @@ const findOneById: RequestHandler<{ id: string }> = async (req, res, next) => {
 };
 
 /**
- * Add a Credential
- * (by tutor)
+ * upsert Tutor
  */
-const addCredential = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
+const upsert = async (req: Request, args: unknown, action?: Action): Promise<TutorDocumentEx> => {
   hubModeOnly();
-  const { userId, userLocale } = auth(req);
-  const { id, ...inputFields } = await idSchema.concat(tutorCredentialSchema).validate(args);
 
-  const update: UpdateQuery<TutorDocument> = {
-    $push: { credentials: { _id: mongoId(), ...inputFields, updatedAt: new Date() } },
-  };
-  const tutor = await Tutor.findOneAndUpdate({ _id: id, user: userId, deletedAt: { $exists: false } }, update, {
-    fields: select(),
-    new: true,
-  }).lean();
-  if (!tutor) throw { statusCode: 422, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
+  const { userId, userLocale, userRoles, userTenants } = auth(req);
+  const save = async (user: Types.ObjectId, update: UpdateQuery<TutorDocument>, event: Record<string, unknown>) => {
+    const [tutor] = await Promise.all([
+      Tutor.findOneAndUpdate({ user }, { user, ...update }, { fields: select(userRoles), new: true, upsert: true })
+        .populate<Populate>(populate)
+        .lean(),
+      DatabaseEvent.log(userId, `/tutors/${user}`, action || 'update', event),
+    ]);
 
-  const { admins } = await Tenant.findByTenantId(tutor.tenant);
-
-  const { title } = inputFields;
-  const msg = {
-    enUS: `A new user credential is added: ${title}, please provide proofs for manual verification`,
-    zhCN: `刚上传学历资料：${title}，请提供证明文伴，等待人工审核。`,
-    zhHK: `剛上傳學歷資料：${title}，請提供證明文件，等待人工審核。`,
+    return transform(tutor, userId, userTenants, isAdmin(userRoles));
   };
 
-  const credentialId = tutor.credentials.find(c => c.title === title)?._id.toString();
-  const [transformed] = await Promise.all([
-    transform(
-      tutor,
-      userId,
-      admins.some(admin => admin.equals(userId)),
-    ),
-    startChatGroup(tutor.tenant, msg, [...admins, userId], userLocale, `TUTOR#${id}`),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'addCredential', { args, credentialId }),
-    notifySync(
-      tutor.tenant,
-      { userIds: [...admins, userId], event: 'TUTOR' },
-      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
-    ),
-  ]);
+  if (action === 'addCredential') {
+    const [{ identifiedAt }, { title, proofs }] = await Promise.all([
+      authGetUser(req),
+      tutorCredentialSchema.validate(args),
+    ]);
 
-  return transformed;
-};
+    // only identifiable addSpecialty
+    if (!identifiedAt || addYears(identifiedAt, DEFAULTS.USER.IDENTIFIABLE_EXPIRY) < new Date())
+      throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
-/**
- * Remove a credential
- * (by tutor)
- */
-const removeCredential = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
-  hubModeOnly();
-  const { userId } = auth(req);
-  const { id, credentialId } = await idSchema.concat(tutorCredentialIdSchema).validate(args);
+    const msg = {
+      enUS: `A new user credential is added: ${title}, please provide proofs for manual verification`,
+      zhCN: `刚上传学历资料：${title}，请提供证明文伴，等待人工审核。`,
+      zhHK: `剛上傳學歷資料：${title}，請提供證明文件，等待人工審核。`,
+    };
+    const _id = mongoId();
+    const credential: TutorDocument['credentials'][0] = { _id, title, proofs, updatedAt: new Date() };
+    const [transformed] = await Promise.all([
+      save(userId, { $push: { credentials: credential } }, { _id, title }),
+      messageToAdmins(msg, userId, userLocale, false, [], `TUTOR#${userId}`),
+    ]);
+    return transformed;
+    //
+  } else if (action == 'addRemark') {
+    const { userId: adminId } = auth(req, 'ADMIN'); // admin ONLY
+    const { id: userId, remark } = await idSchema.concat(remarkSchema).validate(args);
 
-  const original = await Tutor.findOne({
-    _id: id,
-    user: userId,
-    'credentials._id': credentialId,
-    deletedAt: { $exists: false },
-  }).lean();
-  if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+    return save(mongoId(userId), { $push: { remarks: { t: new Date(), u: adminId, m: remark } } }, { args });
+    //
+  } else if (action === 'addSpecialty') {
+    const [{ identifiedAt }, { tenantId, note, langs, level, subject }] = await Promise.all([
+      authGetUser(req),
+      tutorSpecialtySchema.validate(args),
+    ]);
 
-  const { admins } = await Tenant.findByTenantId(original.tenant);
+    // only identifiable addSpecialty
+    if (!identifiedAt || addYears(identifiedAt, DEFAULTS.USER.IDENTIFIABLE_EXPIRY) < new Date())
+      throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 
-  const update: UpdateQuery<TutorDocument> = {
-    credentials: original.credentials.filter(c => !c._id.equals(credentialId)),
-  };
-  const [tutor] = await Promise.all([
-    Tutor.findByIdAndUpdate(id, update, { field: select(), new: true }).lean(),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'removeCredential', {
-      args,
-      originalCredential: original.credentials.find(c => c._id.equals(credentialId)),
-    }),
-    notifySync(
-      original.tenant,
-      { userIds: [...admins, userId], event: 'TUTOR' },
-      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
-    ),
-  ]);
+    const [original, l, s] = await Promise.all([
+      Tutor.findOne({ user: userId }).lean(),
+      Level.exists({ _id: level, deletedAt: { $exists: false } }),
+      Subject.exists({ _id: subject, levels: level, deletedAt: { $exists: false } }),
+    ]);
 
-  if (tutor)
-    return transform(
-      tutor,
-      userId,
-      admins.some(admin => admin.equals(userId)),
+    const duplicatedSpecialty = original?.specialties.some(
+      s => s.tenant.equals(tenantId) && s.subject.equals(subject) && s.level.equals(level),
     );
-  log('error', 'tutorController:removeCredential()', args, userId);
-  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
-};
 
-/**
- * Verify
- * only tenantAdmin could verify credentials
- */
-const verifyCredential = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
-  hubModeOnly();
-  const { userId, userLocale } = auth(req);
-  const { id, credentialId } = await idSchema.concat(tutorCredentialIdSchema).validate(args);
+    if (!userTenants.includes(tenantId) || !l || !s || duplicatedSpecialty)
+      throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  // only tenantAdmin could verify credentials
-  const original = await Tutor.findOne({ _id: id, 'credentials._id': credentialId, deletedAt: { $exists: false } });
-  const credential = original?.credentials.find(c => c._id.equals(credentialId));
+    const _id = mongoId();
+    const specialty: TutorDocument['specialties'][0] = {
+      _id,
+      tenant: mongoId(tenantId),
+      note,
+      langs: langs.filter(x => Object.keys(QUESTION.LANG).includes(x)), // sanitized langs
+      level: l._id,
+      subject: s._id,
+      priority: 0,
+    };
+    return save(userId, { $push: { specialties: specialty } }, { args, _id });
+    //
+  } else if (action === 'removeCredential') {
+    const [original, { subId }] = await Promise.all([
+      Tutor.findOne({ user: userId }).lean(),
+      subIdSchema.validate(args),
+    ]);
 
-  if (!original || !credential) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  const { admins } = await Tenant.findByTenantId(original.tenant, userId);
+    const originalCredential = original?.credentials.find(c => c._id.equals(subId));
+    if (!originalCredential) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const msg = {
-    enUS: `Tutor credential is verified: ${credential.title}.`,
-    zhCN: `学历资料完成审批：${credential.title}。`,
-    zhHK: `學歷資料完成審批：${credential.title}。`,
-  };
-  const [tutor] = await Promise.all([
-    Tutor.findOneAndUpdate(
-      { _id: id, 'credentials._id': credentialId },
-      { $set: { 'credentials.$.verifiedAt': new Date() } },
-      { fields: select([USER.ROLE.ADMIN]), new: true },
-    ).lean(),
-    startChatGroup(original.tenant, msg, [...admins, original.user], userLocale, `TUTOR#${id}`),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'verifyCredential', { args }),
-    notifySync(
-      original.tenant,
-      { userIds: [...admins, userId], event: 'TUTOR' },
-      {
-        bulkWrite: {
-          tutors: [
-            {
-              updateOne: {
-                filter: { _id: id, 'credentials._id': credentialId },
-                update: { $set: { 'credentials.$.verifiedAt': new Date() } },
-              },
-            },
-          ] satisfies BulkWrite<TutorDocument>,
-        },
-      },
-    ),
-  ]);
+    return save(userId, { $pull: { credentials: { _id: subId } } }, { args, originalCredential });
+    //
+  } else if (action === 'removeSpecialty') {
+    const [original, { subId }] = await Promise.all([
+      Tutor.findOne({ user: userId }).lean(),
+      subIdSchema.validate(args),
+    ]);
 
-  if (tutor) return transform(tutor, userId, true);
-  log('error', 'tutorController:verifyCredential()', args, userId);
-  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
-};
+    const originalSpecialty = original?.specialties.find(s => s._id.equals(subId));
+    if (!originalSpecialty) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-/**
- *  Add a Specialty
- * (by tutor)
- */
-const addSpecialty = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
-  hubModeOnly();
-  const { userId, userLocale } = auth(req);
-  const { id, ...inputFields } = await idSchema.concat(tutorSpecialtySchema).validate(args);
+    return save(userId, { $pull: { specialties: { _id: subId } } }, { args, originalSpecialty });
+    //
+  } else if (action === 'verifyCredential') {
+    const { userId: adminId } = auth(req, 'ADMIN'); // admin ONLY
+    const { id: userId, subId } = await idSchema.concat(subIdSchema).validate(args);
+    const [original, user] = await Promise.all([
+      Tutor.findOne({ user: userId }).lean(),
+      User.findOne({ _id: userId, ...activeCond }).lean(),
+    ]);
 
-  const [original, level, subject] = await Promise.all([
-    Tutor.findOne({ _id: id, user: userId, deletedAt: { $exists: false } }).lean(),
-    Level.findOne({ _id: inputFields.level, deletedAt: { $exists: false } }).lean(),
-    Subject.findOne({ _id: inputFields.subject, levels: inputFields.level, deletedAt: { $exists: false } }).lean(),
-  ]);
-  if (!Object.keys(QUESTION.LANG).includes(inputFields.lang) || !original || !level || !subject)
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+    const credential = original?.credentials.find(c => c._id.equals(subId));
+    if (!user || !credential) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const specialtyId = original.specialties.find(
-    s => s.subject.equals(inputFields.subject) && s.level.equals(inputFields.level) && s.lang === inputFields.lang,
-  )?._id;
+    const msg = {
+      enUS: `Tutor credential is verified: ${credential.title}.`,
+      zhCN: `学历资料完成审批：${credential.title}。`,
+      zhHK: `學歷資料完成審批：${credential.title}。`,
+    };
 
-  const { admins } = await Tenant.findByTenantId(original.tenant);
-
-  const msg = {
-    enUS: `A new tutor specialty is added: ${level.name.enUS}-${subject.name.enUS}`,
-    zhCN: `刚上传专展资料：${level.name.zhCN}-${subject.name.zhCN}。`,
-    zhHK: `剛上傳專長資料：${level.name.zhHK}-${subject.name.zhHK}。`,
-  };
-
-  const update: UpdateQuery<TutorDocument> = {
-    $push: {
-      specialties: {
-        _id: mongoId(),
-        ...inputFields,
-        level: level._id,
-        subject: subject._id,
-        priority: 0,
-        ranking: { updatedAt: new Date() },
-      },
-    },
-  };
-  const [tutor] = await Promise.all([
-    specialtyId
-      ? // un-delete specialty
-        await Tutor.findOneAndUpdate(
-          { _id: id, 'specialties._id': specialtyId },
-          {
-            $set: { 'specialties.$.note': inputFields.note },
-            $unset: { 'specialties.$.deletedAt': 1 },
-          },
-          { fields: select(), new: true },
-        ).lean()
-      : // add a new specialty
-        await Tutor.findOneAndUpdate({ _id: id }, update, { fields: select(), new: true }).lean(),
-    startChatGroup(original.tenant, msg, [...admins, userId], userLocale, `TUTOR#${id}`),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'addSpecialty', { args, specialtyId }),
-    notifySync(
-      original.tenant,
-      { userIds: [...admins, userId], event: 'TUTOR' },
-      {
-        bulkWrite: {
-          tutors: [
-            {
-              updateOne: specialtyId
-                ? {
-                    filter: { _id: id, 'specialties._id': specialtyId },
-                    update: {
-                      $set: { 'specialties.$.note': inputFields.note },
-                      $unset: { 'specialties.$.deletedAt': 1 },
-                    },
-                  }
-                : { filter: { _id: id }, update },
-            },
-          ] satisfies BulkWrite<TutorDocument>,
-        },
-      },
-    ),
-  ]);
-
-  if (tutor)
-    return transform(
-      tutor,
+    const [tutor] = await Promise.all([
+      Tutor.findOneAndUpdate(
+        { user: userId, 'credentials._id': subId },
+        { $set: { 'credentials.$.verifiedAt': new Date() } },
+        { fields: select(userRoles), new: true, upsert: true }, // upsert is pointless, just to make typescript happy
+      )
+        .populate<Populate>(populate)
+        .lean(),
+      DatabaseEvent.log(adminId, `/tutors/${userId}`, action, { args }),
+      messageToAdmins(msg, user._id, user.locale, false, [adminId], `TUTOR#${userId}`),
+    ]);
+    return transform(tutor, adminId, userTenants, isAdmin(userRoles));
+  } else {
+    const { intro, officeHour } = await tutorSchema.validate(args);
+    const unset = { ...(!intro && { intro: 1 }), ...(!officeHour && { officeHour: 1 }) };
+    return save(
       userId,
-      admins.some(admin => admin.equals(userId)),
-    );
-  log('error', 'tutorController:addSpecialty()', args, userId);
-  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
-};
-
-/**
- * Delete Specialty by ID (by tutor)
- * ! (to keep ranking info, only update deletedAt, to hide the entry)
- */
-const removeSpecialty = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
-  hubModeOnly();
-  const { userId } = auth(req);
-  const { id, specialtyId } = await idSchema.concat(tutorSpecialtyIdSchema).validate(args);
-
-  const tutor = await Tutor.findOneAndUpdate(
-    { _id: id, user: userId, 'specialties._id': specialtyId, deletedAt: { $exists: false } },
-    { $set: { 'specialties.$.deletedAt': new Date() } },
-    { field: select(), new: true },
-  ).lean();
-  if (!tutor) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-
-  const { admins } = await Tenant.findByTenantId(tutor.tenant);
-  await Promise.all([
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'removeSpecialty', { args }),
-    notifySync(
-      tutor.tenant,
-      { userIds: [...admins, userId], event: 'TUTOR' },
       {
-        bulkWrite: {
-          tutors: [
-            {
-              updateOne: {
-                filter: { _id: id, 'specialties._id': specialtyId },
-                update: { $set: { 'specialties.$.deletedAt': new Date() } },
-              },
-            },
-          ] satisfies BulkWrite<TutorDocument>,
-        },
+        ...(intro && { intro }),
+        ...(officeHour && { officeHour }),
+        ...(Object.keys(unset).length && { $unset: unset }),
       },
-    ),
-  ]);
-
-  return transform(
-    tutor,
-    userId,
-    admins.some(admin => admin.equals(userId)),
-  );
-};
-
-/**
- * Delete by ID
- * (by tenantAdmin)
- *
- * note!: keep specialties ranking data, only marked with deleted
- */
-const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
-  hubModeOnly();
-  const { userId } = auth(req);
-  const { id, remark } = await removeSchema.validate(args);
-
-  const original = await Tutor.findOne({ _id: id, deletedAt: { $exists: false } }).lean();
-  if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  const { admins } = await Tenant.findByTenantId(original.tenant, userId);
-
-  const update: UpdateQuery<TutorDocument> = {
-    $unset: { intro: 1, officeHour: 1 },
-    credentials: [],
-    specialties: original.specialties.map(specialty => ({ ...specialty, deletedAt: new Date() })),
-    deletedAt: new Date(),
-    ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }),
-  };
-  await Promise.all([
-    Tutor.updateOne({ _id: id }, update),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'DELETE', { args, original }),
-    notifySync(
-      original.tenant,
-      { userIds: [...admins, original.user], event: 'TUTOR' },
-      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
-    ),
-  ]);
-
-  return { code: MSG_ENUM.COMPLETED };
-};
-
-/**
- * Delete by ID (RESTful)
- */
-const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
-  if (!mongoose.isObjectIdOrHexString(req.params.id)) return next({ statusCode: 404 });
-
-  try {
-    res.status(200).json(await remove(req, { id: req.params.id, ...req.body }));
-  } catch (error) {
-    next(error);
+      { args },
+    );
   }
 };
 
 /**
- * Update Tutor (intro & officeHour)
+ * UpsertHandler Tutor (credentials & specialties) (RESTful)
  */
-const update = async (req: Request, args: unknown): Promise<TutorDocument & Id> => {
-  hubModeOnly();
-  const { userId } = auth(req);
-  const { id, intro, officeHour } = await idSchema.concat(tutorSchema).validate(args);
-
-  const original = await Tutor.findOne({ _id: id, user: userId, deleted: { $exists: false } }).lean();
-  if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-  const { admins } = await Tenant.findByTenantId(original.tenant);
-
-  const update: UpdateQuery<TutorDocument> = {
-    intro,
-    ...(officeHour ? { officeHour } : { $unset: { officeHour: 1 } }),
-  };
-  const [tutor] = await Promise.all([
-    Tutor.findByIdAndUpdate(id, update, { fields: select(), new: true }).lean(),
-    DatabaseEvent.log(userId, `/tutors/${id}`, 'UPDATE', {
-      args,
-      intro: original.intro,
-      officeHour: original.officeHour,
-    }),
-    notifySync(
-      original.tenant,
-      { userIds: [...admins, userId], event: 'TUTOR' },
-      { bulkWrite: { tutors: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TutorDocument> } },
-    ),
-  ]);
-
-  if (tutor)
-    return transform(
-      tutor,
-      userId,
-      admins.some(admin => admin.equals(userId)),
-    );
-  log('error', 'tutorController:update()', args, userId);
-  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
-};
-
-/**
- * Update Tutor (credentials & specialties) (RESTful)
- */
-const updateById: RequestHandler<{ id?: string; action?: Action }> = async (req, res, next) => {
-  const { id, action } = req.params;
+const upsertHandler: RequestHandler<{ action?: Action }> = async (req, res, next) => {
+  const { action } = req.params;
 
   try {
-    switch (action) {
-      case undefined:
-        return res.status(200).json({ data: await update(req, { id, ...req.body }) });
-      case 'addCredential':
-        return res.status(200).json({ data: await addCredential(req, { id, ...req.body }) });
-      case 'addRemark':
-        return res.status(200).json({ data: await addRemark(req, { id, ...req.body }) });
-      case 'addSpecialty':
-        return res.status(200).json({ data: await addSpecialty(req, { id, ...req.body }) });
-      case 'removeCredential':
-        return res.status(200).json({ data: await removeCredential(req, { id, ...req.body }) });
-      case 'removeSpecialty':
-        return res.status(200).json({ data: await removeSpecialty(req, { id, ...req.body }) });
-      case 'verifyCredential':
-        return res.status(200).json({ data: await verifyCredential(req, { id, ...req.body }) });
-      default:
-        assertUnreachable(action);
-    }
+    return res.status(200).json({ data: await upsert(req, req.body, action) });
   } catch (error) {
     next(error);
   }
 };
 
 export default {
-  addRemark,
-  create,
-  createNew,
-  addCredential,
-  addSpecialty,
   find,
   findMany,
   findOne,
   findOneById,
-  remove,
-  removeById,
-  removeCredential,
-  removeSpecialty,
-  update,
-  updateById,
-  verifyCredential,
+  upsert,
+  upsertHandler,
 };

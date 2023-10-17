@@ -13,7 +13,7 @@ import configLoader from '../config/config-loader';
 import Book from '../models/book';
 import type { ChatDocument } from '../models/chat';
 import Chat from '../models/chat';
-import type { ChatGroupDocument, Id } from '../models/chat-group';
+import type { ChatGroupDocument } from '../models/chat-group';
 import ChatGroup, { searchableFields } from '../models/chat-group';
 import type { ClassroomDocument } from '../models/classroom';
 import Classroom from '../models/classroom';
@@ -23,7 +23,7 @@ import DatabaseEvent from '../models/event/database';
 import Question from '../models/question';
 import School from '../models/school';
 import Tenant from '../models/tenant';
-import User from '../models/user';
+import User, { activeCond } from '../models/user';
 import { extract, messageToAdmins, startChatGroup } from '../utils/chat';
 import { mongoId } from '../utils/helper';
 import log from '../utils/log';
@@ -51,7 +51,9 @@ type Action =
   | 'updateChatLastViewedAt'
   | 'updateUsers';
 type To = 'toAdmin' | 'toAlex' | 'toTenantAdmins' | 'toTenantCounselors' | 'toTenantSupports';
-type ChatGroupDocumentEx = ChatGroupDocument & Id & { contentsToken: string };
+type Populate = { chats: ChatDocument[] };
+type PopulatedChatGroup = Omit<ChatGroupDocument, 'chats'> & Populate;
+export type ChatGroupDocumentEx = PopulatedChatGroup & { contentsToken: string }; // export for JEST
 
 const { MSG_ENUM } = LOCALE;
 const { CONTENT, CHAT, CHAT_GROUP, TENANT } = LOCALE.DB_ENUM;
@@ -60,6 +62,7 @@ const { config, DEFAULTS } = configLoader;
 const {
   assertUnreachable,
   auth,
+  authGetUser,
   authCheckUserSuspension,
   hubModeOnly,
   isAdmin,
@@ -91,7 +94,7 @@ const populate = [{ path: 'chats', select: select() }];
  */
 const findOneChatGroup = async (
   id: string,
-  userId: string,
+  userId: Types.ObjectId,
   isAdmin: boolean,
   userTenants: string[],
   type: 'ADMIN' | 'USER',
@@ -120,7 +123,7 @@ const findOneChatGroup = async (
 /**
  * (helper) get parentId from chat.parents
  */
-const otherParentIds = (chat: ChatDocument & Id, chatGroupId: Types.ObjectId) => {
+const otherParentIds = (chat: ChatDocument, chatGroupId: Types.ObjectId) => {
   const classroomIds = chat.parents.filter(p => p.startsWith('/classrooms')).map(p => p.replace('/classrooms/', ''));
   const chatGroupIds = chat.parents.filter(p => p.startsWith('/chatGroups')).map(p => p.replace('/chatGroups/', ''));
   const otherChatGroupIds = chatGroupIds.filter(id => !chatGroupId.equals(id));
@@ -131,15 +134,9 @@ const otherParentIds = (chat: ChatDocument & Id, chatGroupId: Types.ObjectId) =>
 /**
  * (helper) generate contentsToken
  */
-const transform = async (userId: string, chatGroup: ChatGroupDocument & Id): Promise<ChatGroupDocumentEx> => ({
+const transform = async (userId: Types.ObjectId, chatGroup: PopulatedChatGroup): Promise<ChatGroupDocumentEx> => ({
   ...chatGroup,
-  contentsToken: await signContentIds(
-    userId,
-    chatGroup.chats
-      .map(chat => (typeof chat === 'string' || chat instanceof mongoose.Types.ObjectId ? 'IMPOSSIBLE' : chat.contents))
-      .flat()
-      .filter((x): x is Types.ObjectId => x !== 'IMPOSSIBLE'),
-  ),
+  contentsToken: await signContentIds(userId, chatGroup.chats.map(chat => chat.contents).flat()),
 });
 
 /**
@@ -160,7 +157,7 @@ const addContent = async (req: Request, args: unknown): Promise<ChatGroupDocumen
 
   const content = new Content<Partial<ContentDocument>>({
     parents: [`/chats/${chatId}`],
-    creator: mongoId(userId),
+    creator: userId,
     data,
     visibleAfter,
   });
@@ -176,7 +173,7 @@ const addContent = async (req: Request, args: unknown): Promise<ChatGroupDocumen
         }),
         $push: {
           contents: content._id,
-          ...(!memberExists && { members: { user: mongoId(userId), flags: [], lastViewedAt: new Date() } }),
+          ...(!memberExists && { members: { user: userId, flags: [], lastViewedAt: new Date() } }),
         },
       },
     ), // must update chat before chatGroup populating
@@ -188,11 +185,11 @@ const addContent = async (req: Request, args: unknown): Promise<ChatGroupDocumen
     ...(sysIds && { $addToSet: { admins: { $each: sysIds.adminIds }, users: { $each: sysIds.adminIds } } }),
   }; // $addToSet system admins if need
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true, populate }).lean(),
+    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true }).populate<Populate>(populate).lean(),
     otherChatGroupIds.length && ChatGroup.updateMany({ _id: { $in: otherChatGroupIds } }, { updatedAt: new Date() }),
     classroomIds.length && Classroom.updateMany({ _id: { $in: classroomIds } }, { updatedAt: new Date() }),
     Content.insertMany(content),
-    original.tenant && censorContent(original.tenant, userId, userLocale, 'chat-groups', id, content._id),
+    original.tenant && censorContent(original.tenant, userId, userLocale, `/chatGroups/${id}`, content._id),
     notifySync(
       userTenants[0] ? mongoId(userTenants[0]) : null, // satellite priority: chatGroup.tenant -> userPrimaryTenant (in case of adminMessage)
       { userIds: original.users, event: 'CHAT-GROUP' },
@@ -242,10 +239,10 @@ const addContentWithNewChat = async (req: Request, args: unknown): Promise<ChatG
   ]);
 
   const original = await findOneChatGroup(id, userId, isAdmin(userRoles), userTenants, 'USER');
-  const content = new Content<Partial<ContentDocument>>({ creator: mongoId(userId), data, visibleAfter });
+  const content = new Content<Partial<ContentDocument>>({ creator: userId, data, visibleAfter });
   const chat = new Chat<Partial<ChatDocument>>({
     parents: [`/chatGroups/${id}`],
-    members: [{ user: mongoId(userId), flags: [], lastViewedAt: new Date() }],
+    members: [{ user: userId, flags: [], lastViewedAt: new Date() }],
     contents: [content._id],
     ...(title && { title }),
   });
@@ -264,10 +261,10 @@ const addContentWithNewChat = async (req: Request, args: unknown): Promise<ChatG
     ...(sysIds && { $addToSet: { admins: { $each: sysIds.adminIds }, users: { $each: sysIds.adminIds } } }),
   }; // $addToSet system admins
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true, populate }).lean(),
+    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true }).populate<Populate>(populate).lean(),
     otherChatGroupIds.length && ChatGroup.updateMany({ _id: { $in: otherChatGroupIds } }, { updatedAt: new Date() }),
     classroomIds.length && Classroom.updateMany({ _id: { $in: classroomIds } }, { updatedAt: new Date() }),
-    original.tenant && censorContent(original.tenant, userId, userLocale, 'chat-groups', id, content._id),
+    original.tenant && censorContent(original.tenant, userId, userLocale, `/chatGroups/${id}`, content._id),
     notifySync(
       userTenants[0] ? mongoId(userTenants[0]) : null, // satellite priority: chatGroup.tenant -> userPrimaryTenant (in case of adminMessage)
       { userIds: original.users, event: 'CHAT-GROUP' },
@@ -277,7 +274,7 @@ const addContentWithNewChat = async (req: Request, args: unknown): Promise<ChatG
             { updateOne: { filter: { _id: id }, update } },
             { updateMany: { filter: { _id: { $in: otherChatGroupIds } }, update: { updatedAt: new Date() } } },
           ] satisfies BulkWrite<ChatGroupDocument>,
-          chats: [{ insertOne: { document: chat.toObject() } }] satisfies BulkWrite<ChatDocument>,
+          chats: [{ insertOne: { document: chat } }] satisfies BulkWrite<ChatDocument>,
           classrooms: [
             { updateMany: { filter: { _id: { $in: classroomIds } }, update: { updatedAt: new Date() } } },
           ] satisfies BulkWrite<ClassroomDocument>,
@@ -315,7 +312,7 @@ const attachChatGroup = async (req: Request, args: unknown): Promise<ChatGroupDo
 
   const update: UpdateQuery<ChatGroupDocument> = { $push: { chats: mongoId(chatId) } };
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true, populate }).lean(),
+    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true }).populate<Populate>(populate).lean(),
     notifySync(
       original.tenant,
       { userIds: original.users, event: 'CHAT-GROUP' },
@@ -360,7 +357,7 @@ const blockContent = async (req: Request, args: unknown): Promise<ChatGroupDocum
   ]);
   if (!chat || !content) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const contentOwner = content ? await User.findOneActive({ _id: content.creator }) : null;
+  const contentOwner = content ? await User.findOne({ _id: content.creator, ...activeCond }).lean() : null;
 
   const { chatGroupIds, otherChatGroupIds, classroomIds } = otherParentIds(chat, original._id);
   const contentUpdate: UpdateQuery<ContentDocument> = {
@@ -376,8 +373,10 @@ const blockContent = async (req: Request, args: unknown): Promise<ChatGroupDocum
           $push: { remarks: { t: new Date(), u: userId, m: `blockContent (${chatId}-${contentId}): ${remark}` } },
         }),
       },
-      { fields: select(), new: true, populate },
-    ).lean(), // indicating there is an update (in grandchild)
+      { fields: select(), new: true },
+    )
+      .populate<Populate>(populate)
+      .lean(), // indicating there is an update (in grandchild)
     otherChatGroupIds.length && ChatGroup.updateMany({ _id: { $in: otherChatGroupIds } }, { updatedAt: new Date() }),
     classroomIds.length && Classroom.updateMany({ _id: { $in: classroomIds } }, { updatedAt: new Date() }),
     Content.updateOne({ _id: contentId }, contentUpdate),
@@ -419,9 +418,9 @@ const create = async (req: Request, args: unknown, to?: To): Promise<ChatGroupDo
   // special case for sending message toAdmin, toAlex, toTenantAdmins, ...
   if (to) {
     let result: {
-      chatGroup: ChatGroupDocument & Id;
-      chat: ChatDocument & Id;
-      content: ContentDocument & Id;
+      chatGroup: ChatGroupDocument;
+      chat: ChatDocument;
+      content: ContentDocument;
       update: UpdateQuery<ChatGroupDocument>;
     };
 
@@ -451,15 +450,13 @@ const create = async (req: Request, args: unknown, to?: To): Promise<ChatGroupDo
         });
       }
     } else if (to === 'toAlex') {
-      const [{ content }, { alexId }] = await Promise.all([contentSchema.validate(args), User.findSystemAccountIds()]);
+      const [{ tenants }, { content }, { alexId }] = await Promise.all([
+        authGetUser(req),
+        contentSchema.validate(args),
+        User.findSystemAccountIds(),
+      ]);
       if (!alexId) throw { statusCode: 500, code: MSG_ENUM.SATELLITE_ERROR };
-      result = await startChatGroup(
-        userTenants[0] || null,
-        content,
-        [userId, alexId],
-        userLocale,
-        `ALEX#USER#${userId}`,
-      );
+      result = await startChatGroup(tenants[0] || null, content, [userId, alexId], userLocale, `ALEX#USER#${userId}`); // allowing sync with primary tenant
     } else {
       const { content, tenantId } = await contentSchema.concat(tenantIdSchema).validate(args);
       if (!userTenants.includes(tenantId)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
@@ -478,7 +475,9 @@ const create = async (req: Request, args: unknown, to?: To): Promise<ChatGroupDo
       );
     }
 
-    const populatedChatGroup = await ChatGroup.findById(result.chatGroup._id, select()).populate(populate).lean();
+    const populatedChatGroup = await ChatGroup.findById(result.chatGroup._id, select())
+      .populate<Populate>(populate)
+      .lean();
     if (populatedChatGroup) return transform(userId, populatedChatGroup);
 
     log('error', `chatGroupController:${to}`, args, userId);
@@ -491,26 +490,29 @@ const create = async (req: Request, args: unknown, to?: To): Promise<ChatGroupDo
     chatGroupSchema.concat(tenantIdSchema).concat(userIdsSchema).validate(args),
   ]);
 
-  if (!user.identifiedAt || addYears(user.identifiedAt, DEFAULTS.USER.IDENTIFIABLE_EXPIRY) < new Date())
-    throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION }; // only identifiable user could create chat
-
   const [users, tenant] = await Promise.all([
     User.find({ _id: { $in: [userId, ...userIds] }, tenants: tenantId }, '_id').lean(), // only allow users with tenantId
     Tenant.findByTenantId(tenantId),
     logoUrl && storage.validateObject(logoUrl, userId),
   ]);
+  const allUserIds = users.map(u => u._id);
 
-  if (!tenant.services.includes(TENANT.SERVICE.CHAT_GROUP))
+  if (
+    !user.identifiedAt ||
+    addYears(user.identifiedAt, DEFAULTS.USER.IDENTIFIABLE_EXPIRY) < new Date() || // only identifiable user could create chat
+    !tenant.services.includes(TENANT.SERVICE.CHAT_GROUP)
+  )
     throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
+
   if (!userTenants.includes(tenantId)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  const chatGroup = new ChatGroup<Partial<ChatGroupDocument & Id>>({
+  const chatGroup = new ChatGroup<Partial<ChatGroupDocument>>({
     ...inputFields,
     tenant: tenant._id,
     ...(logoUrl && { logoUrl }),
     membership: Object.keys(CHAT_GROUP.MEMBERSHIP).includes(membership) ? membership : CHAT_GROUP.MEMBERSHIP.NORMAL,
     admins: [user._id],
-    users: users.map(u => u._id),
+    users: allUserIds,
   });
 
   const [transformed] = await Promise.all([
@@ -518,11 +520,9 @@ const create = async (req: Request, args: unknown, to?: To): Promise<ChatGroupDo
     ChatGroup.insertMany(chatGroup),
     notifySync(
       tenant._id,
-      { userIds: [userId, ...userIds], event: 'CHAT-GROUP' },
+      { userIds: [userId, ...allUserIds], event: 'CHAT-GROUP' },
       {
-        bulkWrite: {
-          chatGroups: [{ insertOne: { document: chatGroup.toObject() } }] satisfies BulkWrite<ChatGroupDocument>,
-        },
+        bulkWrite: { chatGroups: [{ insertOne: { document: chatGroup } }] satisfies BulkWrite<ChatGroupDocument> },
         ...(logoUrl && { minio: { serverUrl: config.server.minio.serverUrl, addObjects: [logoUrl] } }),
       },
     ),
@@ -543,7 +543,7 @@ const createNew: RequestHandler<{ to?: To }> = async (req, res, next) => {
 };
 
 // (helper) common code for find(), findMany(), findOne()
-const findCommon = async (userId: string, userTenants: string[], args: unknown, getOne = false) => {
+const findCommon = async (userId: Types.ObjectId, userTenants: string[], args: unknown, getOne = false) => {
   const { id, query } = getOne
     ? await idSchema.concat(querySchema).validate(args)
     : { ...(await querySchema.validate(args)), id: null };
@@ -569,7 +569,7 @@ const find = async (req: Request, args: unknown): Promise<ChatGroupDocumentEx[]>
   const { userId, userTenants } = auth(req);
   const filter = await findCommon(userId, userTenants, args);
 
-  const chatGroups = await ChatGroup.find(filter, select()).populate(populate).lean();
+  const chatGroups = await ChatGroup.find(filter, select()).populate<Populate>(populate).lean();
 
   return Promise.all(chatGroups.map(async chatGroup => transform(userId, chatGroup)));
 };
@@ -586,7 +586,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 
     const [total, chatGroups] = await Promise.all([
       ChatGroup.countDocuments(filter),
-      ChatGroup.find(filter, select(), options).populate(populate).lean(),
+      ChatGroup.find(filter, select(), options).populate<Populate>(populate).lean(),
     ]);
 
     res.status(200).json({
@@ -605,9 +605,7 @@ const findOne = async (req: Request, args: unknown): Promise<ChatGroupDocumentEx
   const { userId, userTenants } = auth(req);
   const filter = await findCommon(userId, userTenants, args, true);
 
-  const chatGroup = await ChatGroup.findOne(filter, select()).populate(populate).lean();
-
-  console.log('findOne() >>> ', args, userId, chatGroup?._id, JSON.stringify(filter));
+  const chatGroup = await ChatGroup.findOne(filter, select()).populate<Populate>(populate).lean();
 
   return chatGroup && transform(userId, chatGroup);
 };
@@ -633,7 +631,7 @@ const join = async (req: Request, args: unknown): Promise<ChatGroupDocumentEx> =
   const { userId, userTenants } = auth(req);
   const { id } = await idSchema.validate(args);
 
-  const update: UpdateQuery<ChatGroupDocument> = { $addToSet: { users: mongoId(userId) } };
+  const update: UpdateQuery<ChatGroupDocument> = { $addToSet: { users: userId } };
 
   const chatGroup = await ChatGroup.findOneAndUpdate(
     {
@@ -645,8 +643,10 @@ const join = async (req: Request, args: unknown): Promise<ChatGroupDocumentEx> =
       deletedAt: { $exists: false },
     },
     update,
-    { fields: select(), new: true, populate },
-  ).lean();
+    { fields: select(), new: true },
+  )
+    .populate<Populate>(populate)
+    .lean();
   if (!chatGroup || !chatGroup.tenant) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const [transformed] = await Promise.all([
@@ -691,16 +691,16 @@ const joinBook = async (req: Request, args: unknown): Promise<ChatGroupDocumentE
     zhHK: `${school.name.zhHK} ${userName} (userId: ${userId})，歡迎你加入討論區 ${book.title} [[/books/${id}]]。`,
   };
 
-  const content = new Content<Partial<ContentDocument>>({ creator: mongoId(userId), data: extract(msg, userLocale) });
+  const content = new Content<Partial<ContentDocument>>({ creator: userId, data: extract(msg, userLocale) });
   const chat = await Chat.create<Partial<ChatDocument>>({
     parents: [`/chatGroups/${id}`],
     contents: [content._id],
   }); // must create (save) chat before chatGroup populating
   content.parents = [`/chats/${chat._id}`];
 
-  const update: UpdateQuery<ChatGroupDocument> = { $push: { chats: chat._id }, $addToSet: { users: mongoId(userId) } };
+  const update: UpdateQuery<ChatGroupDocument> = { $push: { chats: chat._id }, $addToSet: { users: userId } };
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true, populate }).lean(),
+    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true }).populate<Populate>(populate).lean(),
     Content.insertMany(content),
     DatabaseEvent.log(userId, `/chatGroups/${id}`, 'joinBook', { args, bookId: book._id.toString() }),
     notifySync(
@@ -709,7 +709,7 @@ const joinBook = async (req: Request, args: unknown): Promise<ChatGroupDocumentE
       {
         bulkWrite: {
           chatGroups: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<ChatGroupDocument>,
-          chats: [{ insertOne: { document: chat.toObject() } }] satisfies BulkWrite<ChatDocument>,
+          chats: [{ insertOne: { document: chat } }] satisfies BulkWrite<ChatDocument>,
         },
         contentsToken: await signContentIds(null, [content._id]),
       },
@@ -740,8 +740,10 @@ const leave = async (req: Request, args: unknown): Promise<StatusResponse> => {
       deletedAt: { $exists: false },
     },
     update,
-    { fields: select(), new: true, populate },
-  ).lean();
+    { fields: select(), new: true },
+  )
+    .populate<Populate>(populate)
+    .lean();
   if (!chatGroup || !chatGroup.tenant) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   await notifySync(
@@ -769,7 +771,7 @@ const recallContent = async (req: Request, args: unknown): Promise<ChatGroupDocu
     Content.findOne({
       _id: contentId,
       parents: `/chats/${chatId}`,
-      creator: mongoId(userId),
+      creator: userId,
       flags: { $nin: [CONTENT.FLAG.BLOCKED, CONTENT.FLAG.RECALLED] },
     }).lean(),
   ]);
@@ -781,7 +783,9 @@ const recallContent = async (req: Request, args: unknown): Promise<ChatGroupDocu
     data: `${CONTENT_PREFIX.RECALLED}#${Date.now()}###${userId}`,
   };
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: select(), new: true, populate }).lean(), // indicating there is an update (in grandchild)
+    ChatGroup.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: select(), new: true })
+      .populate<Populate>(populate)
+      .lean(), // indicating there is an update (in grandchild)
     otherChatGroupIds.length && ChatGroup.updateMany({ _id: { $in: otherChatGroupIds } }, { updatedAt: new Date() }),
     classroomIds.length && Classroom.updateMany({ _id: { $in: classroomIds } }, { updatedAt: new Date() }),
     Content.updateOne({ _id: contentId }, contentUpdate),
@@ -829,9 +833,9 @@ const shareQuestion = async (req: Request, args: unknown): Promise<ChatGroupDocu
     throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const msg = { enUS: `Sharing Question`, zhCN: `分享提问`, zhHK: `分享提問` };
-  const content = new Content<Partial<ContentDocument>>({ creator: mongoId(userId), data: extract(msg, userLocale) });
+  const content = new Content<Partial<ContentDocument>>({ creator: userId, data: extract(msg, userLocale) });
 
-  const chat = await Chat.create<Partial<ChatDocument & Id>>({
+  const chat = await Chat.create<Partial<ChatDocument>>({
     parents: [`/chatGroups/${id}`],
     contents: [content._id, ...question.contents],
   }); // must create & save chat before chatGroup populating
@@ -840,7 +844,7 @@ const shareQuestion = async (req: Request, args: unknown): Promise<ChatGroupDocu
   const update: UpdateQuery<ChatGroupDocument> = { $push: { chats: chat._id } };
   const contentUpdate: UpdateQuery<ContentDocument> = { $addToSet: { parents: `/chats/${chat._id}` } };
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true, populate }).lean(),
+    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true }).populate<Populate>(populate).lean(),
     Content.updateMany({ _id: { $in: question.contents } }, contentUpdate),
     Content.insertMany(content),
     notifySync(
@@ -849,7 +853,7 @@ const shareQuestion = async (req: Request, args: unknown): Promise<ChatGroupDocu
       {
         bulkWrite: {
           chatGroups: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<ChatGroupDocument>,
-          chats: [{ insertOne: { document: chat.toObject() } }] satisfies BulkWrite<ChatDocument>,
+          chats: [{ insertOne: { document: chat } }] satisfies BulkWrite<ChatDocument>,
           contents: [
             { updateMany: { filter: { _id: { $in: question.contents } }, update: contentUpdate } },
           ] satisfies BulkWrite<ContentDocument>,
@@ -887,7 +891,7 @@ const update = async (req: Request, args: unknown): Promise<ChatGroupDocumentEx>
     ...(logoUrl ? { logoUrl } : { $unset: { logoUrl: 1 } }),
   };
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true, populate }).lean(),
+    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true }).populate<Populate>(populate).lean(),
     notifySync(
       original.tenant,
       { userIds: original.users, event: 'CHAT-GROUP' },
@@ -944,7 +948,9 @@ const updateChatFlag = async (
 
   const { chatGroupIds, otherChatGroupIds, classroomIds } = otherParentIds(chat, original._id);
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: select(), new: true, populate }).lean(),
+    ChatGroup.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: select(), new: true })
+      .populate<Populate>(populate)
+      .lean(),
     otherChatGroupIds.length && ChatGroup.updateMany({ _id: { $in: otherChatGroupIds } }, { updatedAt: new Date() }),
     classroomIds.length && Classroom.updateMany({ _id: { $in: classroomIds } }, { updatedAt: new Date() }),
     notifySync(
@@ -1012,12 +1018,14 @@ const updateChatLastViewedAt = async (req: Request, args: unknown): Promise<Chat
     { _id: chatId },
     chat.members.some(m => m.user.equals(userId))
       ? { members: chat.members.map(m => (m.user.equals(userId) ? { ...m, lastViewedAt: timestamp } : m)) }
-      : { $push: { members: { user: mongoId(userId), flags: [], lastViewedAt: timestamp } } },
+      : { $push: { members: { user: userId, flags: [], lastViewedAt: timestamp } } },
   );
 
   const { chatGroupIds, otherChatGroupIds, classroomIds } = otherParentIds(chat, original._id);
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: select(), new: true, populate }).lean(),
+    ChatGroup.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: select(), new: true })
+      .populate<Populate>(populate)
+      .lean(),
     otherChatGroupIds.length && ChatGroup.updateMany({ _id: { $in: otherChatGroupIds } }, { updatedAt: new Date() }),
     classroomIds.length && Classroom.updateMany({ _id: { $in: classroomIds } }, { updatedAt: new Date() }),
     notifySync(
@@ -1075,7 +1083,9 @@ const updateChatTitle = async (req: Request, args: unknown): Promise<ChatGroupDo
 
   const { chatGroupIds, otherChatGroupIds, classroomIds } = otherParentIds(chat, original._id);
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: select(), new: true, populate }).lean(), // indicating there is an update (in grandchild)
+    ChatGroup.findByIdAndUpdate(id, { updatedAt: new Date() }, { fields: select(), new: true })
+      .populate<Populate>(populate)
+      .lean(), // indicating there is an update (in grandchild)
     otherChatGroupIds.length && ChatGroup.updateMany({ _id: { $in: otherChatGroupIds } }, { updatedAt: new Date() }),
     classroomIds.length && Classroom.updateMany({ _id: { $in: classroomIds } }, { updatedAt: new Date() }),
     DatabaseEvent.log(userId, `/chatGroups/${id}`, 'updateChatTitle', { args }),
@@ -1121,6 +1131,7 @@ const updateMembers = async (
   if (original.key || !original.tenant) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const users = await User.find({ _id: { $in: [userId, ...userIds] }, tenants: original.tenant }, '_id').lean();
+  const updatedUserIds = users.map(u => u._id);
 
   if (
     (action === 'updateUsers' &&
@@ -1132,18 +1143,18 @@ const updateMembers = async (
 
   const update: UpdateQuery<ChatGroupDocument> =
     action === 'updateAdmins'
-      ? { admins: users.map(u => u._id).filter(u => original.users.some(user => user.equals(u))) } //(promote users to admins) newAdmins must be chatGroup.users already
-      : { users: users.map(u => u._id) };
+      ? { admins: updatedUserIds.filter(u => original.users.some(user => user.equals(u))) } //(promote users to admins) newAdmins must be chatGroup.users already
+      : { users: updatedUserIds };
 
   const [chatGroup] = await Promise.all([
-    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true, populate }).lean(),
+    ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true }).populate<Populate>(populate).lean(),
     DatabaseEvent.log(userId, `/chatGroups/${id}`, action, {
       args,
       original: action === 'updateAdmins' ? original.admins : original.users,
     }),
     notifySync(
       original.tenant,
-      { userIds: [...original.users, ...userIds], event: 'CHAT-GROUP' },
+      { userIds: [...original.users, ...updatedUserIds], event: 'CHAT-GROUP' },
       {
         bulkWrite: {
           chatGroups: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<ChatGroupDocument>,

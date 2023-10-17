@@ -10,7 +10,7 @@ import request from 'supertest';
 
 import app from '../../app';
 import { expectedDateFormat, expectedIdFormat, FAKE, jestSetup, jestTeardown, prob, shuffle } from '../../jest';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -21,8 +21,8 @@ const route = 'contacts';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: (UserDocument & Id) | null;
-  let normalUsers: (UserDocument & Id)[] | null;
+  let normalUser: UserDocument | null;
+  let normalUsers: UserDocument[] | null;
 
   const expectedMinFormat = {
     _id: expectedIdFormat,

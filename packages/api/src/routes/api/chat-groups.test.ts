@@ -5,6 +5,7 @@
 
 import { LOCALE } from '@argonne/common';
 
+import type { ChatGroupDocumentEx } from '../../controllers/chat-group';
 import {
   expectedChatFormat,
   expectedDateFormat,
@@ -23,8 +24,6 @@ import {
   randomItem,
 } from '../../jest';
 import Book from '../../models/book';
-import type { ChatDocument } from '../../models/chat';
-import type { ChatGroupDocument, Id } from '../../models/chat-group';
 import ChatGroup from '../../models/chat-group';
 import Level from '../../models/level';
 import Tenant from '../../models/tenant';
@@ -61,9 +60,9 @@ export const expectedMinFormat = {
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: (UserDocument & Id) | null;
-  let normalUser: (UserDocument & Id) | null;
-  let normalUsers: (UserDocument & Id)[] | null;
+  let adminUser: UserDocument | null;
+  let normalUser: UserDocument | null;
+  let normalUsers: UserDocument[] | null;
   let tenantId: string | null;
   let url: string | undefined;
   let url2: string | undefined;
@@ -107,7 +106,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
     if (!teacher) throw 'No teacher is found';
 
-    await createUpdateDelete<ChatGroupDocument & Id>(
+    await createUpdateDelete<ChatGroupDocumentEx>(
       route,
       { 'Jest-User': teacher._id },
       [
@@ -130,7 +129,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const nonTeacher = normalUsers!.find(({ schoolHistories }) => !schoolHistories[0]?.level.equals(teacherLevel!._id));
     if (!nonTeacher) throw 'No valid non-teacher available for testing';
 
-    await createUpdateDelete<ChatGroupDocument & Id>(
+    await createUpdateDelete<ChatGroupDocumentEx>(
       route,
       { 'Jest-User': nonTeacher._id },
       [
@@ -163,7 +162,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       users: [...adminIds, user._id].map(u => u.toString()),
     };
 
-    await createUpdateDelete<ChatGroupDocument & Id>(route, { 'Jest-User': user._id }, [
+    await createUpdateDelete<ChatGroupDocumentEx>(route, { 'Jest-User': user._id }, [
       {
         action: 'create#toAdmin',
         data: { content: FAKE },
@@ -203,7 +202,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       key: `ALEX#USER#${userId}`,
     };
 
-    await createUpdateDelete<ChatGroupDocument & Id>(route, { 'Jest-User': userId }, [
+    await createUpdateDelete<ChatGroupDocumentEx>(route, { 'Jest-User': userId }, [
       {
         action: 'create#toAlex',
         data: { content: FAKE },
@@ -246,7 +245,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       key: `TENANT#${tenantId}-USER#${user._id} (${to.replace('toTenant', '').toLowerCase()})`,
     };
 
-    await createUpdateDelete<ChatGroupDocument & Id>(route, { 'Jest-User': user._id }, [
+    await createUpdateDelete<ChatGroupDocumentEx>(route, { 'Jest-User': user._id }, [
       {
         action: `create#${to}`,
         data: { tenantId, content: FAKE },
@@ -310,7 +309,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     chatGroup.chats = []; // drop & ignore chats
     await Promise.all([chatGroup.save(), source.save(), chat.save(), content.save()]);
 
-    await createUpdateDelete<ChatGroupDocument & Id>(
+    await createUpdateDelete<ChatGroupDocumentEx>(
       route,
       { 'Jest-User': userId },
       [
@@ -336,14 +335,43 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     await Promise.all([chatGroup.deleteOne(), source.deleteOne()]);
   });
 
-  test('should pass when sharing question to chatGroup', async () => {
+  test('should pass when sharing question to chatGroup (as student)', async () => {
     const userId = normalUser!._id.toString();
 
     const { chatGroup } = genChatGroup(tenantId!, normalUser!._id); // create a destination chatGroup
-    const { question, content } = genQuestion(tenantId!, normalUser!._id);
+    const { question, content } = genQuestion(tenantId!, normalUser!._id, { student: normalUser!._id });
     await Promise.all([chatGroup.save(), question.save(), content.save()]);
 
-    await createUpdateDelete<ChatGroupDocument & Id>(
+    await createUpdateDelete<ChatGroupDocumentEx>(
+      route,
+      { 'Jest-User': userId },
+      [
+        {
+          action: 'shareQuestion',
+          data: { sourceId: question._id.toString() },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            chats: [
+              expect.objectContaining({ ...expectedChatFormat, contents: [expectedIdFormat, content._id.toString()] }), // first contentId is auto-gen message
+            ],
+          },
+        },
+      ],
+      { overrideId: chatGroup._id.toString() },
+    );
+
+    // clean-up (as the documents are only partially formatted)
+    await Promise.all([chatGroup.deleteOne(), question.deleteOne()]);
+  });
+
+  test('should pass when sharing question to chatGroup (as tutor)', async () => {
+    const userId = normalUser!._id.toString();
+
+    const { chatGroup } = genChatGroup(tenantId!, normalUser!._id); // create a destination chatGroup
+    const { question, content } = genQuestion(tenantId!, normalUser!._id, { tutor: normalUser!._id });
+    await Promise.all([chatGroup.save(), question.save(), content.save()]);
+
+    await createUpdateDelete<ChatGroupDocumentEx>(
       route,
       { 'Jest-User': userId },
       [
@@ -370,7 +398,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = normalUsers!.map(u => u._id.toString());
 
-    [url, url2] = await Promise.all([jestPutObject(ownerId), jestPutObject(ownerId)]);
+    [url, url2] = await Promise.all([jestPutObject(normalUsers![0]._id), jestPutObject(normalUsers![0]._id)]);
 
     const create = {
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
@@ -381,7 +409,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const update = { title: FAKE2, description: FAKE2, membership: CHAT_GROUP.MEMBERSHIP.PUBLIC, logoUrl: url2 };
 
-    const chatGroup = await createUpdateDelete<ChatGroupDocument & Id>(
+    const chatGroup = await createUpdateDelete<ChatGroupDocumentEx>(
       route,
       { 'Jest-User': ownerId },
       [
@@ -495,9 +523,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
 
     const chatGroupId = chatGroup!._id.toString();
-    const chatId = (chatGroup!.chats as (ChatDocument & Id)[])[0]!._id.toString();
+    const chatId = chatGroup!.chats[0]!._id.toString();
 
-    const chatGroup2 = await createUpdateDelete<ChatGroupDocument & Id>(
+    const chatGroup2 = await createUpdateDelete<ChatGroupDocumentEx>(
       route,
       { 'Jest-User': user2Id },
       [
@@ -528,10 +556,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       { overrideId: chatGroupId, skipAssertion: true },
     );
 
-    const contentIds = (chatGroup2!.chats[0] as ChatDocument & Id).contents.map(c => c.toString());
+    const contentIds = chatGroup2!.chats[0].contents.map(c => c.toString());
     const flag = CHAT.MEMBER.FLAG.IMPORTANT;
 
-    await createUpdateDelete<ChatGroupDocument & Id>(
+    await createUpdateDelete<ChatGroupDocumentEx>(
       route,
       { 'Jest-User': ownerId },
       [

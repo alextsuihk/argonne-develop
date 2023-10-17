@@ -1,54 +1,16 @@
 /**
  * Model: Tutor
  *
- * note: if an user is a tutor for two tenants, two documents are created.
+ * ! note: school tenant does not support tutor, therefore, tutors could ONLY exist in hubMode (it affects multiple implementation)
  */
 
 import { LOCALE } from '@argonne/common';
-import type { Types } from 'mongoose';
+import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument } from './common';
+import type { Id } from './common';
 import { baseDefinition } from './common';
-
-export type { Id } from './common';
-
-export interface TutorDocument extends BaseDocument {
-  tenant: Types.ObjectId;
-  user: Types.ObjectId;
-
-  intro?: string;
-  officeHour?: string;
-
-  credentials: {
-    _id: Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
-    title: string;
-    proofs: string[];
-    updatedAt: Date;
-    verifiedAt?: Date;
-  }[];
-
-  specialties: {
-    _id: Types.ObjectId; // _id is ObjectID typed, but Mongoose query treats as string
-    note?: string;
-    lang: string;
-
-    level: Types.ObjectId;
-    subject: Types.ObjectId;
-    deletedAt?: Date;
-
-    priority?: number;
-    ranking: {
-      correctness: number;
-      explicitness: number;
-      punctuality: number;
-    };
-  }[];
-
-  rankingUpdatedAt: Date;
-  star?: number;
-}
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -60,19 +22,19 @@ export const searchableFields = [
   ...searchLocaleFields.map(field => Object.keys(SYSTEM.LOCALE).map(locale => `${field}.${locale}`)).flat(),
 ];
 
-const tutorSchema = new Schema<TutorDocument>(
+const tutorSchema = new Schema(
   {
     ...baseDefinition,
 
-    tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', index: true },
-    user: { type: Schema.Types.ObjectId, ref: 'User' },
+    user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
 
     intro: String,
     officeHour: String,
 
     credentials: [
       {
-        title: String,
+        _id: { type: Schema.Types.ObjectId, required: true },
+        title: { type: String, required: true },
         proofs: [String],
         updatedAt: { type: Date, default: Date.now },
         verifiedAt: { type: Date },
@@ -81,28 +43,38 @@ const tutorSchema = new Schema<TutorDocument>(
 
     specialties: [
       {
+        _id: { type: Schema.Types.ObjectId, required: true },
+        tenant: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true },
+
         note: String,
-        lang: String, // question lang enum['TnC', 'SnC', 'TnM', 'EsC', etc]
+        langs: [{ type: String, required: true }], // question lang enum['TnC', 'SnC', 'TnM', 'EsC', etc]
 
-        subject: { type: Schema.Types.ObjectId, ref: 'Subject', index: true },
-        level: { type: Schema.Types.ObjectId, ref: 'Level', index: true },
-        deletedAt: Date,
-
+        level: { type: Schema.Types.ObjectId, ref: 'Level', required: true, index: true },
+        subject: { type: Schema.Types.ObjectId, ref: 'Subject', required: true, index: true },
         priority: { type: Number, default: 0 }, // for dispatch priority (percentage)
-        ranking: {
-          correctness: { type: Number, default: 0 },
-          explicitness: { type: Number, default: 0 },
-          punctuality: { type: Number, default: 0 },
-        },
       },
     ],
 
-    rankingUpdatedAt: { type: Date, default: Date.now },
+    // rankings are regardless of tenant(s) & lang(s)
+    rankings: [
+      {
+        _id: false,
+        level: { type: Schema.Types.ObjectId, ref: 'Level', required: true },
+        subject: { type: Schema.Types.ObjectId, ref: 'Subject', required: true },
+
+        correctness: Number,
+        explicitness: Number,
+        punctuality: Number,
+      },
+    ],
+    rankingsUpdatedAt: Date,
+
     star: Number,
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
 tutorSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-const Tutor = model<TutorDocument>('Tutor', tutorSchema);
+const Tutor = model('Tutor', tutorSchema);
+export type TutorDocument = InferSchemaType<typeof tutorSchema> & Id;
 export default Tutor;

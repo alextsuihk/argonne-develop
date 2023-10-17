@@ -30,7 +30,7 @@ import tagTypes from './tag';
 import tenantTypes from './tenant';
 import tenantBindingTypes from './tenant-binding';
 import tutorTypes from './tutor';
-import tutorRankingTypes from './tutor-ranking';
+import tutorInverseRankingTypes from './tutor-inverse-ranking';
 import typographyTypes from './typography';
 import userTypes from './user';
 
@@ -62,7 +62,7 @@ export default [
   tenantTypes,
   classroomTypes,
   typographyTypes,
-  tutorRankingTypes,
+  tutorInverseRankingTypes,
   tutorTypes,
   userTypes,
 ];

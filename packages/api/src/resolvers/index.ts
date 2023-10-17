@@ -29,7 +29,7 @@ import tagResolvers from './tag';
 import tenantResolvers from './tenant';
 import tenantBindingResolvers from './tenant-binding';
 import tutorResolvers from './tutor';
-import tutorRankingResolvers from './tutor-ranking';
+import tutorInverseRankingResolvers from './tutor-inverse-ranking';
 import typographyResolvers from './typography';
 import userResolvers from './user';
 
@@ -60,7 +60,7 @@ export default [
   tenantBindingResolvers,
   tenantResolvers,
   typographyResolvers,
-  tutorRankingResolvers,
+  tutorInverseRankingResolvers,
   tutorResolvers,
   userResolvers,
 ];

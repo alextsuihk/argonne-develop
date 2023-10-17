@@ -4,6 +4,7 @@
  */
 
 import { LOCALE } from '@argonne/common';
+import { addDays } from 'date-fns';
 import request from 'supertest';
 
 import app from '../../app';
@@ -21,10 +22,9 @@ import {
   randomItem,
   randomString,
 } from '../../jest';
-import type { Id, UserDocument } from '../../models/user';
+import type { UserDocument } from '../../models/user';
 import VerificationToken from '../../models/verification-token';
-import { EMAIL_TOKEN_PREFIX } from '../../utils/sendmail';
-import token from '../../utils/token';
+import token, { EMAIL_TOKEN_PREFIX } from '../../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 const { MESSENGER, SYSTEM, USER } = LOCALE.DB_ENUM;
@@ -41,7 +41,7 @@ export const expectedAuthResponse = {
 
 // Top level of this test suite:
 describe('Auth-Extra API Routes', () => {
-  let normalUser: (UserDocument & Id) | null;
+  let normalUser: UserDocument | null;
   let url: string | undefined;
   let header: { 'Jest-User': string };
 
@@ -54,34 +54,29 @@ describe('Auth-Extra API Routes', () => {
   console.log('WIP: OAUTH2_LINK & OAUTH2_UNLINK (API)');
 
   test('should pass when add and remove apiKey', async () => {
-    expect.assertions(3 + 3);
+    expect.assertions(3 + 3 + 3);
 
     // add apiKey
-    const apiKey = { scope: FAKE, ...(prob(0.5) && { note: FAKE2 }), expireAt: new Date() };
-    const addRes = await request(app).patch(`/api/auth/addApiKey`).send(apiKey).set(header);
-    expect(addRes.body).toEqual({
-      data: expect.objectContaining({
-        ...expectedUserFormat,
-        apiKeys: [
-          ...normalUser!.apiKeys,
-          {
-            _id: expectedIdFormat,
-            value: expect.any(String),
-            ...apiKey,
-            expireAt: apiKey.expireAt.toISOString(),
-          },
-        ],
-      }),
-    });
+    const add = { scope: FAKE, expireAt: addDays(Date.now(), 1), ...(prob(0.5) && { note: FAKE2 }) };
+    const apiKeys = [
+      ...normalUser!.apiKeys,
+      { _id: expectedIdFormat, token: expect.any(String), ...add, expireAt: add.expireAt.toISOString() },
+    ];
+    const addRes = await request(app).patch(`/api/auth/addApiKey`).send(add).set(header);
+    expect(addRes.body).toEqual({ data: apiKeys });
     expect(addRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(addRes.status).toBe(200);
 
+    // list apiKeys
+    const listRes = await request(app).get(`/api/auth/listApiKeys`).set(header);
+    expect(listRes.body).toEqual({ data: apiKeys });
+    expect(listRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(listRes.status).toBe(200);
+
     // remove apiKey
-    const id = addRes.body.data.apiKeys.at(-1)._id;
+    const id = addRes.body.data.at(-1)._id;
     const removeRes = await request(app).patch(`/api/auth/removeApiKey`).send({ id }).set(header);
-    expect(removeRes.body).toEqual({
-      data: expect.objectContaining({ ...expectedUserFormat, apiKeys: normalUser!.apiKeys }),
-    });
+    expect(removeRes.body).toEqual({ data: normalUser!.apiKeys });
     expect(removeRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(removeRes.status).toBe(200);
   });
@@ -171,7 +166,7 @@ describe('Auth-Extra API Routes', () => {
   });
 
   test('should pass when add, sendVerification, verify & remove messenger', async () => {
-    expect.assertions(3 + 1 + 3 + 1 + 3 + 3);
+    expect.assertions(3 + 2 + 3 + 1 + 3 + 3);
 
     const provider = randomItem(Object.keys(MESSENGER.PROVIDER));
     const account = `AbC_${randomString()}`; // mixed cased
@@ -188,9 +183,8 @@ describe('Auth-Extra API Routes', () => {
 
     // confirm token is generated in VerificationToken collection
     const originalToken = await VerificationToken.findOne({ user: normalUser!._id, messenger: lowercase }).lean();
-    expect(
-      originalToken && normalUser!._id.equals(originalToken.user) && originalToken.messenger === lowercase,
-    ).toBeTrue();
+    expect(originalToken!.user.toString()).toEqual(normalUser!._id.toString());
+    expect(originalToken!.messenger).toEqual(lowercase);
 
     // send verification (post)
     const sendVerificationRes = await request(app)
@@ -288,13 +282,13 @@ describe('Auth-Extra API Routes', () => {
   test('should pass when update locale', async () => {
     expect.assertions(3 + 3);
 
-    let locale = randomItem(Object.keys(SYSTEM.LOCALE).filter(l => l !== DEFAULTS.LOCALE));
+    let locale = randomItem(Object.keys(SYSTEM.LOCALE).filter(l => l !== DEFAULTS.USER.LOCALE));
     const res1 = await request(app).patch(`/api/auth/updateLocale`).send({ locale }).set(header);
     expect(res1.body).toEqual({ data: expect.objectContaining({ ...expectedUserFormat, locale }) });
     expect(res1.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res1.status).toBe(200);
 
-    locale = DEFAULTS.LOCALE;
+    locale = DEFAULTS.USER.LOCALE;
     const res2 = await request(app).patch(`/api/auth/updateLocale`).send({ locale }).set(header);
     expect(res2.body).toEqual({ data: expect.objectContaining({ ...expectedUserFormat, locale }) });
     expect(res2.header['content-type']).toBe('application/json; charset=utf-8');
@@ -335,7 +329,7 @@ describe('Auth-Extra API Routes', () => {
     expect(res1.status).toBe(200);
 
     // clear out profile (except name is not clearable)
-    const res2 = await request(app).patch(`/api/auth/updateProfile`).set(header);
+    const res2 = await request(app).patch(`/api/auth/updateProfile`).send({ name: FAKE }).set(header);
     expect(res2.body.data.formalName).toBeUndefined();
     expect(res2.body.data.yob).toBeUndefined();
     expect(res2.body.data.dob).toBeUndefined();

@@ -65,7 +65,7 @@ const fake = async (
       .map((_, idx) => {
         const isDeleted = prob(0.1);
         const email = prob(0.2) ? faker.internet.email().toUpperCase() : faker.internet.email().toLowerCase(); // some emails are verified
-        const createdAt = faker.date.recent(1); // register in past year
+        const createdAt = faker.date.recent({ days: 1 }); // register in past year
         const levelCode = extra
           ? [...primaryLevels, ...juniorLevels, ...seniorLevels].find(l => l._id.equals(extra.level))?.code
           : undefined;
@@ -82,13 +82,13 @@ const fake = async (
           password: User.genValidPassword(),
           ...(prob(0.9) && { avatarUrl: prob(0.5) ? faker.internet.avatar() : randomItem(avatars) }),
 
-          creditability: faker.datatype.number({ min: minCredit, max: maxCredit }), // creditability
+          creditability: faker.number.int({ min: minCredit, max: maxCredit }), // creditability
           identifiedAt: new Date(),
           schoolHistories: extra
             ? [{ year: schoolYear(), school: extra.school, level: extra.level, schoolClass, updatedAt: new Date() }]
             : [],
           createdAt,
-          updatedAt: faker.date.between(createdAt, new Date()),
+          updatedAt: faker.date.between({ from: createdAt, to: new Date() }),
           ...(isDeleted && { deletedAt: new Date() }),
         });
       });
@@ -147,12 +147,16 @@ const fake = async (
       .slice(0, Math.max(0, maxContact - user.contacts.length - Math.floor(Math.random() * 5)));
 
     user.contacts.push(
-      ...friends.map(f => ({ user: f._id, ...(prob(0.5) && { name: faker.name.firstName() }), updatedAt: new Date() })),
+      ...friends.map(f => ({
+        user: f._id,
+        ...(prob(0.5) && { name: faker.person.firstName() }),
+        updatedAt: new Date(),
+      })),
     );
     friends.forEach(friend =>
       friend.contacts.push({
         user: user._id,
-        ...(prob(0.5) && { name: faker.name.firstName() }),
+        ...(prob(0.5) && { name: faker.person.firstName() }),
         updatedAt: new Date(),
       }),
     );

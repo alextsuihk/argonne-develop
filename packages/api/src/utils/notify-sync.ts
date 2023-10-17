@@ -9,9 +9,9 @@ import type { Types } from 'mongoose';
 import webpush from 'web-push';
 
 import configLoader from '../config/config-loader';
-import type { Id, SyncJobDocument } from '../models/sync-job';
+import type { SyncJobDocument } from '../models/sync-job';
 import SyncJob, { SYNC_JOB_CHANNEL } from '../models/sync-job';
-import Tenant from '../models/tenant';
+import { findSatelliteTenantById, findSatelliteTenants } from '../models/tenant';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import { redisClient } from '../redis';
@@ -65,9 +65,9 @@ export const notifySync = async (
     const { event, msg, userIds } = notify;
 
     // pull subscriptions (webpush info) info from active users
-    const users: (Pick<UserDocument, 'subscriptions'> & Id)[] = await User.find(
+    const users: Pick<UserDocument, '_id' | 'pushSubscriptions'>[] = await User.find(
       { _id: { $in: userIds }, status: USER.STATUS.ACTIVE, deletedAt: { $exists: false } },
-      '_id subscriptions',
+      '_id pushSubscriptions',
     ).lean();
 
     // (webpush might not be sent immediately) roll back 5 seconds, webpush notification will not re-trigger fetch
@@ -79,24 +79,26 @@ export const notifySync = async (
       webpushEnabled && // send webpush
         Promise.all(
           users
-            .map(user => user.subscriptions.map(s => s.subscription))
+            .map(user =>
+              user.pushSubscriptions.map(({ endpoint, p256dh, auth }) => ({ endpoint, keys: { p256dh, auth } })),
+            )
             .flat()
             .map(async sub => webpush.sendNotification(sub, payload, webpushOptions)),
         ),
     ]);
   }
 
-  // push notify+sync into SyncJob
-  const validSatellite = tenant && (await Tenant.findSatelliteById(tenant)); // check if valid satellite
-  if (validSatellite) await queueSyncJob(validSatellite._id, notify, sync);
+  // push notify+sync into SyncJob (if satellite is read to queue)
+  if (tenant && (await findSatelliteTenantById(tenant, 'queue'))) await queueSyncJob(tenant, notify, sync);
 };
 
 /**
  * Sync To all Satellites
+ * note: queue into syncJob
  */
 export const syncToAllSatellites = async (sync: SyncJobDocument['sync']) => {
   if (config.mode === 'HUB') {
-    const satelliteTenants = await Tenant.findSatellites();
+    const satelliteTenants = await findSatelliteTenants('queue');
     await Promise.all(satelliteTenants.map(async ({ _id }) => queueSyncJob(_id, null, sync)));
   }
 };

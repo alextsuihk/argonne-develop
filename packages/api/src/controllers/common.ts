@@ -9,21 +9,20 @@
 
 import type { QuerySchema } from '@argonne/common';
 import { LOCALE } from '@argonne/common';
-import merge from 'deepmerge';
 import type { Request } from 'express';
 import type { FilterQuery, Types } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { BaseDocument, Id } from '../models/common/base';
+import type { BaseDocument } from '../models/common';
 import Level from '../models/level';
 import type { UserDocument } from '../models/user';
-import User from '../models/user';
+import User, { activeCond } from '../models/user';
 import { containUtf8, schoolYear } from '../utils/helper';
 import type { Auth } from '../utils/token';
 
 type AuthRole = 'ADMIN' | 'ROOT';
-// export type BulkWriteOps<T extends BaseDocument> = mongo.AnyBulkWriteOperation<T & Id>[]; // EOL >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 export type StatusResponse = { code: string };
+export type TokenWithExpireAtResponse = { token: string; expireAt: Date };
 
 const { MSG_ENUM } = LOCALE;
 const { USER } = LOCALE.DB_ENUM;
@@ -43,20 +42,20 @@ const assertUnreachable = (_: never) => {
  * Authorization based on userRoles
  */
 const auth = (req: Request, role?: AuthRole): Auth => {
-  const { userExtra, userFlags, userId, userLocale, userName, userRoles, userScopes, userTenants, authUserId } = req;
-  if (!userFlags || !userId || !userLocale || !userName || !userRoles || !userScopes || !userTenants)
+  const { userExtra, userFlags, userId, userLocale, userName, userRoles, userTenants, authUserId } = req;
+  if (!userFlags || !userId || !userLocale || !userName || !userRoles || !userTenants)
     throw { statusCode: 401, code: MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR };
 
   if (role === 'ADMIN' && !isAdmin(userRoles)) throw { statusCode: 403, code: MSG_ENUM.AUTH_REQUIRE_ROLE_ADMIN };
   if (role === 'ROOT' && !isRoot(userRoles)) throw { statusCode: 403, code: MSG_ENUM.AUTH_REQUIRE_ROLE_ROOT };
 
-  return { userExtra, userFlags, userId, userLocale, userName, userRoles, userScopes, userTenants, authUserId };
+  return { userExtra, userFlags, userId, userLocale, userName, userRoles, userTenants, authUserId };
 };
 
 /**
  * Get gull user info (after checking suspension)
  */
-const authCheckUserSuspension = async (req: Request): Promise<UserDocument & Id> => {
+const authCheckUserSuspension = async (req: Request): Promise<UserDocument> => {
   const user = await authGetUser(req);
 
   if (user.suspendUtil && user.suspendUtil < new Date()) throw { statusCode: 403, code: MSG_ENUM.SUBMISSION_SUSPENDED };
@@ -66,10 +65,10 @@ const authCheckUserSuspension = async (req: Request): Promise<UserDocument & Id>
 /**
  * Get full user info
  */
-const authGetUser = async (req: Request, role?: AuthRole): Promise<UserDocument & Id> => {
+const authGetUser = async (req: Request, role?: AuthRole): Promise<UserDocument> => {
   const { userId } = auth(req, role);
   if (!req.user) {
-    const user = await User.findOneActive({ _id: userId });
+    const user = await User.findOne({ _id: userId, ...activeCond }).lean();
     if (!user) throw { statusCode: 401, code: MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR };
     req.user = user;
   }
@@ -158,13 +157,17 @@ const searchFilter = <T extends BaseDocument>(
 ): FilterQuery<T> => {
   const { search, updatedBefore, updatedAfter, skipDeleted } = query;
 
-  const filter = merge.all<FilterQuery<T>>([
-    updatedAfter ? { updatedAt: { $gte: updatedAfter } } : {},
-    updatedBefore ? { updatedAt: { $lte: updatedBefore } } : {},
-    skipDeleted ? { deletedAt: { $exists: false } } : {},
-    extra ?? {},
-    search && !containUtf8(search) ? { $text: { $search: search } } : {}, // use mongoDB built-in text search for non-UTF8 search
-  ]);
+  const updatedAt = {
+    ...(updatedAfter && { $gte: updatedAfter }),
+    ...(updatedBefore && { $lte: updatedBefore }),
+  };
+
+  const filter: FilterQuery<T> = {
+    ...(Object.keys(updatedAt).length && { updatedAt }),
+    ...(skipDeleted && { deletedAt: { $exists: false } }),
+    ...extra,
+    ...(search && !containUtf8(search) && { $text: { $search: search } }),
+  };
 
   if (!searchableFields.length || !search || !containUtf8(search)) return filter;
 

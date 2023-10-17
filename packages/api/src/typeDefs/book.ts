@@ -17,16 +17,16 @@ export default gql`
     addBookAssignment(id: ID!, assignment: BookAssignmentInput!): Book!
     addBookRemark(id: ID!, remark: String!): Book!
     addBookRevision(id: ID!, revision: BookRevisionInput!): Book!
-    addBookRevisionImage(id: ID!, revisionId: String!, url: String!): Book!
+    addBookRevisionImage(id: ID!, subId: String!, url: String!): Book!
     addBookSupplement(id: ID!, supplement: BookSupplementInput!): Book!
     removeBook(id: ID!, remark: String): StatusResponse!
-    removeBookAssignment(id: ID!, assignmentId: String!, remark: String): Book!
-    removeBookRevision(id: ID!, revisionId: String!, remark: String): Book!
-    removeBookRevisionImage(id: ID!, revisionId: String!, url: String!, remark: String): Book!
-    removeBookSupplement(id: ID!, supplementId: String!, remark: String): Book!
+    removeBookAssignment(id: ID!, subId: String!, remark: String): Book!
+    removeBookRevision(id: ID!, subId: String!, remark: String): Book!
+    removeBookRevisionImage(id: ID!, subId: String!, url: String!, remark: String): Book!
+    removeBookSupplement(id: ID!, subId: String!, remark: String): Book!
 
     updateBook(id: ID!, book: BookInput!): Book!
-    # updateBookRevision(id: ID!, revisionId: String!, bookRev: BookRevisionInput!): Book!
+    # updateBookRevision(id: ID!, subId: String!, bookRev: BookRevisionInput!): Book!
   }
 
   input BookInput {
@@ -88,7 +88,7 @@ export default gql`
     chapter: String!
     content: String!
     dynParams: [String!]!
-    solutions: [String!]!
+    solutions: [String!] # hidden for homeworkController
     examples: [String!]!
 
     remarks: [Remark!]

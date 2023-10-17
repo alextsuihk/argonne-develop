@@ -26,7 +26,7 @@ import {
 import School from '../models/school';
 import type { TenantDocument } from '../models/tenant';
 import Tenant from '../models/tenant';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_USER,
@@ -51,11 +51,11 @@ describe('Auth-Extra GraphQL (token)', () => {
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let rootServer: ApolloServer | null;
-  let rootUser: (UserDocument & Id) | null;
-  let normalUser: (UserDocument & Id) | null;
+  let rootUser: UserDocument | null;
+  let normalUser: UserDocument | null;
 
-  let tenant: (TenantDocument & Id) | null;
-  let tenantAdmin: (UserDocument & Id) | null;
+  let tenant: TenantDocument | null;
+  let tenantAdmin: UserDocument | null;
   let tenantAdminServer: ApolloServer | null;
   let tenantId: string | null;
 
@@ -177,7 +177,7 @@ describe('Auth-Extra GraphQL (token)', () => {
     expect.assertions(6);
 
     const nonSchoolTenant = await Tenant.findOne({ school: { $exists: false } }).lean();
-    const user = nonSchoolTenant ? await User.findOneActive({ tenants: nonSchoolTenant._id }) : null;
+    const user = nonSchoolTenant ? await User.findOne({ tenants: nonSchoolTenant._id }).lean() : null;
     if (!nonSchoolTenant || !user) throw 'Non-school tenant & user are required to proceed';
 
     const admin = genUser(nonSchoolTenant._id);

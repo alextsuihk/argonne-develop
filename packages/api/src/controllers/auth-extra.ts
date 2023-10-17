@@ -7,20 +7,20 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import { userMessengerSchema } from '@argonne/common/src/validators';
 import type { Request, RequestHandler } from 'express';
-import type { UpdateQuery } from 'mongoose';
+import type { Types, UpdateQuery } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import DatabaseEvent from '../models/event/database';
-import type { Id, UserDocument } from '../models/user';
-import User, { userNormalSelect } from '../models/user';
+import type { UserDocument } from '../models/user';
+import User, { activeCond, userNormalSelect } from '../models/user';
 import VerificationToken from '../models/verification-token';
-import { mongoId, randomString } from '../utils/helper';
+import { mongoId } from '../utils/helper';
 import log from '../utils/log';
 import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
-import mail, { EMAIL_TOKEN_PREFIX } from '../utils/sendmail';
+import mail from '../utils/sendmail';
 import storage from '../utils/storage';
-import token from '../utils/token';
+import token, { API_KEY_TOKEN_PREFIX, EMAIL_TOKEN_PREFIX } from '../utils/token';
 import oAuth2Decode from './auth-oauth2';
 import type { StatusResponse } from './common';
 import common from './common';
@@ -31,12 +31,14 @@ type Action =
   | 'addEmail'
   | 'addMessenger'
   | 'addPaymentMethod'
+  | 'addPushSubscription'
   | 'oAuth2Link'
   | 'oAuth2Unlink'
   | 'removeApiKey'
   | 'removeEmail'
   | 'removeMessenger'
   | 'removePaymentMethod'
+  | 'removePushSubscriptions' // remove ALL push subscription
   | 'updateAvatar'
   | 'updateLocale'
   | 'updateAvailability'
@@ -44,7 +46,7 @@ type Action =
   | 'verifyEmail'
   | 'verifyMessenger';
 
-export type GetExtraAction = 'isEmailAvailable';
+export type GetExtraAction = 'isEmailAvailable' | 'listApiKeys';
 export type PostExtraAction = 'sendEmailVerification' | 'sendMessengerVerification';
 
 const { MSG_ENUM } = LOCALE;
@@ -61,18 +63,100 @@ const {
   userAvatarSchema,
   userLocaleSchema,
   userPaymentMethodsSchema,
+  userPushSubscriptionSchema,
   userProfileSchema,
 } = yupSchema;
 
 const { config } = configLoader;
 
 /**
+ * (helper) partially hide token value except showId
+ */
+const hideApiKeysToken = (apiKeys: UserDocument['apiKeys'], showId?: Types.ObjectId): UserDocument['apiKeys'] =>
+  apiKeys.map(({ _id, token, ...rest }) => ({
+    _id,
+    ...rest,
+    token: showId && _id.equals(showId) ? token : `*****${token.slice(5, 25)}*****...`,
+  }));
+
+/**
  * Is Email Available
  */
 export const isEmailAvailable = async (req: Request, args: unknown): Promise<boolean> => {
   const { email } = await emailSchema.validate(args);
-  const user = await User.findOneActive({ emails: { $in: [email, email.toUpperCase()] } }, '-id');
+  const user = await User.findOne({ emails: { $in: [email, email.toUpperCase()] }, ...activeCond }, '-id').lean();
   return !user;
+};
+
+/**
+ * List ApiKeys
+ */
+export const listApiKeys = async (req: Request): Promise<UserDocument['apiKeys']> => {
+  const { apiKeys } = await authGetUser(req);
+  return hideApiKeysToken(apiKeys);
+};
+
+/**
+ * Add ApiKey
+ */
+export const addApiKey = async (req: Request, args: unknown): Promise<UserDocument['apiKeys']> => {
+  const [user, { expireAt, scope, note }] = await Promise.all([authGetUser(req), userApiKeySchema.validate(args)]);
+  if (expireAt < new Date()) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  const _id = mongoId();
+  const apiKeyToken = await token.signStrings(
+    [API_KEY_TOKEN_PREFIX, user._id, scope],
+    Math.floor((expireAt.getTime() - Date.now()) / 1000),
+  );
+
+  const update: UpdateQuery<UserDocument> = {
+    $push: { apiKeys: { _id, token: apiKeyToken, expireAt, scope, note } },
+  };
+
+  const [updatedUser] = await Promise.all([
+    User.findOneAndUpdate({ _id: user._id }, update, { new: true }).lean(),
+    DatabaseEvent.log(user._id, `/auth/${user._id}`, 'addApiKey', { args }),
+    notifySync(
+      user.tenants[0] || null,
+      { userIds: [user._id], event: 'AUTH-RENEW-TOKEN' },
+      {
+        bulkWrite: { users: [{ updateOne: { filter: { _id: user._id }, update } }] satisfies BulkWrite<UserDocument> },
+      },
+    ),
+  ]);
+
+  if (updatedUser) return hideApiKeysToken(updatedUser.apiKeys, _id);
+  log('error', `authExtraController:addApiKey()`, args, user._id);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
+ * Remove Api Key
+ */
+export const removeApiKey = async (req: Request, args: unknown): Promise<UserDocument['apiKeys']> => {
+  const [user, { id }] = await Promise.all([authGetUser(req), idSchema.validate(args)]);
+
+  const originalApiKey = user.apiKeys.find(p => p._id.equals(id));
+  if (!originalApiKey) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  const update: UpdateQuery<UserDocument> = { $pull: { apiKeys: { _id: id } } };
+  const [updatedUser] = await Promise.all([
+    User.findOneAndUpdate({ _id: user._id }, update, { new: true }).lean(),
+    DatabaseEvent.log(user._id, `/auth/${user._id}`, 'removeApiKey', { originalApiKey }),
+    notifySync(
+      user.tenants[0] || null,
+      { userIds: [user._id], event: 'AUTH-RENEW-TOKEN' },
+      {
+        bulkWrite: { users: [{ updateOne: { filter: { _id: user._id }, update } }] satisfies BulkWrite<UserDocument> },
+      },
+    ),
+  ]);
+
+  if (updatedUser) return hideApiKeysToken(updatedUser.apiKeys);
+  log('error', `authExtraController:removeApiKey()`, args, user._id);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+
+  //
 };
 
 /**
@@ -112,13 +196,13 @@ export const sendMessengerVerification = async (req: Request, args: unknown): Pr
 export const update = async (
   req: Request,
   args: unknown,
-  action: Exclude<Action, 'verifyEmail'>, // verifyEmail() return Promise<StatusResponse> instead of Promise<UserDocument & Id>
-): Promise<UserDocument & Id> => {
+  action: Exclude<Action, 'addApiKey' | 'removeApiKey' | 'verifyEmail'>, // verifyEmail() return Promise<StatusResponse> instead of Promise<UserDocument >
+): Promise<UserDocument> => {
   const original = await authGetUser(req);
   const userId = original._id;
 
   // common code to save update, and notifyAndSync()
-  const updateAndNotify = async (
+  const common = async (
     update: UpdateQuery<UserDocument>,
     event: Record<string, unknown>,
     minio?: { addObject?: string; removeObject?: string },
@@ -149,20 +233,13 @@ export const update = async (
     throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
   };
 
-  if (action === 'addApiKey') {
-    const inputFields = await userApiKeySchema.validate(args);
-    return updateAndNotify(
-      { $push: { apiKeys: { _id: mongoId(), value: randomString(), ...inputFields } } },
-      inputFields,
-    );
-    //
-  } else if (action === 'addEmail') {
+  if (action === 'addEmail') {
     const { email } = await emailSchema.validate(args);
     if (original.emails.map(e => e.toLowerCase()).includes(email.toLowerCase()))
       throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
     mail.confirmEmail(original.name, original.locale, email); // no need to wait, sending email takes time
-    return updateAndNotify({ $addToSet: { emails: email.toUpperCase() } }, { email });
+    return common({ $addToSet: { emails: email.toUpperCase() } }, { email });
     //
   } else if (action === 'addMessenger') {
     const { provider, account } = await userMessengerSchema.validate(args);
@@ -174,7 +251,7 @@ export const update = async (
       throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // mixed cased accounts are treated as duplicated
 
     VerificationToken.send(original._id, provider, account); // send token (no need to await, it will take time to send)
-    return updateAndNotify(
+    return common(
       { $addToSet: { messengers: `${provider.toLowerCase()}#${account}` } }, // lowercased provider for unverified
       { provider, account },
     );
@@ -185,7 +262,13 @@ export const update = async (
       p => p.bank === inputFields.bank && p.currency === inputFields.currency && p.account === inputFields.account,
     );
     if (hasDuplicated) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-    return updateAndNotify({ $push: { paymentMethods: { _id: mongoId(), ...inputFields } } }, inputFields);
+    return common({ $push: { paymentMethods: { _id: mongoId(), ...inputFields } } }, inputFields);
+    //
+  } else if (action === 'addPushSubscription') {
+    const inputFields = await userPushSubscriptionSchema.validate(args);
+    if (original.pushSubscriptions.map(s => JSON.stringify(s)).includes(JSON.stringify(inputFields)))
+      throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // duplicated entry
+    return common({ $push: { pushSubscriptions: inputFields } }, inputFields);
     //
   } else if (action === 'oAuth2Link') {
     const { provider, code } = await oAuth2Schema.validate(args);
@@ -194,7 +277,7 @@ export const update = async (
 
     const oAuthPayload = await oAuth2Decode(provider, code);
     const oAuthId = `${provider}#${oAuthPayload.subId}`;
-    const isOAuthTaken = await User.findOneActive({ _id: { $ne: original._id }, oAuth2s: oAuthId });
+    const isOAuthTaken = await User.findOne({ _id: { $ne: original._id }, oAuth2s: oAuthId, ...activeCond }).lean();
 
     if (!original.oAuth2s.includes(oAuthId)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // oAuth already set
     if (isOAuthTaken) throw { statusCode: 400, code: MSG_ENUM.AUTH_OAUTH_ALREADY_REGISTERED };
@@ -215,30 +298,24 @@ export const update = async (
       ...(avatarUrl && { avatarUrl }),
       $addToSet: { oAuth2s: oAuthId },
     };
-    return updateAndNotify(update, { provider, oAuthId });
+    return common(update, { provider, oAuthId });
     //
   } else if (action === 'oAuth2Unlink') {
     const { oAuthId } = await oAuth2IdSchema.validate(args);
     if (!original.oAuth2s.includes(oAuthId)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-    return updateAndNotify({ $pull: { oAuth2s: oAuthId } }, { oAuthId });
-    //
-  } else if (action === 'removeApiKey') {
-    const { id } = await idSchema.validate(args);
-    const originalApiKey = original.apiKeys.find(p => p._id.equals(id));
-    if (!originalApiKey) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-    return updateAndNotify({ $pull: { apiKeys: { _id: id } } }, { originalApiKey });
+    return common({ $pull: { oAuth2s: oAuthId } }, { oAuthId });
     //
   } else if (action === 'removeEmail') {
     const { email } = await emailSchema.validate(args);
     if (!original.emails.map(e => e.toLowerCase()).includes(email.toLowerCase()))
       throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-    return updateAndNotify({ $pull: { emails: { $in: [email, email.toUpperCase()] } } }, { email });
+    return common({ $pull: { emails: { $in: [email, email.toUpperCase()] } } }, { email });
     //
   } else if (action === 'removeMessenger') {
     const { provider, account } = await userMessengerSchema.validate(args);
     if (!original.messengers.map(m => m.toLowerCase()).includes(`${provider}#${account}`.toLowerCase()))
       throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-    return updateAndNotify(
+    return common(
       {
         $pull: {
           messengers: { $in: [`${provider.toLowerCase()}#${account}`, `${provider.toUpperCase()}#${account}`] },
@@ -251,7 +328,10 @@ export const update = async (
     const { id } = await idSchema.validate(args);
     const originalPaymentMethod = original.paymentMethods.find(p => p._id.equals(id));
     if (!originalPaymentMethod) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
-    return updateAndNotify({ $pull: { paymentMethods: { _id: id } } }, { original: originalPaymentMethod });
+    return common({ $pull: { paymentMethods: { _id: id } } }, { original: originalPaymentMethod });
+    //
+  } else if (action === 'removePushSubscriptions') {
+    return common({ pushSubscriptions: [] }, { original: original.pushSubscriptions });
     //
   } else if (action === 'updateAvailability') {
     const { availability } = await userAvailabilitySchema.validate(args);
@@ -264,7 +344,7 @@ export const update = async (
     )
       throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // make no sense to set OFFLINE (auto-detected by socket-server)
 
-    return updateAndNotify(availability ? { availability } : { $unset: { availability: 1 } }, { availability });
+    return common(availability ? { availability } : { $unset: { availability: 1 } }, { availability });
     //
   } else if (action === 'updateAvatar') {
     const { avatarUrl } = await userAvatarSchema.validate(args);
@@ -279,7 +359,7 @@ export const update = async (
         storage.removeObject(original.avatarUrl), // remove old avatarUrl from minio if exists and is different from new avatarUrl (& non built-in avatar)
     ]);
 
-    return updateAndNotify(
+    return common(
       avatarUrl ? { avatarUrl } : { $unset: { avatarUrl: 1 } },
       { original: original.avatarUrl, update: avatarUrl },
       { ...(addObject && { addObject }), ...(removeObject && { removeObject }) },
@@ -289,7 +369,7 @@ export const update = async (
   } else if (action === 'updateLocale') {
     const { locale } = await userLocaleSchema.validate(args);
     if (!Object.keys(SYSTEM.LOCALE).includes(locale)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // re-verify locale value (YUP has verified already)
-    return updateAndNotify({ locale }, { original: original.locale, new: locale });
+    return common({ locale }, { original: original.locale, new: locale });
     //
   } else if (action === 'verifyMessenger') {
     const { userId } = auth(req);
@@ -311,7 +391,7 @@ export const update = async (
       messengers: original.messengers.filter(m => m !== lowerCase).concat(upperCase), // remove unverified, append verified
     };
     const [updatedUser] = await Promise.all([
-      updateAndNotify(update, { provider, account }),
+      common(update, { provider, account }),
       VerificationToken.deleteOne({ _id: verificationToken._id }),
     ]);
     return updatedUser;
@@ -327,9 +407,9 @@ export const update = async (
 
     const { name, formalName, yob, dob } = original;
 
-    return updateAndNotify(
+    return common(
       {
-        ...(inputFields.name && { name: inputFields.name }),
+        name: inputFields.name,
         ...(inputFields.formalName && { formalName: inputFields.formalName }),
         ...(inputFields.yob && { yob: inputFields.yob }),
         ...(inputFields.dob && { dob: inputFields.dob }),
@@ -388,9 +468,16 @@ export const verifyEmail = async (req: Request, args: unknown): Promise<StatusRe
 export const updateHandler: RequestHandler<{ action: Action }> = async (req, res, next) => {
   const { action } = req.params;
   try {
-    if (action === 'verifyEmail') return res.status(200).json(await verifyEmail(req, req.body));
-
-    return res.status(200).json({ data: await update(req, req.body, action) });
+    switch (action) {
+      case 'verifyEmail':
+        return res.status(200).json(await verifyEmail(req, req.body));
+      case 'addApiKey':
+        return res.status(200).json({ data: await addApiKey(req, req.body) });
+      case 'removeApiKey':
+        return res.status(200).json({ data: await removeApiKey(req, req.body) });
+      default:
+        return res.status(200).json({ data: await update(req, req.body, action) });
+    }
   } catch (error) {
     next(error);
   }

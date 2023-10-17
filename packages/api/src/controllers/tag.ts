@@ -10,7 +10,7 @@ import mongoose from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import DatabaseEvent from '../models/event/database';
-import type { Id, TagDocument } from '../models/tag';
+import type { TagDocument } from '../models/tag';
 import Tag, { searchableFields } from '../models/tag';
 import { messageToAdmins } from '../utils/chat';
 import log from '../utils/log';
@@ -39,7 +39,7 @@ const { idSchema, querySchema, remarkSchema, removeSchema, tagSchema } = yupSche
 /**
  * Add Remark
  */
-const addRemark = async (req: Request, args: unknown): Promise<TagDocument & Id> => {
+const addRemark = async (req: Request, args: unknown): Promise<TagDocument> => {
   hubModeOnly();
   const { userId, userRoles } = auth(req, 'ADMIN');
   const { id, remark } = await idSchema.concat(remarkSchema).validate(args);
@@ -58,7 +58,7 @@ const addRemark = async (req: Request, args: unknown): Promise<TagDocument & Id>
 /**
  * Create New Tag
  */
-const create = async (req: Request, args: unknown): Promise<TagDocument & Id> => {
+const create = async (req: Request, args: unknown): Promise<TagDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const user = await authGetUser(req);
@@ -82,7 +82,7 @@ const create = async (req: Request, args: unknown): Promise<TagDocument & Id> =>
     messageToAdmins(msg, userId, userLocale, true),
     DatabaseEvent.log(userId, `/tags/${tag._id}`, 'CREATE', { args }),
     syncToAllSatellites({
-      bulkWrite: { tags: [{ insertOne: { document: tag.toObject() } }] satisfies BulkWrite<TagDocument> },
+      bulkWrite: { tags: [{ insertOne: { document: tag } }] satisfies BulkWrite<TagDocument> },
     }),
   ]);
 
@@ -103,7 +103,7 @@ const createNew: RequestHandler = async (req, res, next) => {
 /**
  * Find Multiple Tags (Apollo)
  */
-const find = async (req: Request, args: unknown): Promise<(TagDocument & Id)[]> => {
+const find = async (req: Request, args: unknown): Promise<TagDocument[]> => {
   const { query } = await querySchema.validate(args);
 
   const filter = searchFilter<TagDocument>(searchableFields, { query });
@@ -134,7 +134,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 /**
  * Find One Tag by ID
  */
-const findOne = async (req: Request, args: unknown): Promise<(TagDocument & Id) | null> => {
+const findOne = async (req: Request, args: unknown): Promise<TagDocument | null> => {
   const { id, query } = await idSchema.concat(querySchema).validate(args);
 
   const filter = searchFilter<TagDocument>(searchableFields, { query }, { _id: id });
@@ -212,7 +212,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 /**
  * Update Tag
  */
-const update = async (req: Request, args: unknown): Promise<TagDocument & Id> => {
+const update = async (req: Request, args: unknown): Promise<TagDocument> => {
   hubModeOnly();
   const { userId, userLocale, userRoles } = auth(req);
   const user = await authGetUser(req);

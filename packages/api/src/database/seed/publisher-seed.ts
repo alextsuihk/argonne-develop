@@ -16,7 +16,7 @@ import Publisher from '../../models/publisher';
 const seed = async (): Promise<string> => {
   const publishers: Partial<PublisherDocument>[] = [
     {
-      name: { enUS: '', zhHK: '進昇教育有限公司' },
+      name: { enUS: '進昇教育有限公司', zhHK: '進昇教育有限公司' },
       phones: ['+852 28112908'],
       website: 'https://www.learningfun.com.hk/',
     },

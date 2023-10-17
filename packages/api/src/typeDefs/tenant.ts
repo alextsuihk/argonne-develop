@@ -67,6 +67,8 @@ export default gql`
     flaggedWords: [String!]!
     authServices: [String!]!
 
+    satelliteStatus: String
+
     remarks: [Remark!]
     createdAt: Float!
     updatedAt: Float!

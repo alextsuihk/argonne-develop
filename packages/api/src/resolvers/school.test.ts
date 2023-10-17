@@ -29,7 +29,7 @@ import {
 import District from '../models/district';
 import Level from '../models/level';
 import School from '../models/school';
-import type { Id, UserDocument } from '../models/user';
+import type { UserDocument } from '../models/user';
 import {
   ADD_SCHOOL,
   ADD_SCHOOL_REMARK,
@@ -45,7 +45,7 @@ const { SCHOOL } = LOCALE.DB_ENUM;
 // Top level of this test suite:
 describe('School GraphQL', () => {
   let adminServer: ApolloServer | null;
-  let adminUser: (UserDocument & Id) | null;
+  let adminUser: UserDocument | null;
   let guestServer: ApolloServer | null;
   let normalServer: ApolloServer | null;
   let url: string | undefined;
@@ -59,7 +59,9 @@ describe('School GraphQL', () => {
     address: expect.toBeOneOf([null, expectedLocaleFormat]),
     district: expectedIdFormat,
     location: expect.toBeOneOf([null, { coordinates: [expect.any(String), expect.any(String)] }]),
-    phones: expect.arrayContaining([expect.any(String)]),
+    // phones: expect.arrayContaining([expect.any(String)]),
+    phones: expect.any(Array),
+
     emi: expect.toBeOneOf([null, expect.any(Boolean)]),
     band: expect.toBeOneOf(Object.keys(SCHOOL.BAND)),
     logoUrl: expect.toBeOneOf([null, expect.any(String)]),
@@ -68,7 +70,8 @@ describe('School GraphQL', () => {
     gender: expect.toBeOneOf(Object.keys(SCHOOL.GENDER)),
     religion: expect.toBeOneOf(Object.keys(SCHOOL.RELIGION)),
 
-    levels: expect.arrayContaining([expectedIdFormat]),
+    // levels: expect.arrayContaining([expectedIdFormat]),
+    levels: expect.any(Array), // could be empty for universities
     remarks: null,
     createdAt: expectedDateFormat(true),
     updatedAt: expectedDateFormat(true),

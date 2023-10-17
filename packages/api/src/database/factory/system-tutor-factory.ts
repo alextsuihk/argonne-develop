@@ -17,7 +17,7 @@ import type { TutorDocument } from '../../models/tutor';
 import Tutor from '../../models/tutor';
 import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
-import { mongoId, prob, randomItem, randomString, schoolYear } from '../../utils/helper';
+import { mongoId, prob, randomItem, randomItems, randomString, schoolYear } from '../../utils/helper';
 
 const { QUESTION, USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -36,17 +36,35 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
   if (!tenant) throw `Tenant ${code} is not found.`;
   if (!alexId) throw 'alexId is not found';
 
-  const specialties = (count = 5): TutorDocument['specialties'] =>
-    Array(count)
+  const specialtiesAndRankings = (
+    count = 5,
+  ): { specialties: TutorDocument['specialties']; rankings: TutorDocument['rankings'] } => {
+    const specialties = Array(count)
       .fill(0)
       .map(() => ({
         _id: mongoId(),
+        tenant: tenant._id,
         ...(prob(0.5) && { note: faker.lorem.words(5) }),
-        lang: randomItem(Object.keys(QUESTION.LANG)),
+        langs: randomItems(Object.keys(QUESTION.LANG), prob(0.5) ? 1 : 2),
         level: randomItem(levels)._id,
         subject: randomItem(subjects)._id,
-        ranking: { updatedAt: new Date(), correctness: 0, punctuality: 0, explicitness: 0 },
+        priority: 0,
       }));
+
+    const rankings: TutorDocument['rankings'] = [];
+    specialties.forEach(({ level, subject }) => {
+      if (rankings.some(ranking => !ranking.level.equals(level) && !ranking.subject.equals(subject)))
+        rankings.push({
+          level,
+          subject,
+          ...(prob(0.8) && { correctness: faker.number.int({ min: 1, max: 5 }) * 1000 }),
+          ...(prob(0.8) && { explicitness: faker.number.int({ min: 1, max: 5 }) * 1000 }),
+          ...(prob(0.8) && { punctuality: faker.number.int({ min: 1, max: 5 }) * 1000 }),
+        });
+    });
+
+    return { specialties, rankings };
+  };
 
   // create fake system-tutor
   const systemTutors: Partial<UserDocument & TutorDocument>[] = [
@@ -54,10 +72,22 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
       name: '英皇 John Chan 導師',
       officeHour: '24 x 7',
       credentials: [
-        { _id: mongoId(), title: '英皇首席', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
-        { _id: mongoId(), title: '天才導師', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
+        {
+          _id: mongoId(),
+          title: '英皇首席',
+          proofs: [],
+          verifiedAt: faker.date.recent({ days: 90 }),
+          updatedAt: new Date(),
+        },
+        {
+          _id: mongoId(),
+          title: '天才導師',
+          proofs: [],
+          verifiedAt: faker.date.recent({ days: 90 }),
+          updatedAt: new Date(),
+        },
       ],
-      specialties: specialties(3),
+      ...specialtiesAndRankings(3),
     },
     {
       name: '遵理 Miss Lee',
@@ -67,19 +97,25 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
           _id: mongoId(),
           title: '11A DSE 天才狀元',
           proofs: [],
-          verifiedAt: faker.date.recent(90),
+          verifiedAt: faker.date.recent({ days: 90 }),
           updatedAt: new Date(),
         },
       ],
-      specialties: specialties(2),
+      ...specialtiesAndRankings(2),
     },
     {
       name: '張Sir St. Joe',
       officeHour: 'M-F: after 6pm, Sat & Sun 全日',
       credentials: [
-        { _id: mongoId(), title: '哈佛畢業', proofs: [], verifiedAt: faker.date.recent(90), updatedAt: new Date() },
+        {
+          _id: mongoId(),
+          title: '哈佛畢業',
+          proofs: [],
+          verifiedAt: faker.date.recent({ days: 90 }),
+          updatedAt: new Date(),
+        },
       ],
-      specialties: specialties(6),
+      ...specialtiesAndRankings(6),
     },
   ];
 
@@ -101,7 +137,6 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
                 year: schoolYear(),
                 school: tenant.school,
                 level: randomItem(levels)._id,
-                schoolClass: '1X',
                 updatedAt: new Date(),
               },
             ]
@@ -110,7 +145,6 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
 
     const tutor = new Tutor<Partial<TutorDocument>>({
       user: user._id,
-      tenant: tenant._id,
       officeHour,
       credentials,
       specialties,
