@@ -48,7 +48,7 @@ export default gql`
   type Tutor {
     _id: String!
     flags: [String!]
-    name: String!
+    name: String # undefined in case userDoc is deleted
     intro: String
     officeHour: String
     credentials: [Credential!]!

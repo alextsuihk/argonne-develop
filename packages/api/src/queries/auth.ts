@@ -82,6 +82,13 @@ const AUTH_USER_FIELDS = gql`
     creditability
     identifiedAt
 
+    stashes {
+      _id
+      title
+      secret
+      url
+    }
+
     studentIds
     schoolHistories {
       year
@@ -404,6 +411,15 @@ export const ADD_PUSH_SUBSCRIPTION = gql`
   }
 `;
 
+export const ADD_STASH = gql`
+  ${AUTH_USER_FIELDS}
+  mutation AddStash($title: String!, $secret: String!, $url: String!) {
+    addStash(title: $title, secret: $secret, url: $url) {
+      ...AuthUserFields
+    }
+  }
+`;
+
 export const OAUTH2_LINK = gql`
   ${AUTH_USER_FIELDS}
   mutation OAuth2Link($provider: String!, $code: String!) {
@@ -462,6 +478,15 @@ export const REMOVE_PUSH_SUBSCRIPTIONS = gql`
   ${AUTH_USER_FIELDS}
   mutation RemovePushSubscriptions {
     removePushSubscriptions {
+      ...AuthUserFields
+    }
+  }
+`;
+
+export const REMOVE_STASH = gql`
+  ${AUTH_USER_FIELDS}
+  mutation RemoveStash($id: String!) {
+    removeStash(id: $id) {
       ...AuthUserFields
     }
   }

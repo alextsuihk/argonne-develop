@@ -41,6 +41,7 @@ export default gql`
     removeQuestion(id: ID!): StatusResponse!
     setQuestionFlag(id: ID!, flag: String!): Question!
     updateQuestionLastViewedAt(id: ID!, timestamp: DateInput): Question!
+    updateQuestionRanking(id: ID!, correctness: Int!, explicitness: Int!, punctuality: Int!): Question!
   }
 
   type Question {

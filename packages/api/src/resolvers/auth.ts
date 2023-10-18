@@ -81,6 +81,7 @@ export default {
       tryCatch(() => update(req, args, 'addPaymentMethod')),
     addPushSubscription: async (_: unk, args: unk, { req, res }: Ctx) =>
       tryCatch(() => update(req, args, 'addPushSubscription')),
+    addStash: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addStash')),
     oAuth2Link: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'oAuth2Link')),
     oAuth2Unlink: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'oAuth2Unlink')),
     removeEmail: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'removeEmail')),
@@ -90,6 +91,7 @@ export default {
       tryCatch(() => update(req, args, 'removePaymentMethod')),
     removePushSubscriptions: async (_: unk, args: unk, { req, res }: Ctx) =>
       tryCatch(() => update(req, args, 'removePushSubscriptions')),
+    removeStash: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'removeStash')),
     updateAvailability: async (_: unk, args: unk, { req, res }: Ctx) =>
       tryCatch(() => update(req, args, 'updateAvailability')),
     updateAvatar: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'updateAvatar')),

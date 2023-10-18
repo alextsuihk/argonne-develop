@@ -153,7 +153,7 @@ describe('Authentication GraphQL (token)', () => {
     apolloExpect(loginWithStudentIdRes, 'data', { loginWithStudentId: { ...expectedAuthResponse, conflict: null } });
 
     // clean-up deregister (remove) test user
-    await User.deleteOne({ _id: user });
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should pass when (school) tenantAdmin creates a loginToken for user to login', async () => {
@@ -177,7 +177,7 @@ describe('Authentication GraphQL (token)', () => {
     apolloExpect(loginWithTokenRes, 'data', { loginWithToken: { ...expectedAuthResponse, conflict: null } });
 
     // clean-up deregister (remove) test user
-    await User.deleteOne({ _id: user });
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should fail when login with invalid email & password, without password', async () => {

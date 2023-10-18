@@ -82,6 +82,7 @@ export default gql`
       receivable: Boolean
     ): AuthUser!
     addPushSubscription(endpoint: String!, p256dh: String!, auth: String!): AuthUser!
+    addStash(title: String!, secret: String!, url: String!): AuthUser!
     oAuth2Link(provider: String!, code: String!): AuthUser!
     oAuth2Unlink(oAuthId: String!): AuthUser!
     removeApiKey(id: String!): [ApiKey!]!
@@ -89,6 +90,7 @@ export default gql`
     removeMessenger(provider: String!, account: String!): AuthUser!
     removePaymentMethod(id: String!): AuthUser!
     removePushSubscriptions: AuthUser!
+    removeStash(id: String!): AuthUser!
     updateAvailability(availability: String): AuthUser!
     updateAvatar(avatarUrl: String): AuthUser!
     updateLocale(locale: String!): AuthUser!
@@ -173,6 +175,8 @@ export default gql`
     creditability: Int!
     identifiedAt: Float
 
+    stashes: [Stash!]!
+
     studentIds: [String!]!
     schoolHistories: [UserSchoolHistory]!
 
@@ -200,6 +204,13 @@ export default gql`
   type LogoutOtherResponse {
     code: String
     count: Int
+  }
+
+  type Stash {
+    _id: ID!
+    title: String!
+    secret: String!
+    url: String!
   }
 
   type Token {

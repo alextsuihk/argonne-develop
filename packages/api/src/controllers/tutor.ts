@@ -34,8 +34,8 @@ type Action =
   | 'verifyCredential';
 
 type Populate = { user: Id & { name: string } };
-type PopulatedTutor = Omit<TutorDocument, 'user'> & Populate;
-type TutorDocumentEx = Omit<TutorDocument, 'user'> & { name: string };
+type PopulatedTutor = Omit<TutorDocument, 'user'> & Partial<Populate>; // partial in case user document is removed remotely
+type TutorDocumentEx = Omit<TutorDocument, 'user'> & { name?: string };
 
 const { MSG_ENUM } = LOCALE;
 const { QUESTION } = LOCALE.DB_ENUM;
@@ -59,12 +59,12 @@ const transform = (
   isAdmin?: boolean,
 ): TutorDocumentEx => ({
   ...tutor,
-  _id: user._id,
-  name: user.name,
+  _id: user?._id || mongoId(), // in case userDoc is deleted (likely remotely)
+  name: user?.name,
 
   credentials: tutor.credentials.map(({ proofs, ...rest }) => ({
     ...rest,
-    proofs: isAdmin || userId.equals(user._id) ? proofs : [], // only owner or admin could see proofs
+    proofs: isAdmin || user?._id.equals(userId) ? proofs : [], // only owner or admin could see proofs
   })),
 
   specialties: isAdmin
@@ -73,7 +73,7 @@ const transform = (
 });
 
 // common filter for find() & findMany()
-const findCommonFilter = async (req: Request, args: unknown) => {
+const findCommon = async (req: Request, args: unknown) => {
   const { userId, userExtra, userRoles, userTenants } = auth(req);
 
   const { query } = await querySchema.validate(args);
@@ -113,7 +113,7 @@ const find = async (req: Request, args: unknown): Promise<TutorDocumentEx[]> => 
   hubModeOnly();
 
   const { userId, userRoles, userTenants } = auth(req);
-  const filter = await findCommonFilter(req, args);
+  const filter = await findCommon(req, args);
 
   const tutors = await Tutor.find(filter, select(userRoles)).populate<Populate>(populate).lean();
   return tutors.map(tutor => transform(tutor, userId, userTenants, isAdmin(userRoles)));
@@ -127,7 +127,7 @@ const findMany: RequestHandler = async (req, res, next) => {
 
   try {
     const { userId, userRoles, userTenants } = auth(req);
-    const filter = await findCommonFilter(req, { query: req.query });
+    const filter = await findCommon(req, { query: req.query });
     const options = paginateSort(req.query);
 
     const [total, tutors] = await Promise.all([

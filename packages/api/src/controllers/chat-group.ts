@@ -936,9 +936,12 @@ const updateChatFlag = async (
   chat.members.some(m => m.user.equals(userId))
     ? await Chat.updateOne(
         { _id: chatId, 'members.user': userId },
-        action === 'setChatFlag'
-          ? { 'members.$.lastViewedAt': new Date(), $addToSet: { 'members.$.flags': flag } }
-          : { 'members.$.lastViewedAt': new Date(), $pull: { 'members.$.flags': flag } },
+        {
+          'members.$.lastViewedAt': new Date(),
+          ...(action === 'setChatFlag'
+            ? { $addToSet: { 'members.$.flags': flag } }
+            : { $pull: { 'members.$.flags': flag } }),
+        },
       )
     : action === 'setChatFlag' &&
       (await Chat.updateOne(

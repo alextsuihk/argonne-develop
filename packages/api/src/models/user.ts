@@ -127,7 +127,14 @@ const userSchema = new Schema(
 
     identifiedAt: Date,
 
-    stashes: [String],
+    stashes: [
+      {
+        _id: { type: Schema.Types.ObjectId, required: true },
+        title: { type: String, required: true },
+        secret: { type: String, required: true },
+        url: { type: String, required: true },
+      },
+    ],
 
     ...userExtraDefinition,
     deletedAt: { type: Date, expires: DEFAULTS.MONGOOSE.EXPIRES.USER },

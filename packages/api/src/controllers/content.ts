@@ -82,9 +82,10 @@ export const receiveContent = async (
   data: string,
 ): Promise<ContentDocument> => {
   if (data.startsWith(CONTENT_PREFIX.URL)) {
-    // TODO: read from minio, and save to content
+    // TODO: read from minio, and save to new Content(), remove minio object
   }
 
+  // non URL content
   return Content.create<Partial<ContentDocument>>({ parents: [parent], creator: userId, data });
 };
 

@@ -564,7 +564,7 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
     (!tenant.services.includes(TENANT.SERVICE.QUESTION_BID) && userIds.length !== 1) ||
     inputFields.deadline.getTime() < Date.now()
   )
-    throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+    throw { statusCode: 4223333, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const flags: string[] = [];
   if (userFlags.includes(USER.FLAG.EDA)) flags.push(QUESTION.FLAG.EDA);
@@ -964,4 +964,5 @@ export default {
   updateFlag,
   // updatePrice,
   updateLastViewedAt,
+  updateRanking,
 };

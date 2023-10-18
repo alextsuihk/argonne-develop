@@ -158,14 +158,8 @@ const remove = async (req: Request, args: unknown): Promise<StatusResponse> => {
     { ...update, ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
   ).lean();
 
-  // const original = await District.findOneAndUpdate(
-  //   { _id: id, deletedAt: { $exists: false } },
-  //   { deletedAt: new Date(), ...(remark && { $push: { remarks: { t: new Date(), u: userId, m: remark } } }) },
-  // ).lean();
   if (!original) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
   const { name, region } = original;
-
-  // console.log('districtController::remove() original district:', new Date(), original);
 
   const common = `(ENG): ${region.enUS}-${name.enUS}, (繁): ${region.zhHK}-${name.zhHK}, (简): ${region.zhCN}-${name.zhCN} [/districts/${id}]`;
   const msg = {

@@ -158,6 +158,7 @@ describe('Book GraphQL', () => {
     apolloExpect(res, 'data', {
       book: {
         ...expectedFormat,
+        _id: id,
         remarks: [],
         assignments: expect.arrayContaining([
           { ...expectedBookAssignmentFormat, solutions: expect.arrayContaining([expect.any(String)]) },
@@ -461,7 +462,7 @@ describe('Book GraphQL', () => {
     // clean-up
     if (!isAdmin)
       await Promise.all([
-        User.deleteOne({ _id: publisherAdmin }),
+        User.deleteOne({ _id: publisherAdmin._id }),
         Publisher.updateOne({ _id: publisher }, { $pull: { admins: publisherAdmin._id } }),
       ]);
   };

@@ -18,20 +18,20 @@ describe('Authentication GraphQL (token)', () => {
   let refreshToken: string;
 
   const user = genUser(null);
-  const { _id, emails, password: oldPassword } = user; // destructure before saving. user.password is hashed once save()
+  const { emails, password: oldPassword } = user; // destructure before saving. user.password is hashed once save()
   const newPassword = User.genValidPassword();
 
   beforeAll(async () => {
     ({ guestServer } = await jestSetup(['guest'], { apollo: true }));
 
     [refreshToken] = await Promise.all([
-      token.signStrings([REFRESH_TOKEN_PREFIX, _id.toString(), randomString()], DEFAULTS.JWT.EXPIRES.REFRESH),
+      token.signStrings([REFRESH_TOKEN_PREFIX, user._id.toString(), randomString()], DEFAULTS.JWT.EXPIRES.REFRESH),
       user.save(),
     ]);
   });
 
   afterAll(async () => {
-    await User.deleteOne({ _id }); // delete test user
+    await User.deleteOne({ _id: user._id }); // delete test user
     await jestTeardown();
   });
 
@@ -76,7 +76,7 @@ describe('Authentication GraphQL (token)', () => {
     expect.assertions(1);
 
     const resetToken = await token.signStrings(
-      [PASSWORD_TOKEN_PREFIX, _id.toString()],
+      [PASSWORD_TOKEN_PREFIX, user._id.toString()],
       DEFAULTS.AUTH.PASSWORD_RESET_EXPIRES_IN,
     );
 

@@ -266,15 +266,42 @@ describe('Auth-Extra API Routes', () => {
     expect.assertions(3 + 3);
 
     // add avatarUrl
-    const avatarUrl = await jestPutObject(normalUser!._id);
-    const addRes = await request(app).patch(`/api/auth/updateAvatar`).send({ avatarUrl }).set(header);
-    expect(addRes.body).toEqual({ data: expect.objectContaining({ ...expectedUserFormat, avatarUrl }) });
+    url = await jestPutObject(normalUser!._id);
+    const addRes = await request(app).patch(`/api/auth/updateAvatar`).send({ avatarUrl: url }).set(header);
+    expect(addRes.body).toEqual({ data: expect.objectContaining({ ...expectedUserFormat, avatarUrl: url }) });
     expect(addRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(addRes.status).toBe(200);
 
     // remove avatarUrls
     const removeRes = await request(app).patch(`/api/auth/updateAvatar`).set(header); // send NO avatarUrl to remove
     expect(removeRes.body.data.avatarUrl).toBeUndefined();
+    expect(removeRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(removeRes.status).toBe(200);
+  });
+
+  test('should pass when add & remove stash', async () => {
+    expect.assertions(3 + 3);
+
+    const add = {
+      title: FAKE,
+      secret: FAKE2,
+      url: await jestPutObject(normalUser!._id),
+    };
+    const addRes = await request(app).patch(`/api/auth/addStash`).send(add).set(header);
+    expect(addRes.body).toEqual({
+      data: expect.objectContaining({
+        ...expectedUserFormat,
+        stashes: [...normalUser!.stashes, { _id: expectedIdFormat, ...add }],
+      }),
+    });
+    expect(addRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(addRes.status).toBe(200);
+
+    const id = addRes.body.data.stashes.at(-1)._id;
+    const removeRes = await request(app).patch(`/api/auth/removeStash`).send({ id }).set(header); // send NO avatarUrl to remove
+    expect(removeRes.body).toEqual({
+      data: expect.objectContaining({ ...expectedUserFormat, stashes: normalUser!.stashes }),
+    });
     expect(removeRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(removeRes.status).toBe(200);
   });

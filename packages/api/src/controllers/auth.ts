@@ -151,6 +151,7 @@ const deregister = async (req: Request, res: Response, args: unknown): Promise<S
     status: USER.STATUS.DELETED,
     password: `${randomString()}:::${randomString()}`,
     oAuth2s: [], // clear out OAuth providers
+    stashes: [],
     deletedAt: new Date(),
     emails: user.emails.map(email => `${email}@@${Date.now()}`), // make the email(s) invalid format
     messengers: [],
@@ -166,6 +167,7 @@ const deregister = async (req: Request, res: Response, args: unknown): Promise<S
     User.updateMany({ _id: { $in: contactIds } }, removeContactsUpdate),
     User.updateMany({ _id: { $in: user.supervisors } }, removeStaffUpdate),
     Tutor.updateOne({ user: user._id }, { deletedAt: new Date() }),
+    ...user.stashes.map(async stash => storage.removeObject(stash.url)),
     DatabaseEvent.log(user._id, '/auth', 'deregister', { oAuth2s, emails, messengers }),
     AuthEvent.log(user._id, 'deregister', req.ua, req.ip, coordinates),
     notifySync(

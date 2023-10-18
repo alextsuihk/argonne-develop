@@ -124,11 +124,13 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
     if (!teacher) throw 'no valid teacher for testing';
 
+    const bookId = randomItem(books)._id.toString();
     await getById(
       route,
       { 'Jest-User': teacher!._id },
       {
         ...expectedMinFormat,
+        _id: bookId,
         remarks: [],
         assignments: expect.arrayContaining([
           expect.objectContaining({
@@ -137,7 +139,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           }),
         ]),
       },
-      { id: randomItem(books)._id.toString() },
+      { id: bookId },
     );
   });
 

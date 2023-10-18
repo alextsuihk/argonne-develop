@@ -227,6 +227,8 @@ export const expectedUserFormat = {
   expoPushTokens: expect.any(Array),
   creditability: expect.any(Number),
 
+  stashes: expect.any(Array),
+
   studentIds: expect.any(Array),
   schoolHistories: expect.any(Array), // could be empty array
 

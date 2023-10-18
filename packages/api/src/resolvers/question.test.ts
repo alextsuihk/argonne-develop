@@ -39,6 +39,7 @@ import {
   REMOVE_QUESTION,
   SET_QUESTION_FLAG,
   UPDATE_QUESTION_LAST_VIEWED_AT,
+  UPDATE_QUESTION_RANKING,
 } from '../queries/question';
 
 const { MSG_ENUM } = LOCALE;
@@ -62,7 +63,7 @@ describe('ChatGroup GraphQL', () => {
     tutor: expect.toBeOneOf([null, expectedIdFormat]),
     marshals: expect.any(Array),
     members: expect.any(Array),
-    deadline: expect.any(Number),
+    deadline: expectedDateFormat(true),
 
     classroom: expect.toBeOneOf([null, expectedIdFormat]),
     level: expectedIdFormat,
@@ -109,7 +110,6 @@ describe('ChatGroup GraphQL', () => {
     const q = await Question.find({ tenant: tenantId!, deletedAt: { $exists: false } }).lean();
     const questions = q.sort(shuffle);
 
-    //! note: normalUsers are even odd or even indexed (1/2 of all users)
     const studentQuestion = questions.find(q => normalUsers!.some(u => u._id.equals(q.student)));
     const student = normalUsers!.find(u => studentQuestion?.student.equals(u._id));
     const bidderQuestion = questions.find(q => q.bidders.some(bidder => normalUsers!.some(u => u._id.equals(bidder))));
@@ -134,18 +134,26 @@ describe('ChatGroup GraphQL', () => {
       query: GET_QUESTION,
       variables: { id: bidderQuestion._id.toString() },
     });
-    apolloExpect(bidderOneRes, 'data', { question: expectedFormat });
+    apolloExpect(bidderOneRes, 'data', {
+      question: { ...expectedFormat, bidders: expect.arrayContaining([bidder._id.toString()]) },
+    });
     const bidderManyRes = await bidderServer.executeOperation({ query: GET_QUESTIONS });
-    apolloExpect(bidderManyRes, 'data', { questions: expect.arrayContaining([expectedFormat]) });
+    apolloExpect(bidderManyRes, 'data', {
+      questions: expect.arrayContaining([
+        { ...expectedFormat, bidders: expect.arrayContaining([bidder._id.toString()]) },
+      ]),
+    });
 
     const tutorServer = testServer(tutor);
     const tutorOneRes = await tutorServer.executeOperation({
       query: GET_QUESTION,
       variables: { id: tutorQuestion._id.toString() },
     });
-    apolloExpect(tutorOneRes, 'data', { question: expectedFormat });
+    apolloExpect(tutorOneRes, 'data', { question: { ...expectedFormat, tutor: tutor._id.toString() } });
     const tutorManyRes = await tutorServer.executeOperation({ query: GET_QUESTIONS });
-    apolloExpect(tutorManyRes, 'data', { questions: expect.arrayContaining([expectedFormat]) });
+    apolloExpect(tutorManyRes, 'data', {
+      questions: expect.arrayContaining([{ ...expectedFormat, tutor: tutor._id.toString() }]),
+    });
   });
 
   test('should fail when GET all (as guest)', async () => {
@@ -252,7 +260,7 @@ describe('ChatGroup GraphQL', () => {
   });
 
   test('should pass the full suite', async () => {
-    // expect.assertions(21);
+    expect.assertions(20);
 
     const flag = QUESTION.MEMBER.FLAG.IMPORTANT;
 
@@ -262,7 +270,7 @@ describe('ChatGroup GraphQL', () => {
       .sort(shuffle)
       .find(({ students }) => students.find(student => normalUsers!.some(u => u._id.equals(student))));
     const student = normalUsers!.find(user => classroom?.students.some(s => s.equals(user._id)));
-    if (!classroom || !student) throw `no valid classroom (${classroom?._id}) or student for testing`;
+    if (!classroom || !student) throw `no valid classroom (${classroom?._id}) or student ${studentId} for testing`;
 
     const studentId = student._id.toString();
     const studentServer = testServer(student);
@@ -434,7 +442,7 @@ describe('ChatGroup GraphQL', () => {
     });
     apolloExpect(bidder1AddBidContentRes2, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
 
-    // bidder1 is only able to add TWO contents
+    // bidder1 is only able to see TWO contents
     const bidder1GetOneRes = await bidder1Server.executeOperation({ query: GET_QUESTION, variables: { id: newId } });
     apolloExpect(bidder1GetOneRes, 'data', {
       question: {
@@ -502,6 +510,20 @@ describe('ChatGroup GraphQL', () => {
         ...expectedFormat,
         members: [expectedMember(studentId, [], true), expectedMember(newBidderId, [], true)],
       },
+    });
+
+    // student update ranking
+    const ranking = {
+      correctness: prob(0.5) ? 1000 : 2000,
+      explicitness: prob(0.5) ? 3000 : 3500,
+      punctuality: prob(0.5) ? 4000 : 4500,
+    };
+    const studentRankQuestionRes = await studentServer.executeOperation({
+      query: UPDATE_QUESTION_RANKING,
+      variables: { id: newId, ...ranking },
+    });
+    apolloExpect(studentRankQuestionRes, 'data', {
+      updateQuestionRanking: { ...expectedFormat, ...ranking },
     });
 
     // student close question

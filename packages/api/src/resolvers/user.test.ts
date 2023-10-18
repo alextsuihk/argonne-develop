@@ -129,11 +129,8 @@ describe('Auth-Extra GraphQL (token)', () => {
     const nonSchoolTenant = await Tenant.findOne({ school: { $exists: false } }).lean();
     if (!nonSchoolTenant) throw 'Non-school tenant is required to proceed';
 
-    const admin = genUser(nonSchoolTenant._id);
-    await Promise.all([
-      admin.save(),
-      Tenant.findByIdAndUpdate(nonSchoolTenant._id, { $addToSet: { admins: admin._id } }).lean(),
-    ]);
+    const { user: admin } = await createUser(nonSchoolTenant._id.toString());
+    await Tenant.updateOne({ _id: nonSchoolTenant._id }, { $addToSet: { admins: admin._id } });
 
     const expectedFormatEx = {
       ...expectedFormat,
@@ -180,11 +177,8 @@ describe('Auth-Extra GraphQL (token)', () => {
     const user = nonSchoolTenant ? await User.findOne({ tenants: nonSchoolTenant._id }).lean() : null;
     if (!nonSchoolTenant || !user) throw 'Non-school tenant & user are required to proceed';
 
-    const admin = genUser(nonSchoolTenant._id);
-    await Promise.all([
-      admin.save(),
-      Tenant.updateOne({ _id: nonSchoolTenant._id }, { $addToSet: { admins: admin._id } }),
-    ]);
+    const { user: admin } = await createUser(nonSchoolTenant._id.toString());
+    await Tenant.updateOne({ _id: nonSchoolTenant._id }, { $addToSet: { admins: admin._id } });
 
     const server = testServer(admin); // non school tenantAdmin
 

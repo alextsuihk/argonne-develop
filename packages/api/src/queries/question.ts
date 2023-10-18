@@ -207,3 +207,12 @@ export const UPDATE_QUESTION_LAST_VIEWED_AT = gql`
     }
   }
 `;
+
+export const UPDATE_QUESTION_RANKING = gql`
+  ${QUESTION_FIELDS}
+  mutation UpdateQuestionRanking($id: ID!, $correctness: Int!, $explicitness: Int!, $punctuality: Int!) {
+    updateQuestionRanking(id: $id, correctness: $correctness, explicitness: $explicitness, punctuality: $punctuality) {
+      ...QuestionFields
+    }
+  }
+`;

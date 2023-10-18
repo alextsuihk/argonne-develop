@@ -32,12 +32,14 @@ type Action =
   | 'addMessenger'
   | 'addPaymentMethod'
   | 'addPushSubscription'
+  | 'addStash'
   | 'oAuth2Link'
   | 'oAuth2Unlink'
   | 'removeApiKey'
   | 'removeEmail'
   | 'removeMessenger'
   | 'removePaymentMethod'
+  | 'removeStash'
   | 'removePushSubscriptions' // remove ALL push subscription
   | 'updateAvatar'
   | 'updateLocale'
@@ -63,8 +65,9 @@ const {
   userAvatarSchema,
   userLocaleSchema,
   userPaymentMethodsSchema,
-  userPushSubscriptionSchema,
   userProfileSchema,
+  userPushSubscriptionSchema,
+  userStashSchema,
 } = yupSchema;
 
 const { config } = configLoader;
@@ -270,6 +273,10 @@ export const update = async (
       throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // duplicated entry
     return common({ $push: { pushSubscriptions: inputFields } }, inputFields);
     //
+  } else if (action === 'addStash') {
+    const inputFields = await userStashSchema.validate(args);
+    return common({ $push: { stashes: { _id: mongoId(), ...inputFields } } }, inputFields);
+    //
   } else if (action === 'oAuth2Link') {
     const { provider, code } = await oAuth2Schema.validate(args);
     if (!Object.keys(USER.OAUTH2.PROVIDER).includes(provider))
@@ -332,6 +339,12 @@ export const update = async (
     //
   } else if (action === 'removePushSubscriptions') {
     return common({ pushSubscriptions: [] }, { original: original.pushSubscriptions });
+    //
+  } else if (action === 'removeStash') {
+    const { id } = await idSchema.validate(args);
+    const originalStash = original.stashes.find(s => s._id.equals(id));
+    if (!originalStash) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+    return common({ $pull: { stashes: { _id: id } } }, { original: originalStash });
     //
   } else if (action === 'updateAvailability') {
     const { availability } = await userAvailabilitySchema.validate(args);

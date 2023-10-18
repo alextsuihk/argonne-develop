@@ -30,6 +30,7 @@ import {
   ADD_EMAIL,
   ADD_MESSENGER,
   ADD_PAYMENT_METHOD,
+  ADD_STASH,
   IS_EMAIL_AVAILABLE,
   LIST_API_KEYS,
   // OAUTH2_LINK,
@@ -39,6 +40,7 @@ import {
   REMOVE_MESSENGER,
   REMOVE_PAYMENT_METHOD,
   // REMOVE_PUSH_SUBSCRIPTIONS,
+  REMOVE_STASH,
   SEND_EMAIL_VERIFICATION,
   SEND_MESSENGER_VERIFICATION,
   UPDATE_AVAILABILITY,
@@ -169,7 +171,7 @@ describe('Auth-Extra GraphQL (token)', () => {
   });
 
   test('should pass when add, sendVerification, verify & remove messenger', async () => {
-    expect.assertions(6);
+    expect.assertions(7);
 
     const provider = randomItem(Object.keys(MESSENGER.PROVIDER));
     const account = `Abc_${randomString()}`; // mixed cased
@@ -187,9 +189,8 @@ describe('Auth-Extra GraphQL (token)', () => {
 
     // confirm token is generated in VerificationToken collection
     const originalToken = await VerificationToken.findOne({ user: normalUser!._id, messenger: lowercase }).lean();
-    expect(
-      originalToken && normalUser!._id.equals(originalToken.user) && originalToken.messenger === lowercase,
-    ).toBeTrue();
+    expect(originalToken!.user.toString()).toEqual(normalUser!._id.toString());
+    expect(originalToken!.messenger).toBe(lowercase);
 
     // simulating resending verification token
     const sendVerificationRes = await normalServer!.executeOperation({
@@ -266,14 +267,37 @@ describe('Auth-Extra GraphQL (token)', () => {
     expect.assertions(2);
 
     // add avatarUrl
-    const avatarUrl = await jestPutObject(normalUser!._id);
-    const addRes = await normalServer!.executeOperation({ query: UPDATE_AVATAR, variables: { avatarUrl } });
-    apolloExpect(addRes, 'data', { updateAvatar: expect.objectContaining({ ...expectedUserFormat, avatarUrl }) });
+    url = await jestPutObject(normalUser!._id);
+    const addRes = await normalServer!.executeOperation({ query: UPDATE_AVATAR, variables: { avatarUrl: url } });
+    apolloExpect(addRes, 'data', { updateAvatar: expect.objectContaining({ ...expectedUserFormat, avatarUrl: url }) });
 
     // remove avatarUrl
     const removeRes = await normalServer!.executeOperation({ query: UPDATE_AVATAR }); // pass in NO avatarUrl (to remove)
     apolloExpect(removeRes, 'data', {
       updateAvatar: expect.objectContaining({ ...expectedUserFormat, avatarUrl: null }),
+    });
+  });
+
+  test('should pass when add & remove stash', async () => {
+    expect.assertions(2);
+
+    const add = {
+      title: FAKE,
+      secret: FAKE2,
+      url: await jestPutObject(normalUser!._id),
+    };
+    const addRes = await normalServer!.executeOperation({ query: ADD_STASH, variables: add });
+    apolloExpect(addRes, 'data', {
+      addStash: expect.objectContaining({
+        ...expectedUserFormat,
+        stashes: [...normalUser!.stashes, { _id: expectedIdFormat, ...add }],
+      }),
+    });
+
+    const id = addRes.data!.addStash.stashes.at(-1)._id;
+    const removeRes = await normalServer!.executeOperation({ query: REMOVE_STASH, variables: { id } });
+    apolloExpect(removeRes, 'data', {
+      removeStash: expect.objectContaining({ ...expectedUserFormat, stashes: normalUser!.stashes }),
     });
   });
 

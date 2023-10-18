@@ -88,15 +88,12 @@ describe('User API Routes', () => {
       { testGetById: true, testInvalidId: true, testNonExistingId: true },
     ));
 
-  test('should pass when getMany & getById (by non-school tenantAdmin', async () => {
+  test('should pass when getMany & getById (by non-school tenantAdmin)', async () => {
     const nonSchoolTenant = await Tenant.findOne({ school: { $exists: false } }).lean();
     if (!nonSchoolTenant) throw 'Non-school tenant is required to proceed';
 
-    const admin = genUser(nonSchoolTenant._id.toString());
-    await Promise.all([
-      admin.save(),
-      Tenant.findByIdAndUpdate(nonSchoolTenant._id, { $addToSet: { admins: admin._id } }).lean(),
-    ]);
+    const { user: admin } = await createUser(nonSchoolTenant._id.toString());
+    await Tenant.updateOne({ _id: nonSchoolTenant._id }, { $addToSet: { admins: admin._id } });
 
     const expectedFormatEx = {
       ...expectedFormat,

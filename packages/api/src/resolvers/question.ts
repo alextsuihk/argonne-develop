@@ -21,6 +21,7 @@ const {
   remove,
   updateFlag,
   updateLastViewedAt,
+  updateRanking,
 } = questionController;
 
 export default {
@@ -41,5 +42,6 @@ export default {
     setQuestionFlag: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateFlag(req, args, 'setFlag')),
     updateQuestionLastViewedAt: async (_: unk, args: unk, { req }: Ctx) =>
       tryCatch(() => updateLastViewedAt(req, args)),
+    updateQuestionRanking: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateRanking(req, args)),
   },
 };
