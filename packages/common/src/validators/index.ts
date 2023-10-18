@@ -328,7 +328,7 @@ export type SchoolSchema = InferType<typeof schoolSchema>;
 export const sourceIdSchema = yup.object({ sourceId: id });
 export const subIdSchema = yup.object({ subId: id });
 export const subjectSchema = yup.object({ subject: yup.object({ name: locale, levels: ids }).noUnknown() });
-export const taggingSchema = yup.object({ id, tag: id });
+// export const taggingSchema = yup.object({ id, tag: id });
 export const tagSchema = yup.object({
   tag: yup.object({ name: locale, description: locale }).noUnknown(),
 });
@@ -405,6 +405,10 @@ export const userIdsSchema = yup.object({
   userIds: yup.array().of(id).required(),
 });
 export const userLocaleSchema = yup.object({ locale: yup.string().trim().required() });
+export const userMessengerSchema = yup.object({
+  provider: yup.string().trim().required(),
+  account: yup.string().trim().required(),
+});
 export const userPaymentMethodsSchema = yup.object({
   currency: yup.string().trim().required(),
   bank: yup.string().trim().optional(),
@@ -412,25 +416,17 @@ export const userPaymentMethodsSchema = yup.object({
   payable: yup.boolean().default(false),
   receivable: yup.boolean().default(false),
 });
-
-export const userMessengerSchema = yup.object({
-  provider: yup.string().trim().required(),
-  account: yup.string().trim().required(),
-});
-
 export const userProfileSchema = yup.object({
   name: yup.string().trim().required(),
   formalName: locale.default(null).nullable(),
   yob: yup.number().optional(),
   dob: yup.date().optional(),
 });
-
 export const userPushSubscriptionSchema = yup.object({
   endPoint: yup.string().trim().required(),
   p256dh: yup.string().trim().required(),
   auth: yup.string().trim().required(),
 });
-
 export const userSchema = yup.object({
   tenantId: id,
   email,
@@ -441,6 +437,11 @@ export const userSchoolSchema = yup.object({
   year: yup.string().trim().required(),
   level: yup.string().trim().required(),
   schoolClass: yup.string().trim().optional(),
+});
+export const userStashSchema = yup.object({
+  title: yup.string().trim().required(),
+  secret: yup.string().trim().required(),
+  url: url.required(),
 });
 
 // auth & password related schemas

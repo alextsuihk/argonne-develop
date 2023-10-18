@@ -270,7 +270,7 @@ describe('ChatGroup GraphQL', () => {
       .sort(shuffle)
       .find(({ students }) => students.find(student => normalUsers!.some(u => u._id.equals(student))));
     const student = normalUsers!.find(user => classroom?.students.some(s => s.equals(user._id)));
-    if (!classroom || !student) throw `no valid classroom (${classroom?._id}) or student ${studentId} for testing`;
+    if (!classroom || !student) throw `no valid classroom (${classroom?._id}) or student ${student?._id} for testing`;
 
     const studentId = student._id.toString();
     const studentServer = testServer(student);
