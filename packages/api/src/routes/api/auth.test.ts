@@ -34,13 +34,9 @@ export const expectedAuthResponse = {
 
 // Top level of this test suite:
 describe('Authentication API (token)', () => {
-  let normalUser: UserDocument | null;
-  let tenantAdmin: UserDocument | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
-  beforeAll(async () => {
-    ({ normalUser, tenantAdmin, tenantId } = await jestSetup(['normal', 'tenantAdmin']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when register, login, 2nd login, logout-other, ..., deregister', async () => {
@@ -98,7 +94,6 @@ describe('Authentication API (token)', () => {
 
     // logout other (kick out registered token & 3rd login)
     await request(app).post(`/api/auth/login`).send({ email, password }); // 3rd login
-    // await new Promise(resolve => setTimeout(resolve, 100));
     const logoutOtherRes = await request(app)
       .post(`/api/auth/logoutOthers`)
       .set({ Authorization: `Bearer ${accessToken2}` })
@@ -138,14 +133,14 @@ describe('Authentication API (token)', () => {
 
     // create a new user (with loginStudentIds)
     const studentId = randomString();
-    const user = genUser(tenantId!, { studentIds: [`${tenantId!}#${studentId}`] });
-    const { password } = user; // destructure password before saving. once saved, password is hashed
+    const user = genUser(jest.tenantId, { studentIds: [`${jest.tenantId}#${studentId}`] });
+    const { password } = user; // destructure (plain) password before saving. once saved, password is hashed
     await user.save();
 
     // loginWithStudentId
     const loginWithStudentIdRes = await request(app)
       .post(`/api/auth/loginWithStudentId`)
-      .send({ studentId, password, tenantId });
+      .send({ studentId, password, tenantId: jest.tenantId });
     expect(loginWithStudentIdRes.body).toEqual({ data: expectedAuthResponse });
     expect(loginWithStudentIdRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(loginWithStudentIdRes.status).toBe(200);
@@ -158,14 +153,14 @@ describe('Authentication API (token)', () => {
     expect.assertions(3 * 2);
 
     // create a new user
-    const user = genUser(tenantId!);
+    const user = genUser(jest.tenantId);
     await user.save();
 
     // tenantAdmin generates a loginToken
     const res = await request(app)
       .get(`/api/auth/loginToken`)
-      .set({ 'Jest-User': tenantAdmin!._id })
-      .send({ tenantId: tenantId!, userId: user._id });
+      .set({ 'Jest-User': jest.tenantAdmin._id })
+      .send({ tenantId: jest.tenantId, userId: user._id });
     expect(res.body).toEqual({ data: expect.any(String) });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(200);
@@ -221,7 +216,7 @@ describe('Authentication API (token)', () => {
 
     const res = await request(app)
       .post(`/api/auth/login`)
-      .send({ email: normalUser!.emails[0], password: User.genValidPassword() });
+      .send({ email: jest.normalUser.emails[0], password: User.genValidPassword() });
     expect(res.body).toEqual({ errors: [{ code: MSG_ENUM.AUTH_CREDENTIALS_ERROR }], statusCode: 401, type: 'plain' });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(401);
@@ -239,7 +234,7 @@ describe('Authentication API (token)', () => {
     expect(res.status).toBe(401);
   });
 
-  test('should fail when login with DELETED user (because of incorrect email format @@)', async () => {
+  test('should fail when login with DELETED user (because of deletedUser having incorrect email format @@)', async () => {
     expect.assertions(3);
 
     const deletedUser = await User.findOne({ status: 'DELETED' });
@@ -247,7 +242,6 @@ describe('Authentication API (token)', () => {
 
     const res = await request(app)
       .post(`/api/auth/login`)
-
       .send({ email: deletedUser.emails[0], password: User.genValidPassword() });
     expect(res.body).toEqual({
       errors: [{ code: MSG_ENUM.USER_INPUT_ERROR, param: 'email' }],
@@ -261,15 +255,15 @@ describe('Authentication API (token)', () => {
   test('should report conflict when exceeding MAX_LOGIN', async () => {
     expect.assertions(3);
 
-    // register a new user
-    const { emails, name, password } = genUser(null);
-    const [email] = emails;
-    const registerRes = await request(app).post(`/api/auth/register`).send({ name, email, password });
-    const { accessToken } = registerRes.body.data;
+    // create a new user
+    const user = genUser(null);
+    const [email] = user.emails;
+    const { password } = user; // destructure password before saving. Once saved, password is hashed
+    await user.save();
 
     // valid & successful logins
     await Promise.all(
-      Array(DEFAULTS.AUTH.MAX_LOGIN - 1)
+      Array(DEFAULTS.AUTH.MAX_LOGIN)
         .fill(0)
         .map(() => request(app).post(`/api/auth/login`).send({ email, password })),
     );
@@ -284,24 +278,22 @@ describe('Authentication API (token)', () => {
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(200);
 
-    // clean-up deregister (remove) test user
-    await request(app)
-      .post(`/api/auth/deregister`)
-      .set({ Authorization: `Bearer ${accessToken}` })
-      .send({ password });
+    // clean-up
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should report conflict when login with different IP', async () => {
     expect.assertions(3);
 
-    // register a new user
-    const { emails, name, password } = genUser(null);
-    const [email] = emails;
-    const registerRes = await request(app).post(`/api/auth/register`).send({ name, email, password });
-    const { accessToken, refreshToken } = registerRes.body.data;
+    // create a new user
+    const user = genUser(null);
+    const [email] = user.emails;
+    const { password } = user; // destructure password before saving. Once saved, password is hashed
+    await user.save();
 
-    // change token.ip with a random data in token collection
-    await Token.findOneAndUpdate({ token: refreshToken }, { ua: 'Jest-different-IP', ip: 'different-ip' });
+    // login() and then, change token.ip with a random data in token collection
+    await request(app).post(`/api/auth/login`).send({ email, password });
+    await Token.findOneAndUpdate({ user: user._id }, { ua: 'Jest-different-IP', ip: 'different-ip' });
 
     const res = await request(app).post(`/api/auth/login`).send({ email, password });
     expect(res.body).toEqual({
@@ -310,11 +302,8 @@ describe('Authentication API (token)', () => {
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(200);
 
-    // clean-up deregister (remove) test user
-    await request(app)
-      .post(`/api/auth/deregister`)
-      .set({ Authorization: `Bearer ${accessToken}` })
-      .send({ password });
+    // clean-up
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should fail when register a user with invalid password', async () => {
@@ -338,7 +327,7 @@ describe('Authentication API (token)', () => {
 
     const res = await request(app).post(`/api/auth/register`).send({
       name: 'whatever',
-      email: normalUser!.emails[0],
+      email: jest.normalUser.emails[0],
       password: User.genValidPassword(),
     });
     expect(res.body).toEqual({

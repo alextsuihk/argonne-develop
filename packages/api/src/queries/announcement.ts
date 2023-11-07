@@ -3,11 +3,9 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
 import { STATUS_RESPONSE } from './common';
 
-const ANNOUNCEMENT_FIELDS = gql`
+const ANNOUNCEMENT_FIELDS = `#graphql
   fragment AnnouncementFields on Announcement {
     _id
     flags
@@ -22,7 +20,7 @@ const ANNOUNCEMENT_FIELDS = gql`
   }
 `;
 
-export const ADD_ANNOUNCEMENT = gql`
+export const ADD_ANNOUNCEMENT = `#graphql
   ${ANNOUNCEMENT_FIELDS}
   mutation AddAnnouncement($announcement: AnnouncementInput!) {
     addAnnouncement(announcement: $announcement) {
@@ -31,7 +29,7 @@ export const ADD_ANNOUNCEMENT = gql`
   }
 `;
 
-export const GET_ANNOUNCEMENT = gql`
+export const GET_ANNOUNCEMENT = `#graphql
   ${ANNOUNCEMENT_FIELDS}
   query GetAnnouncement($id: ID!) {
     announcement(id: $id) {
@@ -40,7 +38,7 @@ export const GET_ANNOUNCEMENT = gql`
   }
 `;
 
-export const GET_ANNOUNCEMENTS = gql`
+export const GET_ANNOUNCEMENTS = `#graphql
   ${ANNOUNCEMENT_FIELDS}
   query GetAnnouncements($query: QueryInput) {
     announcements(query: $query) {
@@ -49,7 +47,7 @@ export const GET_ANNOUNCEMENTS = gql`
   }
 `;
 
-export const REMOVE_ANNOUNCEMENT = gql`
+export const REMOVE_ANNOUNCEMENT = `#graphql
   ${STATUS_RESPONSE}
   mutation RemoveAnnouncement($id: ID!) {
     removeAnnouncement(id: $id) {

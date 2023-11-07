@@ -1,12 +1,14 @@
 /**
  * JEST Test: /api/books routes
  *
+ *
  */
 
 import { CONTENT_PREFIX } from '@argonne/common';
 
 import type { BookDocumentEx } from '../../controllers/book';
 import {
+  expectedBookAssignmentFormat,
   expectedContributionFormat,
   expectedDateFormat,
   expectedIdFormat,
@@ -19,6 +21,7 @@ import {
   jestTeardown,
   prob,
   randomItem,
+  randomItems,
 } from '../../jest';
 import Book, { BookAssignment } from '../../models/book';
 import Level from '../../models/level';
@@ -33,9 +36,7 @@ const route = 'books';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: UserDocument | null;
-  let normalUsers: UserDocument[] | null;
-  let url: string | undefined;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single book format
   const expectedMinFormat = {
@@ -58,19 +59,6 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     contentsToken: expect.any(String),
   };
 
-  const expectedAssignmentMinFormat = {
-    _id: expectedIdFormat,
-    flags: expect.any(Array),
-    contribution: expectedContributionFormat,
-    chapter: expect.any(String),
-    content: expectedIdFormat,
-    dynParams: expect.any(Array),
-    solutions: expect.any(Array),
-    examples: expect.any(Array),
-    createdAt: expectedDateFormat(),
-    updatedAt: expectedDateFormat(),
-  };
-
   const expectedRevMinFormat = {
     _id: expectedIdFormat,
     rev: expect.any(String),
@@ -81,19 +69,17 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   const expectedSupplementMinFormat = {
     _id: expectedIdFormat,
-    contribution: expectedContributionFormat,
+    contribution: expect.objectContaining({ ...expectedContributionFormat(), book: expectedIdFormat }),
     chapter: expect.any(String),
   };
 
-  beforeAll(async () => {
-    ({ adminUser, normalUsers } = await jestSetup(['admin', 'normal']));
-  });
-  afterAll(async () => Promise.all([url && jestRemoveObject(url), jestTeardown()]));
+  beforeAll(async () => (jest = await jestSetup()));
+  afterAll(jestTeardown);
 
   test('should pass when getMany & getById (as non-Admin, non-teacher & non publishAdmin)', async () => {
     const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
 
-    const nonTeacher = normalUsers!.find(
+    const nonTeacher = jest.normalUsers.find(
       ({ schoolHistories }) => schoolHistories[0] && !schoolHistories[0]?.level.equals(teacherLevel!._id),
     );
     if (!nonTeacher) throw 'no valid non-teacher for testing';
@@ -104,13 +90,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       {
         ...expectedMinFormat,
         remarks: [],
-        assignments: expect.arrayContaining([expect.objectContaining(expectedAssignmentMinFormat)]),
+        assignments: expect.arrayContaining([expect.objectContaining(expectedBookAssignmentFormat())]),
       },
-      {
-        testGetById: true,
-        testInvalidId: true,
-        testNonExistingId: true,
-      },
+      { testGetById: true, testInvalidId: true, testNonExistingId: true },
     );
   });
 
@@ -121,7 +103,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       Level.findOne({ code: 'TEACHER' }).lean(),
     ]);
 
-    const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
+    const teacher = jest.normalUsers.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
     if (!teacher) throw 'no valid teacher for testing';
 
     const bookId = randomItem(books)._id.toString();
@@ -134,7 +116,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         remarks: [],
         assignments: expect.arrayContaining([
           expect.objectContaining({
-            ...expectedAssignmentMinFormat,
+            ...expectedBookAssignmentFormat(),
             solutions: expect.arrayContaining([expect.any(String)]),
           }),
         ]),
@@ -143,7 +125,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
   });
 
-  test('should pass when ADD,  ADD_REMARK, UPDATE, ADD_REVISION, REMOVE_REVISION & DELETE (as admin)', async () => {
+  test('should pass when ADD, ADD_REMARK, UPDATE, ADD_REVISION, REMOVE_REVISION & DELETE (as admin)', async () => {
     expect.assertions(3 * (12 + 1));
 
     const [allPublishers, allSchools, allSubjects] = await Promise.all([
@@ -170,7 +152,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     // create, addRemark, (teacher) join bookChat, addRevision, addAssignment, addSupplement
     const book = await createUpdateDelete<BookDocumentEx>(
       route,
-      { 'Jest-User': adminUser!._id },
+      { 'Jest-User': jest.adminUser._id },
       [
         {
           action: 'create',
@@ -180,7 +162,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         {
           action: 'addRemark',
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
+          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(jest.adminUser._id, FAKE) },
         },
         {
           action: 'update',
@@ -206,13 +188,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
               contribution: {
                 title: FAKE,
                 ...(prob(0.5) && { description: FAKE2 }),
-                contributors: Array(2)
-                  .fill(0)
-                  .map((_, idx) => ({
-                    user: normalUsers![idx]._id.toString(),
-                    name: normalUsers![idx].name,
-                    school: allSchools[idx]._id.toString(),
-                  })),
+                contributors: randomItems(jest.normalUsers, 2).map(user => ({
+                  user: user._id.toString(),
+                  name: FAKE,
+                  school: randomItem(allSchools)._id.toString(),
+                })),
                 urls: ['https://github.com/path-one', 'https://gitlab.inspire.hk/path-two'],
               },
               examples: ['A-ex', 'B-ex'],
@@ -222,7 +202,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
             ...expectedMinFormat,
             assignments: [
               expect.objectContaining({
-                ...expectedAssignmentMinFormat,
+                ...expectedBookAssignmentFormat(),
                 chapter: FAKE,
                 dynParams: ['A', 'B', 'C'],
                 solutions: ['AA', 'BB', 'CC'],
@@ -238,13 +218,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
               contribution: {
                 title: FAKE,
                 ...(prob(0.5) && { description: FAKE }),
-                contributors: [
-                  {
-                    user: randomItem(normalUsers!)._id.toString(),
-                    name: FAKE,
-                    school: randomItem(allSchools)._id.toString(),
-                  },
-                ],
+                contributors: randomItems(jest.normalUsers, 2).map(user => ({
+                  user: user._id.toString(),
+                  name: FAKE,
+                  school: randomItem(allSchools)._id.toString(),
+                })),
                 urls: ['http://github/some-path', 'http://github/some-path-two'],
               },
             },
@@ -262,12 +240,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const revisionId = created!.revisions[0]._id.toString();
     const assignmentId = created!.assignments[0].toString();
     const supplementId = created!.supplements[0]._id.toString();
-    url = await jestPutObject(adminUser!._id);
+    const url = await jestPutObject(jest.adminUser._id);
 
     // addRevisionImage, removeRevisionImage, removeRevision, removeAssignment, removeSupplement & delete
     await createUpdateDelete<BookDocumentEx>(
       route,
-      { 'Jest-User': adminUser!._id },
+      { 'Jest-User': jest.adminUser._id },
       [
         {
           action: 'addRevisionImage',
@@ -296,7 +274,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { subId: revisionId, ...(prob(0.5) && { remark: FAKE2 }) },
           expectedMinFormat: {
             ...expectedMinFormat,
-            revisions: [expect.objectContaining({ ...expectedRevMinFormat, deletedAt: expectedDateFormat() })], // isbn is removed
+            revisions: [
+              expect.objectContaining({ ...expectedRevMinFormat, _id: revisionId, deletedAt: expectedDateFormat() }),
+            ], // isbn is removed
           },
         },
         {
@@ -304,7 +284,13 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { subId: assignmentId, ...(prob(0.5) && { remark: FAKE }) },
           expectedMinFormat: {
             ...expectedMinFormat,
-            assignments: [expect.objectContaining({ ...expectedAssignmentMinFormat, deletedAt: expectedDateFormat() })],
+            assignments: [
+              expect.objectContaining({
+                ...expectedBookAssignmentFormat(),
+                _id: assignmentId,
+                deletedAt: expectedDateFormat(),
+              }),
+            ],
           },
         },
         {
@@ -312,12 +298,21 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { subId: supplementId, ...(prob(0.5) && { remark: FAKE2 }) },
           expectedMinFormat: {
             ...expectedMinFormat,
-            supplements: [expect.objectContaining({ ...expectedSupplementMinFormat, deletedAt: expectedDateFormat() })],
+            supplements: [
+              expect.objectContaining({
+                ...expectedSupplementMinFormat,
+                _id: supplementId,
+                deletedAt: expectedDateFormat(),
+              }),
+            ],
           },
         },
         { action: 'delete', data: {} },
       ],
       { skipAssertion: true, overrideId: book!._id.toString() },
     );
+
+    // clean up
+    await jestRemoveObject(url);
   });
 });

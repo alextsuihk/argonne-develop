@@ -9,7 +9,8 @@ import { LOCALE } from '@argonne/common';
 import configLoader from '../config/config-loader';
 import {
   apolloExpect,
-  ApolloServer,
+  apolloContext,
+  apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
   expectedUserFormatApollo as expectedUserFormat,
@@ -17,8 +18,8 @@ import {
   jestSetup,
   jestTeardown,
   randomString,
-  testServer,
 } from '../jest';
+import type { TokenDocument } from '../models/token';
 import Token from '../models/token';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';
@@ -34,6 +35,9 @@ import {
   REGISTER,
   RENEW_TOKEN,
 } from '../queries/auth';
+import authController from '../controllers/auth';
+
+type AuthSuccessfulResponse = Awaited<ReturnType<typeof authController.register>>;
 
 const { MSG_ENUM } = LOCALE;
 const { USER } = LOCALE.DB_ENUM;
@@ -56,16 +60,9 @@ const expectedAuthResponse = {
 console.log('auth.test IMPERSONATE_START, IMPERSONATE_STOP, OAUTH2, OAUTH2_CONNECT, OAUTH2_DISCONNECT,');
 
 describe('Authentication GraphQL (token)', () => {
-  let guestServer: ApolloServer | null;
-  let tenantAdminServer: ApolloServer | null;
-  let normalUser: UserDocument | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
-  beforeAll(async () => {
-    ({ guestServer, normalUser, tenantAdminServer, tenantId } = await jestSetup(['guest', 'normal', 'tenantAdmin'], {
-      apollo: true,
-    }));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when register, login, 2nd login, logout-other, ..., deregister', async () => {
@@ -74,19 +71,29 @@ describe('Authentication GraphQL (token)', () => {
     const [email] = emails;
 
     // register (1st login)
-    const registerRes = await guestServer!.executeOperation({ query: REGISTER, variables: { email, name, password } });
+    const registerRes = await apolloTestServer.executeOperation<{ register: AuthSuccessfulResponse }>(
+      { query: REGISTER, variables: { email, name, password } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(registerRes, 'data', { register: expectedAuthResponse });
-    const { refreshToken: refreshTokenReg } = registerRes.data!.register;
+    // const { refreshToken: refreshTokenReg } = registerRes.data!.register;
+    const refreshTokenReg =
+      registerRes.body.kind === 'single' ? registerRes.body.singleResult.data!.register.refreshToken : null;
 
     // login (2nd login)
-    const loginRes = await guestServer!.executeOperation({ query: LOGIN, variables: { email, password } });
+    const loginRes = await apolloTestServer.executeOperation<{ login: AuthSuccessfulResponse }>(
+      { query: LOGIN, variables: { email, password } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(loginRes, 'data', { login: { ...expectedAuthResponse, conflict: null } });
-    const { refreshToken } = loginRes.data!.login;
+    const refreshToken = loginRes.body.kind === 'single' ? loginRes.body.singleResult.data!.login.refreshToken : null;
 
     // fail to renew without refreshToken
-    const user = await User.findOne({ _id: registerRes.data!.register.user }).lean();
-    const userServer = testServer(user);
-    const failRenewRes = await userServer.executeOperation({ query: RENEW_TOKEN });
+    const user = await User.findOne({ emails: email }).lean();
+    const failRenewRes = await apolloTestServer.executeOperation(
+      { query: RENEW_TOKEN },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(
       failRenewRes,
       'errorContaining',
@@ -94,13 +101,21 @@ describe('Authentication GraphQL (token)', () => {
     );
 
     // renew 2nd login token
-    const renewRes = await userServer.executeOperation({ query: RENEW_TOKEN, variables: { refreshToken } });
+    const renewRes = await apolloTestServer.executeOperation<{ renewToken: AuthSuccessfulResponse }>(
+      { query: RENEW_TOKEN, variables: { refreshToken } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(renewRes, 'data', { renewToken: expectedAuthResponse });
-    const { refreshToken: refreshToken2 } = renewRes.data!.renewToken;
+    const refreshToken2 =
+      renewRes.body.kind === 'single' ? renewRes.body.singleResult.data!.renewToken.refreshToken : null;
 
     // list tokens
-    const listTokensRes = await userServer.executeOperation({ query: LIST_TOKENS });
-    expect(listTokensRes.data!.listTokens.length).toBe(2); // register(1st) & login(2nd)
+    const listTokensRes = await apolloTestServer.executeOperation<{ listTokens: TokenDocument[] }>(
+      { query: LIST_TOKENS },
+      { contextValue: apolloContext(user) },
+    );
+    const listTokens = listTokensRes.body.kind === 'single' ? listTokensRes.body.singleResult.data!.listTokens : null;
+    expect(listTokens!.length).toBe(2); // register(1st) & login(2nd)
     apolloExpect(listTokensRes, 'data', {
       listTokens: expect.arrayContaining([
         expect.objectContaining({
@@ -113,26 +128,36 @@ describe('Authentication GraphQL (token)', () => {
     });
 
     // logout other (kick out registered token & 3rd login)
-    await guestServer!.executeOperation({ query: LOGIN, variables: { email, password } }); // 3rd login
-    const logoutOtherRes = await userServer.executeOperation({
-      query: LOGOUT_OTHER,
-      variables: { refreshToken: refreshToken2 },
-    });
+    await apolloTestServer.executeOperation(
+      { query: LOGIN, variables: { email, password } },
+      { contextValue: apolloContext(null) },
+    ); // 3rd login
+    const logoutOtherRes = await apolloTestServer.executeOperation(
+      { query: LOGOUT_OTHER, variables: { refreshToken: refreshToken2 } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(logoutOtherRes, 'data', { logoutOther: { code: MSG_ENUM.COMPLETED, count: 2 } });
 
     // should fail to renew (register) after being logged out by 2nd login
-    const res = await userServer.executeOperation({
-      query: RENEW_TOKEN,
-      variables: { refreshToken: refreshTokenReg },
-    });
-    apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_RENEW_TOKEN_ERROR}`);
+    const res = await apolloTestServer.executeOperation(
+      { query: RENEW_TOKEN, variables: { refreshToken: refreshTokenReg } },
+      { contextValue: apolloContext(user) },
+    );
+
+    apolloExpect(res, 'errorContaining', `MSG_CODE#${MSG_ENUM.AUTH_RENEW_TOKEN_ERROR}`); // `MSG_CODE#${MSG_ENUM.AUTH_RENEW_TOKEN_ERROR}#${detail-msg}`
 
     // logout 2nd login
-    const logoutRes = await userServer.executeOperation({ query: LOGOUT, variables: { refreshToken: refreshToken2 } });
+    const logoutRes = await apolloTestServer.executeOperation(
+      { query: LOGOUT, variables: { refreshToken: refreshToken2 } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(logoutRes, 'data', { logout: { code: MSG_ENUM.COMPLETED } });
 
     // delete registration (deregister)
-    const deregisterRes = await userServer.executeOperation({ query: DEREGISTER, variables: { password } });
+    const deregisterRes = await apolloTestServer.executeOperation(
+      { query: DEREGISTER, variables: { password } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(deregisterRes, 'data', { deregister: { code: MSG_ENUM.COMPLETED, days: expect.any(Number) } });
   });
 
@@ -141,15 +166,15 @@ describe('Authentication GraphQL (token)', () => {
 
     // create a new user (with loginStudentIds)
     const studentId = randomString();
-    const user = genUser(tenantId!, { studentIds: [`${tenantId!}#${studentId}`] });
+    const user = genUser(jest.tenantId, { studentIds: [`${jest.tenantId}#${studentId}`] });
     const { password } = user; // destructure password before saving. once saved, password is hashed
     await user.save();
 
     // LoginWithStudentId
-    const loginWithStudentIdRes = await guestServer!.executeOperation({
-      query: LOGIN_WITH_STUDENT_ID,
-      variables: { studentId, password, tenantId },
-    });
+    const loginWithStudentIdRes = await apolloTestServer.executeOperation(
+      { query: LOGIN_WITH_STUDENT_ID, variables: { studentId, password, tenantId: jest.tenantId } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(loginWithStudentIdRes, 'data', { loginWithStudentId: { ...expectedAuthResponse, conflict: null } });
 
     // clean-up deregister (remove) test user
@@ -160,20 +185,23 @@ describe('Authentication GraphQL (token)', () => {
     expect.assertions(2);
 
     // create a new user
-    const user = genUser(tenantId!);
+    const user = genUser(jest.tenantId);
     await user.save();
     const userId = user._id.toString();
 
     // tenantAdmin generates a loginToken
-    const tokenRes = await tenantAdminServer!.executeOperation({
-      query: LOGIN_TOKEN,
-      variables: { tenantId: tenantId!, userId },
-    });
+    const tokenRes = await apolloTestServer.executeOperation<{ loginToken: string }>(
+      { query: LOGIN_TOKEN, variables: { tenantId: jest.tenantId, userId } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(tokenRes, 'data', { loginToken: expect.any(String) });
-    const token = tokenRes.data!.loginToken;
+    const token = tokenRes.body.kind === 'single' ? tokenRes.body.singleResult.data!.loginToken : null;
 
-    // new user login with loginToken
-    const loginWithTokenRes = await guestServer!.executeOperation({ query: LOGIN_WITH_TOKEN, variables: { token } });
+    // login with loginToken (as guest)
+    const loginWithTokenRes = await apolloTestServer.executeOperation(
+      { query: LOGIN_WITH_TOKEN, variables: { token } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(loginWithTokenRes, 'data', { loginWithToken: { ...expectedAuthResponse, conflict: null } });
 
     // clean-up deregister (remove) test user
@@ -184,69 +212,84 @@ describe('Authentication GraphQL (token)', () => {
     expect.assertions(3);
 
     // invalid email
-    let res = await guestServer!.executeOperation({
-      query: LOGIN,
-      variables: { email: INVALID_EMAIL, password: User.genValidPassword() },
-    });
+    let res = await apolloTestServer.executeOperation(
+      { query: LOGIN, variables: { email: INVALID_EMAIL, password: User.genValidPassword() } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'errorContaining', 'email must be a valid email');
 
     // invalid password (too simple)
-    res = await guestServer!.executeOperation({
-      query: LOGIN,
-      variables: { email: VALID_EMAIL, password: INVALID_PASSWORD },
-    });
+    res = await apolloTestServer.executeOperation(
+      { query: LOGIN, variables: { email: VALID_EMAIL, password: INVALID_PASSWORD } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'errorContaining', INVALID_PASSWORD_MSG);
 
     // without password
-    res = await guestServer!.executeOperation({ query: LOGIN, variables: { email: INVALID_EMAIL } });
+    res = await apolloTestServer.executeOperation({ query: LOGIN, variables: { email: INVALID_EMAIL } });
     apolloExpect(res, 'errorContaining', 'Variable "$password" of required type "String!" was not provided.');
   });
 
   test('should fail when login with wrong password', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({
-      query: LOGIN,
-      variables: { email: normalUser!.emails[0], password: User.genValidPassword() },
-    });
+    const res = await apolloTestServer.executeOperation(
+      { query: LOGIN, variables: { email: jest.normalUser.emails[0], password: User.genValidPassword() } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_CREDENTIALS_ERROR}`);
   });
 
   test('should fail when login with non-existent user', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({
-      query: LOGIN,
-      variables: { email: `non-exist-${Date.now()}@test.com`, password: User.genValidPassword() },
-    });
+    const res = await apolloTestServer.executeOperation(
+      { query: LOGIN, variables: { email: `non-exist-${Date.now()}@test.com`, password: User.genValidPassword() } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_CREDENTIALS_ERROR}`);
   });
 
-  test('should fail when login with DELETED user (because of incorrect email format @@)', async () => {
+  test('should fail when login with DELETED user (deletedUser incorrect email format @@)', async () => {
     expect.assertions(1);
 
     const deletedUser = await User.findOne({ status: USER.STATUS.DELETED });
     if (!deletedUser) throw 'There is NO deleted user in database !!! \n\n';
 
-    const res = await guestServer!.executeOperation({
-      query: LOGIN,
-      variables: { email: deletedUser.emails[0], password: User.genValidPassword() },
-    });
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: LOGIN,
+        variables: { email: deletedUser.emails[0], password: User.genValidPassword() },
+      },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'errorContaining', 'email must be a valid email'); // deletedUser has an invalid email
   });
 
   test('should report conflict when exceeding MAX_LOGIN', async () => {
     expect.assertions(1);
 
-    // register a new user
-    const { emails, name, password } = genUser(null);
-    const [email] = emails;
-    const registerRes = await guestServer!.executeOperation({ query: REGISTER, variables: { name, email, password } });
+    // create a new user
+    const user = genUser(null);
+    const [email] = user.emails;
+    const { password } = user; // destructure password before saving. Once saved, password is hashed
+    await user.save();
 
-    for (let i = 0; i < DEFAULTS.AUTH.MAX_LOGIN - 1; i++) {
-      await guestServer!.executeOperation({ query: LOGIN, variables: { email, password } });
-    }
+    // login many times
+    await Promise.all(
+      Array(DEFAULTS.AUTH.MAX_LOGIN)
+        .fill(0)
+        .map(() =>
+          apolloTestServer.executeOperation(
+            { query: LOGIN, variables: { email, password } },
+            { contextValue: apolloContext(null) },
+          ),
+        ),
+    );
 
-    const loginRes = await guestServer!.executeOperation({ query: LOGIN, variables: { email, password } });
+    const loginRes = await apolloTestServer.executeOperation(
+      { query: LOGIN, variables: { email, password } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(loginRes, 'data', {
       login: {
         conflict: { ip: null, maxLogin: DEFAULTS.AUTH.MAX_LOGIN, exceedLogin: 1 },
@@ -258,22 +301,30 @@ describe('Authentication GraphQL (token)', () => {
       },
     });
 
-    // clean-up deregister (remove) test user
-    const user = await User.findOne({ _id: registerRes.data!.register.user }).lean();
-    await testServer(user).executeOperation({ query: DEREGISTER, variables: { password } });
+    // clean-up
+    await User.deleteOne({ _id: user._id });
   });
+
   test('should report conflict when login with different IP', async () => {
     expect.assertions(1);
 
-    // register a new user
-    const { emails, name, password } = genUser(null);
-    const [email] = emails;
-    const registerRes = await guestServer!.executeOperation({ query: REGISTER, variables: { name, email, password } });
-    const { refreshToken } = registerRes.data!.register;
+    // create a new user
+    const user = genUser(null);
+    const [email] = user.emails;
+    const { password } = user; // destructure password before saving. Once saved, password is hashed
+    await user.save();
 
-    await Token.updateOne({ token: refreshToken }, { ua: 'Jest-different-IP', ip: 'different-ip' });
+    // login() and then, change token.ip with a random data in token collection
+    await apolloTestServer.executeOperation(
+      { query: LOGIN, variables: { email, password } },
+      { contextValue: apolloContext(null) },
+    );
+    await Token.findOneAndUpdate({ user: user._id }, { ua: 'Jest-different-IP', ip: 'different-ip' });
 
-    const loginRes = await guestServer!.executeOperation({ query: LOGIN, variables: { email, password } });
+    const loginRes = await apolloTestServer.executeOperation(
+      { query: LOGIN, variables: { email, password } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(loginRes, 'data', {
       login: {
         conflict: { exceedLogin: null, ip: 'different-ip', maxLogin: null },
@@ -285,27 +336,29 @@ describe('Authentication GraphQL (token)', () => {
       },
     });
 
-    // clean-up deregister (remove) test user
-    const user = await User.findOne({ _id: registerRes.data!.register.user }).lean();
-    await testServer(user).executeOperation({ query: DEREGISTER, variables: { password } });
+    // clean-up
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should fail when register a user with invalid password', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({
-      query: REGISTER,
-      variables: { name: 'valid name', email: VALID_EMAIL, password: INVALID_PASSWORD },
-    });
-    apolloExpect(res, 'error', INVALID_PASSWORD_MSG);
+    const res = await apolloTestServer.executeOperation(
+      { query: REGISTER, variables: { name: 'valid name', email: VALID_EMAIL, password: INVALID_PASSWORD } },
+      { contextValue: apolloContext(null) },
+    );
+    apolloExpect(res, 'errorContaining', INVALID_PASSWORD_MSG);
   });
 
   test('should fail when register a user with (duplicated) registered email', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({
-      query: REGISTER,
-      variables: { name: 'whatever', email: normalUser!.emails[0], password: User.genValidPassword() },
-    });
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: REGISTER,
+        variables: { name: 'whatever', email: jest.normalUser.emails[0], password: User.genValidPassword() },
+      },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_EMAIL_ALREADY_REGISTERED}`);
   });
 
@@ -316,15 +369,24 @@ describe('Authentication GraphQL (token)', () => {
     const name = 'Valid Name';
 
     // without email
-    let res = await guestServer!.executeOperation({ query: REGISTER, variables: { password, name } });
+    let res = await apolloTestServer.executeOperation(
+      { query: REGISTER, variables: { password, name } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'errorContaining', 'Variable "$email" of required type "String!" was not provided.');
 
     // without password
-    res = await guestServer!.executeOperation({ query: REGISTER, variables: { email, name } });
+    res = await apolloTestServer.executeOperation(
+      { query: REGISTER, variables: { email, name } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'errorContaining', 'Variable "$password" of required type "String!" was not provided.');
 
     // without name
-    res = await guestServer!.executeOperation({ query: REGISTER, variables: { email, password } });
+    res = await apolloTestServer.executeOperation(
+      { query: REGISTER, variables: { email, password } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'errorContaining', 'Variable "$name" of required type "String!" was not provided.');
   });
 });

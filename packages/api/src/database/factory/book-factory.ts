@@ -72,7 +72,7 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
         const bookAssignmentId = mongoId();
 
         const contribution = fakeContribution(randomItems(users, 3));
-        contributions.push(contribution);
+        contributions.push({ ...contribution.toObject(), book: bookId });
 
         const [content, ...examples] = fakeContents(`/bookAssignments/${bookAssignmentId}`, [systemId], 5);
         contents.push(content!, ...examples);
@@ -115,7 +115,7 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
         .fill(0)
         .map(() => {
           const contribution = fakeContribution(randomItems(users, 3));
-          contributions.push(contribution);
+          contributions.push({ ...contribution.toObject(), book: bookId });
 
           return {
             _id: mongoId(),

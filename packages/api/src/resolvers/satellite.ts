@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import satelliteController from '../controllers/satellite';
 import { tryCatch } from './root';
 
@@ -13,10 +13,10 @@ const { createToken, setup } = satelliteController;
 
 export default {
   Query: {
-    satelliteToken: (_: unk, args: unk, { req }: Ctx) => tryCatch(() => createToken(req, args)),
+    satelliteToken: (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => createToken(req, args)),
   },
 
   Mutation: {
-    setupSatellite: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => setup(req, args)),
+    setupSatellite: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => setup(req, args)),
   },
 };

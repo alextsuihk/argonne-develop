@@ -3,11 +3,9 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
 import { REMARK, STATUS_RESPONSE } from './common';
 
-export const CONTRIBUTION_FIELDS = gql`
+export const CONTRIBUTION_FIELDS = `#graphql
   ${REMARK}
   fragment ContributionFields on Contribution {
     _id

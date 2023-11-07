@@ -2,9 +2,7 @@
  * apollo typeDef: Subject
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     subject(id: ID!): Subject @cacheControl(maxAge: 3600)
     subjects(query: QueryInput): [Subject!]! @cacheControl(maxAge: 3600)

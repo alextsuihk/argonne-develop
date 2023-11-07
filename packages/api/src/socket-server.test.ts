@@ -6,13 +6,13 @@ import { io } from 'socket.io-client';
 
 import app from './app';
 import configLoader from './config/config-loader';
-import { apolloExpect, ApolloServer, FAKE, FAKE_LOCALE, jestSetup, jestTeardown } from './jest';
+import { apolloExpect, apolloContext, apolloTestServer, FAKE, FAKE_LOCALE, jestSetup, jestTeardown } from './jest';
 import type { TenantDocument } from './models/tenant';
 import Tenant from './models/tenant';
 import type { UserDocument } from './models/user';
 import { LIST_SOCKETS } from './queries/auth';
 import socketServer from './socket-server';
-import { mongoId } from './utils/helper';
+import { mongoId, sleep } from './utils/helper';
 import token from './utils/token';
 
 const { MSG_ENUM } = LOCALE;
@@ -26,21 +26,15 @@ const generateAccessToken = async (user: UserDocument) => {
 // const refreshToken = async (userId: string) => token.signStrings([REFRESH_TOKEN_PREFIX, userId, randomString()], 5);
 
 describe('Basic Test on Socket client connectivity', () => {
-  let normalUser: UserDocument | null;
-  let userId: string;
-  let normalServer: ApolloServer | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
   let serverUrl: string;
 
   // setup WS & HTTP servers, and socket-client connection
   beforeAll(async () => {
     const httpServer = createServer(app).listen();
-    [{ normalUser, normalServer }] = await Promise.all([
-      jestSetup(['normal'], { apollo: true }),
-      socketServer.start(httpServer),
-    ]);
+    [jest] = await Promise.all([jestSetup(), socketServer.start(httpServer)]);
     const serverAddr = httpServer.address() as AddressInfo;
     serverUrl = `http://[${serverAddr.address}]:${serverAddr.port}`;
-    userId = normalUser!._id.toString();
   });
 
   afterAll(async () => Promise.all([jestTeardown(), socketServer.stop()]));
@@ -71,7 +65,7 @@ describe('Basic Test on Socket client connectivity', () => {
     expect.assertions(1);
     const socket = io(serverUrl);
 
-    const accessToken = await generateAccessToken(normalUser!);
+    const accessToken = await generateAccessToken(jest.normalUser!);
     let timer: NodeJS.Timeout;
     await Promise.race([
       new Promise(resolve => {
@@ -119,7 +113,7 @@ describe('Basic Test on Socket client connectivity', () => {
     expect.assertions(1);
     const socket = io(serverUrl);
 
-    const accessToken = await generateAccessToken({ ...normalUser!, _id: mongoId() });
+    const accessToken = await generateAccessToken({ ...jest.normalUser!, _id: mongoId() });
 
     let timer: NodeJS.Timeout;
     await Promise.race([
@@ -138,35 +132,42 @@ describe('Basic Test on Socket client connectivity', () => {
     socket.close();
   });
 
-  test('should list two socket clients if two clients has joined', async () => {
+  test.only('should list two socket clients if two clients has joined', async () => {
     expect.assertions(3 + 1);
 
     const socket1 = io(serverUrl);
-    const token1 = await generateAccessToken(normalUser!);
+    const token1 = await generateAccessToken(jest.normalUser!);
     socket1.emit('JOIN', { token: token1 });
 
     const socket2 = io(serverUrl);
-    const token2 = await generateAccessToken(normalUser!);
+    const token2 = await generateAccessToken(jest.normalUser!);
     socket2.emit('JOIN', { token: token2 });
 
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await sleep(200);
 
     // REST-ful API
     const res = await axios.get(`${serverUrl}/api/auth/listSockets`, {
-      headers: { 'Jest-User': userId },
+      headers: { 'Jest-User': jest.normalUser._id.toString() },
       timeout: DEFAULTS.AXIOS_TIMEOUT,
     });
     expect(res.data).toEqual({ data: [expect.any(String), expect.any(String)] });
     expect(res.status).toBe(200);
 
     // Apollo
-    const res2 = await normalServer!.executeOperation({ query: LIST_SOCKETS });
+    const res2 = await apolloTestServer.executeOperation<{ listSockets: string[] }>(
+      { query: LIST_SOCKETS },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res2, 'data', { listSockets: [expect.any(String), expect.any(String)] });
 
-    const intersectedSocketIds = res2.data!.listSockets.filter(x => res.data.data.includes(x));
+    // mak sure if 100% intersected
+    const intersectedSocketIds =
+      res2.body.kind === 'single'
+        ? res2.body.singleResult.data!.listSockets.filter(x => res.data.data.includes(x))
+        : null;
 
     // both responses (from RESTful & apollo) should match
-    expect(intersectedSocketIds.length).toBe(2);
+    expect(intersectedSocketIds!.length).toBe(2);
 
     socket1.close();
     socket2.close();

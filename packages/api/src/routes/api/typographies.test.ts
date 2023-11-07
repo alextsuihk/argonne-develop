@@ -6,20 +6,24 @@
 import { LOCALE } from '@argonne/common';
 
 import {
+  FAKE,
+  FAKE2,
+  FAKE2_LOCALE,
+  FAKE_LOCALE,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
-  FAKE,
-  FAKE_LOCALE,
-  FAKE2,
-  FAKE2_LOCALE,
   jestSetup,
   jestTeardown,
+  type ConvertObjectIdToString,
 } from '../../jest';
 import type { TypographyDocument } from '../../models/typography';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
+
+type TypographyDocumentEx = Omit<TypographyDocument, 'customs'> & {
+  customs: ConvertObjectIdToString<TypographyDocument['customs'][0]>[];
+};
 
 const { MSG_ENUM } = LOCALE;
 
@@ -28,10 +32,7 @@ const route = 'typographies';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: UserDocument | null;
-  let normalUser: UserDocument | null;
-  let tenantAdmin: UserDocument | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single typography format
   const expectedMinFormat = {
@@ -48,30 +49,28 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     updatedAt: expectedDateFormat(),
   };
 
-  beforeAll(async () => {
-    ({ adminUser, normalUser, tenantAdmin, tenantId } = await jestSetup(['admin', 'normal', 'tenantAdmin']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when getMany & getById (as guest)', async () =>
     getMany(route, {}, expectedMinFormat, { testGetById: true, testInvalidId: true, testNonExistingId: true }));
 
   test('should pass when getMany & getById (as admin)', async () =>
-    getMany(route, { 'Jest-User': adminUser!._id }, expectedAdminFormat, {
+    getMany(route, { 'Jest-User': jest.adminUser._id }, expectedAdminFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
     }));
 
   test('should pass when getMany & getById (as normal user)', async () =>
-    getMany(route, { 'Jest-User': normalUser!._id }, expectedAdminFormat, {
+    getMany(route, { 'Jest-User': jest.normalUser._id }, expectedAdminFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
     }));
 
   test('should pass when CREATE, UPDATE,  addCustom, removeCustom, REMOVE & verify-REMOVE', async () =>
-    createUpdateDelete<TypographyDocument>(route, { 'Jest-User': adminUser!._id }, [
+    createUpdateDelete<TypographyDocumentEx>(route, { 'Jest-User': jest.adminUser._id }, [
       {
         action: 'create',
         data: { key: FAKE, title: FAKE_LOCALE, content: FAKE2_LOCALE },
@@ -80,7 +79,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       {
         action: 'addRemark',
         data: { remark: FAKE },
-        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
+        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(jest.adminUser._id, FAKE) },
       },
       {
         action: 'update',
@@ -89,7 +88,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       },
       {
         action: 'addCustom', // by tenantAdmin, without tenantId
-        headers: { 'Jest-User': tenantAdmin!._id },
+        headers: { 'Jest-User': jest.tenantAdmin._id },
         data: { custom: { title: FAKE_LOCALE, content: FAKE_LOCALE } },
         expectedResponse: {
           statusCode: 422,
@@ -98,23 +97,28 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       },
       {
         action: 'addCustom',
-        headers: { 'Jest-User': tenantAdmin!._id },
-        data: { tenantId, custom: { title: FAKE_LOCALE, content: FAKE_LOCALE } },
+        headers: { 'Jest-User': jest.tenantAdmin._id },
+        data: { tenantId: jest.tenantId, custom: { title: FAKE_LOCALE, content: FAKE_LOCALE } },
         expectedMinFormat: {
           ...expectedMinFormat,
-          customs: [{ tenant: tenantId!, title: FAKE_LOCALE, content: FAKE_LOCALE }],
+          customs: [{ tenant: jest.tenantId, title: FAKE_LOCALE, content: FAKE_LOCALE }],
         },
       },
       {
         action: 'addCustom',
-        headers: { 'Jest-User': tenantAdmin!._id },
-        data: { tenantId, custom: { title: FAKE2_LOCALE, content: FAKE2_LOCALE } },
+        headers: { 'Jest-User': jest.tenantAdmin._id },
+        data: { tenantId: jest.tenantId, custom: { title: FAKE2_LOCALE, content: FAKE2_LOCALE } },
         expectedMinFormat: {
           ...expectedMinFormat,
-          customs: [{ tenant: tenantId!, title: FAKE2_LOCALE, content: FAKE2_LOCALE }],
+          customs: [{ tenant: jest.tenantId, title: FAKE2_LOCALE, content: FAKE2_LOCALE }],
         },
       },
-      { action: 'removeCustom', headers: { 'Jest-User': tenantAdmin!._id }, data: { tenantId }, expectedMinFormat },
+      {
+        action: 'removeCustom',
+        headers: { 'Jest-User': jest.tenantAdmin._id },
+        data: { tenantId: jest.tenantId },
+        expectedMinFormat,
+      },
       { action: 'delete', data: {} },
     ]));
 });

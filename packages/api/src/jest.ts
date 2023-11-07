@@ -8,12 +8,14 @@ import 'jest-extended';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 
+import type { GraphQLResponse } from '@apollo/server';
+import { ApolloServer } from '@apollo/server';
+import { startStandaloneServer } from '@apollo/server/standalone';
 import { LOCALE } from '@argonne/common';
 import { addDays, addSeconds } from 'date-fns';
 import type { Types } from 'mongoose';
 import mongoose from 'mongoose';
 
-import { ApolloServer, testServer } from './apollo';
 import configLoader from './config/config-loader';
 import type { AssignmentDocument } from './models/assignment';
 import Assignment from './models/assignment';
@@ -36,10 +38,13 @@ import Tenant, { TenantDocument } from './models/tenant';
 import type { UserDocument } from './models/user';
 import User, { activeCond } from './models/user';
 import { redisClient } from './redis';
-import { mongoId, randomItem, randomString, schoolYear, shuffle, terminate } from './utils/helper';
+import resolvers from './resolvers';
+import typeDefs from './typeDefs';
+import { latestSchoolHistory, mongoId, randomItem, randomString, schoolYear, shuffle, terminate } from './utils/helper';
 import { client as minioClient, privateBucket, publicBucket } from './utils/storage';
+import type { Request, Response } from 'express';
+import type { Auth } from './utils/token';
 
-export { ApolloServer, testServer } from './apollo';
 export { mongoId, prob, randomItem, randomItems, randomString, shuffle } from './utils/helper';
 
 export type ConvertObjectIdToString<T extends object> = {
@@ -50,20 +55,6 @@ export type ConvertObjectIdToString<T extends object> = {
     : T[K] | null;
 };
 
-type JestSetup = {
-  adminServer: ApolloServer | null;
-  adminUser: UserDocument | null;
-  guestServer: ApolloServer | null;
-  normalServer: ApolloServer | null;
-  normalUser: UserDocument | null;
-  normalUsers: UserDocument[] | null;
-  rootServer: ApolloServer | null;
-  rootUser: UserDocument | null;
-  tenantAdmin: UserDocument | null;
-  tenantAdminServer: ApolloServer | null;
-  tenant: TenantDocument | null;
-  tenantId: string | null;
-};
 const { QUESTION, USER } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
 const { mongo } = config.server;
@@ -77,39 +68,87 @@ export const FAKE2 = `Jest Data2: ${domain}`;
 export const FAKE2_LOCALE = { enUS: `ENG2: ${domain}`, zhCN: `CHS2: ${domain}`, zhHK: `CHT2: ${domain}` };
 
 /**
- * expect() helper for apollo Jest
+ * Apollo Test Expected Result
  *
  * note: in case error, data could be either null or undefined
  */
-// export const apolloExpect = <T extends BaseDocument >(
+// export const apolloExpect = <T extends BaseDocument >( // _id is ObjectId type in model, but string in apollo result
 export const apolloExpect = (
-  res: unknown,
+  res: GraphQLResponse<Record<string, unknown>>,
   type: 'data' | 'error' | 'errorContaining',
   expected: Record<string, unknown> | string,
   // expected: Record<string, Partial<ConvertObjectIdToString<T>> | { code: string } | boolean> | string,
-) => {
-  if (type === 'data') return expect(res).toEqual({ http: expect.anything(), data: expected });
-
-  if (type === 'error' && typeof expected === 'string')
-    return expect(res).toEqual(
-      expect.objectContaining({
-        http: expect.anything(),
-        errors: [expect.objectContaining({ message: expected })],
+): number => {
+  if (type === 'data') {
+    expect(res.body).toEqual({ kind: 'single', singleResult: { data: expected } });
+  } else if (type === 'error' && typeof expected === 'string') {
+    expect(res.body).toEqual({
+      kind: 'single',
+      singleResult: expect.objectContaining({ errors: [expect.objectContaining({ message: expected })] }),
+    });
+  } else if (type === 'errorContaining' && typeof expected === 'string') {
+    expect(res.body).toEqual({
+      kind: 'single',
+      singleResult: expect.objectContaining({
+        errors: [expect.objectContaining({ message: expect.stringContaining(expected) })],
       }),
-    );
+    });
+  } else {
+    throw `We don't know how to process (${expected})`;
+  }
 
-  if (type === 'errorContaining' && typeof expected === 'string')
-    return expect(res).toEqual(
-      expect.objectContaining({
-        http: expect.anything(),
-        errors: [
-          expect.objectContaining({
-            message: expect.stringContaining(expected),
-          }),
-        ],
-      }),
-    );
+  const x = {
+    kind: 'single',
+    singleResult: {
+      errors: [
+        {
+          message: 'MSG_CODE#10200#email must be a valid email',
+          locations: [{ line: 8, column: 5 }],
+          path: ['isEmailAvailable'],
+          extensions: { code: '10200' },
+        },
+      ],
+      data: null,
+    },
+  };
+
+  return 1;
 };
+
+/**
+ * Generate Context for Apollo Test Server
+ */
+export const apolloContext = (user: UserDocument | null) => ({
+  req: {
+    ip: '127.0.0.1',
+    ua: 'Apollo-Jest-User-Agent',
+    userFlags: user?.flags,
+    userId: user?._id,
+    userLocale: user?.locale,
+    userName: user?.name,
+    userRoles: user?.roles,
+    userTenants: user?.tenants.map(t => t.toString()),
+    ...(user?.schoolHistories[0] && { userExtra: latestSchoolHistory(user.schoolHistories) }),
+  },
+  // setCookie() & clearCookie() are needed for authController's compatibility with Express cookie usage
+  res: {
+    cookie: (_name: string, _value: string, _opt: unknown) => {
+      console.log(`apollo.js: setCooke() ${_name} ${_value} ${_opt}`);
+    },
+    clearCookie: (_name: string) => {
+      console.log(`apollo.js: clearCookie()  ${_name}`);
+    },
+  },
+});
+
+/**
+ * Apollo Test Server
+ */
+export const apolloTestServer = new ApolloServer<ReturnType<typeof apolloContext>>({
+  typeDefs,
+  resolvers,
+  csrfPrevention: true,
+});
 
 // expected Address Format
 export const expectedAddressFormat = expect.objectContaining({
@@ -141,31 +180,50 @@ export const expectedChatFormatApollo = {
 };
 
 // expected Min Contribution Format
-export const expectedContributionFormat = expect.objectContaining({
-  _id: expectedIdFormat,
-  flags: expect.any(Array),
-  title: expect.any(String),
-  contributors: expect.arrayContaining([
-    expect.objectContaining({ user: expectedIdFormat, name: expect.any(String), school: expectedIdFormat }),
-  ]),
-  urls: expect.arrayContaining([expect.any(String)]),
-  remarks: expect.any(Array),
-});
+export const expectedContributionFormat = (isApollo = false) => {
+  const min = {
+    _id: expectedIdFormat,
+    flags: expect.any(Array),
+    title: expect.any(String),
+    contributors: expect.arrayContaining([
+      { user: expectedIdFormat, name: expect.any(String), school: expectedIdFormat },
+    ]),
+    urls: expect.any(Array), // could be empty
+    remarks: expect.any(Array),
+    createdAt: expectedDateFormat(isApollo),
+    updatedAt: expectedDateFormat(isApollo),
+  };
+
+  return isApollo
+    ? {
+        ...min,
+        description: expect.toBeOneOf([null, expect.any(String)]),
+        book: expect.toBeOneOf([null, expectedIdFormat]),
+        chapter: expect.toBeOneOf([null, expect.any(String)]),
+        deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
+      }
+    : min;
+};
 
 // expect BookAssignment Format
-export const expectedBookAssignmentFormat = {
-  _id: expectedIdFormat,
-  flags: expect.any(Array),
-  contribution: expectedContributionFormat,
-  chapter: expect.any(String),
-  content: expectedIdFormat,
-  dynParams: expect.any(Array),
-  solutions: expect.any(Array),
-  examples: expect.any(Array),
-  remarks: expect.any(Array),
-  createdAt: expectedDateFormat(true),
-  updatedAt: expectedDateFormat(true),
-  deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
+export const expectedBookAssignmentFormat = (isApollo = false) => {
+  const min = {
+    _id: expectedIdFormat,
+    flags: expect.any(Array),
+    contribution: isApollo
+      ? { ...expectedContributionFormat(isApollo), book: expectedIdFormat }
+      : expect.objectContaining({ ...expectedContributionFormat(), book: expectedIdFormat }),
+    chapter: expect.any(String),
+    content: expectedIdFormat,
+    dynParams: expect.any(Array),
+    solutions: expect.any(Array),
+    examples: expect.any(Array),
+    remarks: expect.any(Array),
+    createdAt: expectedDateFormat(isApollo),
+    updatedAt: expectedDateFormat(isApollo),
+  };
+
+  return isApollo ? { ...min, deletedAt: expect.toBeOneOf([null, expectedDateFormat(isApollo)]) } : min;
 };
 
 // expected Locale Format
@@ -389,6 +447,9 @@ export const genUser = (tenantId: string | null, override: Partial<UserDocument>
     ...override,
   });
 
+/**
+ * Simulating uploaded object
+ */
 export const jestPutObject = async (
   userId: Types.ObjectId,
   bucketType: 'private' | 'public' = 'public',
@@ -412,6 +473,9 @@ export const jestPutObject = async (
   return `/${publicBucket}/${objectName}`;
 };
 
+/**
+ * Remove Object from Minio
+ */
 export const jestRemoveObject = async (url: string): Promise<void> => {
   const [, bucketName, objectName] = url.split('/');
   if (bucketName && objectName) await minioClient.removeObject(bucketName, objectName);
@@ -420,81 +484,39 @@ export const jestRemoveObject = async (url: string): Promise<void> => {
 /**
  * Setup Jest (for both restful API & apollo)
  * connect mongoose & fetch users, optionally setup apollo test-server
+ *
  */
-export const jestSetup = async (
-  types: Array<'admin' | 'guest' | 'normal' | 'root' | 'tenantAdmin'>,
-  options?: { code?: string; apollo?: boolean },
-): Promise<JestSetup> => {
-  const code = options?.code ?? 'JEST';
-  const apollo = !!options?.apollo;
+export const jestSetup = async (code = 'JEST') => {
   await mongoose.connect(mongo.url, { autoIndex: false });
   // mongoose.set('debug', true);
 
-  const tenantNeeded = types.includes('normal') || types.includes('tenantAdmin');
-
-  const tenant = tenantNeeded ? await Tenant.findOne({ code }).lean() : null;
-
-  if (tenantNeeded && !tenant?.admins.length)
-    return terminate(
-      `jesSetup() Tenant (${code}) is inappropriate configured. Please re-init database by running $ yarn database:dev --minio --drop --seed --fake --jest`,
-    );
+  const tenant = await Tenant.findOne({ code }).lean();
+  if (!tenant) throw `jestSetup(): invalid Tenant (${code})`;
 
   const [allUsers, adminUser, rootUser] = await Promise.all([
-    tenant
-      ? User.find({
-          status: USER.STATUS.ACTIVE,
-          tenants: tenant._id,
-          roles: { $nin: [USER.ROLE.ADMIN] },
-          identifiedAt: { $exists: true }, // newly jest created user will be excluded (to avoid racing conflict)
-        }).lean()
-      : null,
-    types.includes('admin') ? User.findOne({ roles: USER.ROLE.ADMIN, ...activeCond }).lean() : null,
-    types.includes('root') ? User.findOne({ roles: USER.ROLE.ROOT, ...activeCond }).lean() : null,
+    User.find({
+      tenants: tenant._id,
+      roles: { $nin: [USER.ROLE.ADMIN, USER.ROLE.ROOT] },
+      identifiedAt: { $exists: true },
+      ...activeCond, // newly jest created user will be excluded (to avoid racing conflict)
+    }).lean(),
+    User.findOne({ roles: USER.ROLE.ADMIN, ...activeCond }).lean(),
+    User.findOne({ roles: USER.ROLE.ROOT, ...activeCond }).lean(),
   ]);
 
-  const normalUsers =
-    tenant && allUsers
-      ? allUsers
-          .filter(
-            ({ _id }) =>
-              ![...tenant.admins, ...tenant.supports, ...tenant.counselors, ...tenant.marshals].some(user =>
-                user.equals(_id),
-              ),
-          )
-          .filter(u => ((apollo ? 0 : 1) + u.idx) % 2) // half for apollo-test, another half for restful
-          .sort(shuffle) // randomize
-      : null;
+  const { admins, supports, counselors, marshals } = tenant;
+  const normalUsers = allUsers
+    .filter(({ _id }) => ![...admins, ...supports, ...counselors, ...marshals].some(user => user.equals(_id)))
+    .sort(shuffle);
 
-  if (normalUsers !== null && !normalUsers.length)
-    return terminate('We have a problem, there is no normal users (it is required by the test) !');
+  const [normalUser] = normalUsers;
+  const [tenantAdmin] = allUsers.filter(user => tenant.admins.some(a => a.equals(user._id))).sort(shuffle);
 
-  const [normalUser] = normalUsers ?? [null];
+  if (!adminUser || !rootUser || !normalUser!! || !tenantAdmin)
+    throw `jestSetup(): no valid admin, root or tenantAdmin user(s)`;
 
-  const tenantAdmin =
-    tenant && allUsers ? allUsers.filter(user => tenant.admins.some(a => a.equals(user._id)))[apollo ? 1 : 0] : null;
-
-  const [adminServer, guestServer, normalServer, rootServer, tenantAdminServer] = [
-    apollo && types.includes('admin') ? testServer(adminUser) : null,
-    apollo && types.includes('guest') ? testServer() : null,
-    apollo && types.includes('normal') ? testServer(normalUser) : null,
-    apollo && types.includes('root') ? testServer(rootUser) : null,
-    tenant && apollo && types.includes('tenantAdmin') ? testServer(tenantAdmin!) : null,
-  ];
-
-  return {
-    adminServer,
-    adminUser,
-    guestServer,
-    normalServer,
-    normalUser,
-    normalUsers,
-    rootUser,
-    rootServer,
-    tenantAdmin,
-    tenantAdminServer,
-    tenant,
-    tenantId: tenant?._id.toString() || null,
-  };
+  const tenantId = tenant._id.toString();
+  return { adminUser, normalUser, normalUsers, rootUser, tenantAdmin, tenant, tenantId };
 };
 
 /**
@@ -503,5 +525,4 @@ export const jestSetup = async (
 export const jestTeardown = async (): Promise<void> => {
   redisClient.disconnect();
   await mongoose.connection.close();
-  // await Promise.all([jobRunner.removeRedisListener(), socketServer.stop(), mongoose.connection.close()]); // socketServer.stop() to disconnect redis
 };

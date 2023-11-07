@@ -2,9 +2,7 @@
  * apollo typeDef: Tenant
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     tenants(query: QueryInput): [Tenant!]! @cacheControl(maxAge: 3600)
   }
@@ -12,7 +10,9 @@ export default gql`
   extend type Mutation {
     addTenant(tenant: TenantCoreInput!): Tenant!
     addTenantRemark(id: ID!, remark: String): Tenant!
+    addTenantStash(id: ID!, title: String!, secret: String!, url: String!): Tenant!
     removeTenant(id: ID!, remark: String): StatusResponse!
+    removeTenantStash(id: ID!, subId: String!): Tenant!
     sendTestEmail(email: String!): StatusResponse!
     updateTenantCore(id: ID!, tenant: TenantCoreInput!): Tenant!
     updateTenantExtra(id: ID!, tenant: TenantExtraInput!): Tenant!
@@ -68,6 +68,8 @@ export default gql`
     authServices: [String!]!
 
     satelliteStatus: String
+
+    stashes: [Stash!]!
 
     remarks: [Remark!]
     createdAt: Float!

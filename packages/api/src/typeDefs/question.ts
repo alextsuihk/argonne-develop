@@ -2,9 +2,7 @@
  * apollo typeDef: Question
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     question(id: ID!): Question
     questions(query: QueryInput): [Question!]!
@@ -27,7 +25,7 @@ export default gql`
       homework: String
       lang: String!
 
-      price: Int
+      bounty: Int
       content: String!
     ): Question!
 
@@ -77,7 +75,7 @@ export default gql`
     updatedAt: Float!
     deletedAt: Float
 
-    price: Int
+    bounty: Int
     bidders: [String!]!
     bids: [Bid!]!
     paidAt: Float

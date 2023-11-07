@@ -2,9 +2,7 @@
  * apollo typeDef: Tutor
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     tutor(id: ID!): Tutor
     tutors(query: QueryInput): [Tutor!]!

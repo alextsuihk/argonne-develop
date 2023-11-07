@@ -27,7 +27,6 @@ import Book from '../../models/book';
 import ChatGroup from '../../models/chat-group';
 import Level from '../../models/level';
 import Tenant from '../../models/tenant';
-import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -60,21 +59,14 @@ export const expectedMinFormat = {
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: UserDocument | null;
-  let normalUser: UserDocument | null;
-  let normalUsers: UserDocument[] | null;
-  let tenantId: string | null;
-  let url: string | undefined;
-  let url2: string | undefined;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
-  beforeAll(async () => {
-    ({ adminUser, normalUser, normalUsers, tenantId } = await jestSetup(['admin', 'normal']));
-  });
-  afterAll(async () => Promise.all([url && jestRemoveObject(url), url2 && jestRemoveObject(url2), jestTeardown()]));
+  beforeAll(async () => (jest = await jestSetup()));
+  afterAll(jestTeardown);
 
   test('should response an array of data when getMany & getById (as adminUser)', async () => {
     const chatGroups = await ChatGroup.find({
-      users: adminUser!._id,
+      users: jest.adminUser._id,
       key: { $exists: true },
       flags: CHAT_GROUP.FLAG.ADMIN,
       deletedAt: { $exists: false },
@@ -82,11 +74,16 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     if (!chatGroups.length) throw 'There is no admin message chatGroup';
 
     const id = randomItem(chatGroups)._id.toString();
-    await getById(route, { 'Jest-User': adminUser!._id }, { ...expectedMinFormat, key: expect.any(String) }, { id });
+    await getById(
+      route,
+      { 'Jest-User': jest.adminUser._id },
+      { ...expectedMinFormat, key: expect.any(String) },
+      { id },
+    );
   });
 
   test('should pass when getMany & getById', async () =>
-    getMany(route, { 'Jest-User': normalUser!._id }, expectedMinFormat, {
+    getMany(route, { 'Jest-User': jest.normalUser._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
@@ -95,7 +92,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should fail when GET many without authenticated', async () => getUnauthenticated(route, {}));
 
   test('should fail when GET one without authenticated', async () =>
-    getUnauthenticated(`${route}/${normalUser!._id}`, {}));
+    getUnauthenticated(`${route}/${jest.normalUser._id}`, {}));
 
   test('should pass when joining a book chatGroup (as teacher)', async () => {
     const [books, teacherLevel] = await Promise.all([
@@ -103,7 +100,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       Level.findOne({ code: 'TEACHER' }).lean(),
     ]);
 
-    const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
+    const teacher = jest.normalUsers.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
     if (!teacher) throw 'No teacher is found';
 
     await createUpdateDelete<ChatGroupDocumentEx>(
@@ -113,7 +110,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         {
           action: 'joinBook',
           data: {},
-          expectedMinFormat: { ...expectedMinFormat, admins: [], chats: expect.any(Array) }, // bookChatGroups have NO admins
+          expectedMinFormat: { ...expectedMinFormat, admins: [], chats: expect.any(Array) }, // bookChatGroups have NO admins, sometimes, not even have chats
         },
       ],
       { overrideId: randomItem(books).chatGroup.toString() },
@@ -126,7 +123,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       Level.findOne({ code: 'TEACHER' }).lean(),
     ]);
 
-    const nonTeacher = normalUsers!.find(({ schoolHistories }) => !schoolHistories[0]?.level.equals(teacherLevel!._id));
+    const nonTeacher = jest.normalUsers.find(
+      ({ schoolHistories }) => !schoolHistories[0]?.level.equals(teacherLevel!._id),
+    );
     if (!nonTeacher) throw 'No valid non-teacher available for testing';
 
     await createUpdateDelete<ChatGroupDocumentEx>(
@@ -148,7 +147,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should pass when post two messages toAdmin', async () => {
     // create a new user without any admin-message
-    const user = genUser(tenantId!);
+    const user = genUser(jest.tenantId);
     await user.save();
 
     const { adminIds } = await User.findSystemAccountIds();
@@ -185,12 +184,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     ]);
 
     // clean up
-    await user.deleteOne();
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should pass when post two messages toAlex', async () => {
     // create a brand new user without previous messages with Alex
-    const user = genUser(tenantId!);
+    const user = genUser(jest.tenantId);
     const [{ alexId }] = await Promise.all([User.findSystemAccountIds(), user.save()]);
     const userId = user._id.toString();
 
@@ -225,12 +224,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     ]);
 
     // clean up
-    await user.deleteOne();
+    await User.deleteOne({ _id: user._id });
   });
 
   const messageToTenantAdmins = async (to: 'toTenantAdmins' | 'toTenantCounselors' | 'toTenantSupports') => {
-    const user = genUser(tenantId!);
-    const [tenant] = await Promise.all([Tenant.findByTenantId(tenantId!), user.save()]);
+    const user = genUser(jest.tenantId);
+    const [tenant] = await Promise.all([Tenant.findByTenantId(jest.tenantId), user.save()]);
 
     const users =
       to === 'toTenantAdmins' ? tenant!.admins : to === 'toTenantCounselors' ? tenant!.counselors : tenant!.supports;
@@ -238,17 +237,17 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const expectedMinFormatEx = {
       ...expectedMinFormat,
       flags: [`TENANT_${to.replace('toTenant', '').toUpperCase()}`],
-      tenant: tenantId!,
+      tenant: jest.tenantId,
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
       admins: [],
       users: [user._id, ...users].map(u => u.toString()),
-      key: `TENANT#${tenantId}-USER#${user._id} (${to.replace('toTenant', '').toLowerCase()})`,
+      key: `TENANT#${jest.tenantId}-USER#${user._id} (${to.replace('toTenant', '').toLowerCase()})`,
     };
 
     await createUpdateDelete<ChatGroupDocumentEx>(route, { 'Jest-User': user._id }, [
       {
         action: `create#${to}`,
-        data: { tenantId, content: FAKE },
+        data: { tenantId: jest.tenantId, content: FAKE },
         expectedMinFormat: {
           ...expectedMinFormatEx,
           chats: [expect.objectContaining({ ...expectedChatFormat, members: [expectedMember(user._id, [])] })],
@@ -256,7 +255,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       },
       {
         action: `create#${to}`,
-        data: { tenantId, content: FAKE2 },
+        data: { tenantId: jest.tenantId, content: FAKE2 },
         expectedMinFormat: {
           ...expectedMinFormatEx,
           chats: [
@@ -268,7 +267,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     ]);
 
     // clean up
-    await user.deleteOne();
+    await User.deleteOne({ _id: user._id });
   };
 
   test('should pass when post two message toTenantAdmin', async () => messageToTenantAdmins('toTenantAdmins'));
@@ -279,15 +278,15 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect.assertions(3);
 
     // create a new user (without identifiedAt)
-    const user = genUser(tenantId!);
+    const user = genUser(jest.tenantId);
     await user.save();
 
     await createUpdateDelete(route, { 'Jest-User': user._id }, [
       {
         action: 'create',
         data: {
-          tenantId: tenantId!,
-          userIds: normalUsers!.splice(-2).map(u => u._id.toString()),
+          tenantId: jest.tenantId,
+          userIds: jest.normalUsers.splice(-2).map(u => u._id.toString()),
           membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
         },
         expectedResponse: {
@@ -298,14 +297,14 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     ]);
 
     // clean-up
-    await user.deleteOne();
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should pass when attaching chat from another chatGroup', async () => {
-    const userId = normalUser!._id.toString();
+    const userId = jest.normalUser._id.toString();
 
-    const { chatGroup } = genChatGroup(tenantId!, normalUser!._id); // create a destination chatGroup
-    const { chatGroup: source, chat, content } = genChatGroup(tenantId!, normalUser!._id); // create source (another) chatGroup
+    const { chatGroup } = genChatGroup(jest.tenantId, jest.normalUser._id); // create a destination chatGroup
+    const { chatGroup: source, chat, content } = genChatGroup(jest.tenantId, jest.normalUser._id); // create source (another) chatGroup
     chatGroup.chats = []; // drop & ignore chats
     await Promise.all([chatGroup.save(), source.save(), chat.save(), content.save()]);
 
@@ -336,10 +335,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   });
 
   test('should pass when sharing question to chatGroup (as student)', async () => {
-    const userId = normalUser!._id.toString();
+    const userId = jest.normalUser._id.toString();
 
-    const { chatGroup } = genChatGroup(tenantId!, normalUser!._id); // create a destination chatGroup
-    const { question, content } = genQuestion(tenantId!, normalUser!._id, { student: normalUser!._id });
+    const { chatGroup } = genChatGroup(jest.tenantId, jest.normalUser._id); // create a destination chatGroup
+    const { question, content } = genQuestion(jest.tenantId, jest.normalUser._id, { student: jest.normalUser._id });
     await Promise.all([chatGroup.save(), question.save(), content.save()]);
 
     await createUpdateDelete<ChatGroupDocumentEx>(
@@ -365,10 +364,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   });
 
   test('should pass when sharing question to chatGroup (as tutor)', async () => {
-    const userId = normalUser!._id.toString();
+    const userId = jest.normalUser._id.toString();
 
-    const { chatGroup } = genChatGroup(tenantId!, normalUser!._id); // create a destination chatGroup
-    const { question, content } = genQuestion(tenantId!, normalUser!._id, { tutor: normalUser!._id });
+    const { chatGroup } = genChatGroup(jest.tenantId, jest.normalUser._id); // create a destination chatGroup
+    const { question, content } = genQuestion(jest.tenantId, jest.normalUser._id, { tutor: jest.normalUser._id });
     await Promise.all([chatGroup.save(), question.save(), content.save()]);
 
     await createUpdateDelete<ChatGroupDocumentEx>(
@@ -396,9 +395,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should pass the full suite', async () => {
     expect.assertions(3 * 21);
 
-    const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = normalUsers!.map(u => u._id.toString());
+    const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = jest.normalUsers.map(u => u._id.toString());
 
-    [url, url2] = await Promise.all([jestPutObject(normalUsers![0]._id), jestPutObject(normalUsers![0]._id)]);
+    const [url, url2] = await Promise.all([
+      jestPutObject(jest.normalUsers[0]._id),
+      jestPutObject(jest.normalUsers[0]._id),
+    ]);
 
     const create = {
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
@@ -415,11 +417,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       [
         {
           action: 'create',
-          data: { tenantId: tenantId!, userIds: [user0Id], ...create },
+          data: { tenantId: jest.tenantId, userIds: [user0Id], ...create },
           expectedMinFormat: {
             ...expectedMinFormat,
             ...create,
-            tenant: tenantId!,
+            tenant: jest.tenantId,
             admins: [ownerId],
             users: [ownerId, user0Id].sort(),
             chats: [],
@@ -653,5 +655,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       ],
       { overrideId: chatGroupId, skipAssertion: true },
     );
+
+    // clean up
+    await Promise.all([jestRemoveObject(url), jestRemoveObject(url2)]);
   });
 });

@@ -2,9 +2,7 @@
  * Apollo TypeDef: Assignment
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     assignment(id: ID!): Assignment
     assignments(query: QueryInput): [Assignment!]!

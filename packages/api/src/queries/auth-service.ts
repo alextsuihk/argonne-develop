@@ -3,9 +3,7 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
-const AUTH_SERVICE_FIELDS = gql`
+const AUTH_SERVICE_FIELDS = `#graphql
   fragment AuthServiceFields on AuthService {
     clientId
     token
@@ -14,7 +12,7 @@ const AUTH_SERVICE_FIELDS = gql`
   }
 `;
 
-export const AUTH_SERVICE_TOKEN = gql`
+export const AUTH_SERVICE_TOKEN = `#graphql
   ${AUTH_SERVICE_FIELDS}
   query AuthServiceToken($client: String!) {
     authServiceToken(client: $client) {

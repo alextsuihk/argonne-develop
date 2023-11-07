@@ -3,9 +3,7 @@
  *
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     book(id: ID!): Book @cacheControl(maxAge: 3600)
     books(query: QueryInput): [Book!]! @cacheControl(maxAge: 3600)

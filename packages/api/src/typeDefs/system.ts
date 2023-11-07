@@ -1,6 +1,7 @@
-import { gql } from 'apollo-server-express';
-
-export default gql`
+/**
+ * apollo typeDef: System
+ */
+export default `#graphql
   extend type Query {
     serverInfo: ServerInfo!
     serverTime: Float!
@@ -10,6 +11,7 @@ export default gql`
   type ServerInfo {
     mode: String!
     primaryTenantId: String
+    status: String
     minio: String!
     timestamp: Float!
     version: String!

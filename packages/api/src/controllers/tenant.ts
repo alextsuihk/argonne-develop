@@ -8,7 +8,7 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
 import type { UpdateQuery } from 'mongoose';
-import mongoose from 'mongoose';
+import mongoose, { mongo } from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import School from '../models/school';
@@ -16,7 +16,7 @@ import type { TenantDocument } from '../models/tenant';
 import Tenant, { searchableFields } from '../models/tenant';
 import User, { activeCond } from '../models/user';
 import { messageToAdmins } from '../utils/chat';
-import { randomString } from '../utils/helper';
+import { mongoId, randomString } from '../utils/helper';
 import log from '../utils/log';
 import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
@@ -25,16 +25,25 @@ import storage from '../utils/storage';
 import type { StatusResponse } from './common';
 import common from './common';
 
-type Action = 'addRemark' | 'updateCore';
+type Action = 'addRemark' | 'addStash' | 'removeStash' | 'updateCore'; // TODO: addAuthService, removeAuthService
 type PostAction = 'sendTestEmail';
 
 const { MSG_ENUM } = LOCALE;
-const { TENANT } = LOCALE.DB_ENUM;
+const { USER, TENANT } = LOCALE.DB_ENUM;
 
 const { assertUnreachable, auth, hubModeOnly, DELETED, DELETED_LOCALE, isAdmin, isRoot, paginateSort, searchFilter } =
   common;
-const { emailSchema, idSchema, querySchema, remarkSchema, removeSchema, tenantCoreSchema, tenantExtraSchema } =
-  yupSchema;
+const {
+  emailSchema,
+  idSchema,
+  querySchema,
+  remarkSchema,
+  removeSchema,
+  stashSchema,
+  subIdSchema,
+  tenantCoreSchema,
+  tenantExtraSchema,
+} = yupSchema;
 
 export const select = (userRoles?: string[]) =>
   `${common.select(userRoles)} -apiKey -satelliteIp -satelliteVersion -seedings -meta`;
@@ -53,14 +62,16 @@ const sanitizeServices = (services: string[], isSchool = false) => {
 /**
  * (helper) transform
  */
-const transform = (tenant: TenantDocument, showAuthServices = false): TenantDocument => ({
+const transform = (tenant: TenantDocument, admin = false): TenantDocument => ({
   ...tenant,
-  ...(showAuthServices
+  authServices: admin
     ? tenant.authServices.map(authService => {
-        const [clientId, , redirectUri, , friendKey] = authService.split('#'); // hide clientSecret & select
-        return `${friendKey ?? ''}#${clientId}#${redirectUri}`;
+        const [clientId, , redirectUri, , friendlyKey] = authService.split('#'); // hide clientSecret & select
+        return `${friendlyKey ?? ''}#${clientId}#${redirectUri}`;
       })
-    : []),
+    : [],
+
+  stashes: admin ? tenant.stashes : [], // hide stashes for non admin|tenantAdmin
 });
 
 /**
@@ -81,6 +92,31 @@ const addRemark = async (req: Request, args: unknown): Promise<TenantDocument> =
   await DatabaseEvent.log(userId, `/tenants/${id}`, 'REMARK', { args });
 
   return transform(tenant, true);
+};
+
+/**
+ * Add Stash
+ */
+const addStash = async (req: Request, args: unknown): Promise<TenantDocument> => {
+  const { userId, userLocale, userRoles } = auth(req);
+
+  const { id, secret, title, url } = await idSchema.concat(stashSchema).validate(args);
+  const [original] = await Promise.all([Tenant.findByTenantId(id, userId), storage.validateObject(url, userId)]); // only tenantAdmin could addStash
+
+  const update: UpdateQuery<TenantDocument> = { $push: { stashes: { _id: mongoId(), secret, title, url } } };
+  const [tenant] = await Promise.all([
+    Tenant.findByIdAndUpdate(id, update, { fields: select([USER.ROLE.ADMIN]), new: true }).lean(),
+    DatabaseEvent.log(userId, `/tenants/${id}`, 'addStash', { args }),
+    notifySync(
+      original._id,
+      { userIds: [userId, ...original.admins], event: 'TENANT' },
+      { bulkWrite: { tenants: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TenantDocument> } },
+    ),
+  ]);
+
+  if (tenant) return transform(tenant, true);
+  log('error', `tenantController:addStash()`, args, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
 
 /**
@@ -246,6 +282,35 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
 };
 
 /**
+ * Remove Stash
+ */
+const removeStash = async (req: Request, args: unknown): Promise<TenantDocument> => {
+  const { userId, userLocale, userRoles } = auth(req);
+
+  const { id, subId } = await idSchema.concat(subIdSchema).validate(args);
+  const original = await Tenant.findByTenantId(id, userId); // only tenantAdmin could removeStash
+  const originalStash = original.stashes.find(s => s._id.equals(subId));
+  if (!originalStash) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+
+  await storage.removeObject(originalStash.url);
+
+  const update: UpdateQuery<TenantDocument> = { $pull: { stashes: { _id: subId } } };
+  const [tenant] = await Promise.all([
+    Tenant.findByIdAndUpdate(id, update, { fields: select([USER.ROLE.ADMIN]), new: true }).lean(),
+    DatabaseEvent.log(userId, `/tenants/${id}`, 'removeStash', { original: originalStash }),
+    notifySync(
+      original._id,
+      { userIds: [userId, ...original.admins], event: 'TENANT' },
+      { bulkWrite: { tenants: [{ updateOne: { filter: { _id: id }, update } }] satisfies BulkWrite<TenantDocument> } },
+    ),
+  ]);
+
+  if (tenant) return transform(tenant, true);
+  log('error', `tenantController:removeStash()`, args, userId);
+  throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
+};
+
+/**
  * Send Test Email
  * only admin or any tenantAdmin could test email
  */
@@ -374,7 +439,7 @@ const updateExtra = async (req: Request, args: unknown): Promise<TenantDocument>
   if (original.logoUrl && original.logoUrl !== logoUrl) removeFiles.push(original.logoUrl);
 
   const [tenant] = await Promise.all([
-    Tenant.findByIdAndUpdate(id, update, { fields: select(userRoles), new: true }).lean(),
+    Tenant.findByIdAndUpdate(id, update, { fields: select([USER.ROLE.ADMIN]), new: true }).lean(),
     messageToAdmins(msg, userId, userLocale, isRoot(userRoles), adminIds, `TENANT#${id}`),
     DatabaseEvent.log(userId, `/tenants/${id}`, 'UPDATE-EXTRA', { args, original }),
     notifySync(
@@ -384,7 +449,7 @@ const updateExtra = async (req: Request, args: unknown): Promise<TenantDocument>
     ),
   ]);
 
-  if (tenant) return transform(tenant, isRoot(userRoles) || tenant.admins.some(a => a.equals(userId)));
+  if (tenant) return transform(tenant, true);
   log('error', `tenantController:updateExtra()`, args, userId);
   throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
 };
@@ -421,6 +486,10 @@ const updateById: RequestHandler<{ id: string; action?: Action }> = async (req, 
         return res.status(200).json({ data: await updateExtra(req, { id, tenant: req.body }) });
       case 'addRemark':
         return res.status(200).json({ data: await addRemark(req, { id, ...req.body }) });
+      case 'addStash':
+        return res.status(200).json({ data: await addStash(req, { id, ...req.body }) });
+      case 'removeStash':
+        return res.status(200).json({ data: await removeStash(req, { id, ...req.body }) });
       case 'updateCore':
         return res.status(200).json({ data: await updateCore(req, { id, tenant: req.body }) });
       default:
@@ -433,12 +502,14 @@ const updateById: RequestHandler<{ id: string; action?: Action }> = async (req, 
 
 export default {
   addRemark,
+  addStash,
   create,
   find,
   findMany,
   postHandler,
   remove,
   removeById,
+  removeStash,
   sendTestEmail,
   updateById,
   updateCore,

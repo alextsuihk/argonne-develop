@@ -13,17 +13,17 @@ import { jestSetup, jestTeardown } from '../jest';
 import type { UserDocument } from '../models/user';
 import token from '../utils/token';
 import { decodeHeader } from './auth';
+import { sleep } from '../utils/helper';
 
 const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('Auth Middleware Test', () => {
-  let normalUser: UserDocument | null;
+  let jestX: Awaited<ReturnType<typeof jestSetup>>;
 
-  beforeAll(async () => {
-    ({ normalUser } = await jestSetup(['normal'], { apollo: true }));
-  });
+  beforeAll(async () => (jestX = await jestSetup()));
   afterAll(jestTeardown);
+
   /**
    * Mock Request & Response
    */
@@ -49,7 +49,7 @@ describe('Auth Middleware Test', () => {
     expect.assertions(3);
 
     const { accessToken, accessTokenExpireAt, refreshToken, refreshTokenExpireAt } = await token.generate(
-      normalUser!,
+      jestX.normalUser,
       { expiresIn: 5, force: true, ua: 'jest', ip: 'jest (invalid-ip)' }, // force-ful login because of IP conflict
     );
 
@@ -75,7 +75,7 @@ describe('Auth Middleware Test', () => {
         }),
       );
 
-      await token.revokeCurrent(normalUser!._id, refreshToken); // logout (revoke token)
+      await token.revokeCurrent(jestX.normalUser._id, refreshToken); // logout (revoke token)
     }
   });
 
@@ -126,15 +126,18 @@ describe('Auth Middleware Test', () => {
     expect.assertions(2);
 
     // generate a JWT accessToken (both accessToken & refreshToken expire in 1second)
-    const { accessToken, accessTokenExpireAt, refreshToken, refreshTokenExpireAt } = await token.generate(normalUser!, {
-      expiresIn: 1,
-      force: true,
-      ua: 'jest',
-      ip: 'jest IP',
-    });
+    const { accessToken, accessTokenExpireAt, refreshToken, refreshTokenExpireAt } = await token.generate(
+      jestX.normalUser,
+      {
+        expiresIn: 1,
+        force: true,
+        ua: 'jest',
+        ip: 'jest IP',
+      },
+    );
 
     if (accessToken && accessTokenExpireAt && refreshToken && refreshTokenExpireAt) {
-      await new Promise(resolve => setTimeout(resolve, 1500)); // wait 2secs for accessToken to expire
+      await sleep(1500); // wait 1+ second for accessToken to expire
 
       const req = mockRequest({}, {}, { Authorization: `Bearer ${accessToken}` });
       const res = mockResponse();
@@ -144,7 +147,7 @@ describe('Auth Middleware Test', () => {
       expect(next).toHaveBeenCalledTimes(1);
       expect(next).toHaveBeenCalledWith({ statusCode: 401, code: MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR });
 
-      await token.revokeCurrent(normalUser!._id, refreshToken); // logout (revoke token)
+      await token.revokeCurrent(jestX.normalUser._id, refreshToken); // logout (revoke token)
     }
   });
 

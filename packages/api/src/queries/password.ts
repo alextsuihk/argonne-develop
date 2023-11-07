@@ -3,11 +3,9 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
 import { STATUS_RESPONSE } from './common';
 
-export const CHANGE_PASSWORD = gql`
+export const CHANGE_PASSWORD = `#graphql
   ${STATUS_RESPONSE}
   mutation ChangePassword(
     $currPassword: String!
@@ -26,7 +24,7 @@ export const CHANGE_PASSWORD = gql`
   }
 `;
 
-export const RESET_PASSWORD_REQUEST = gql`
+export const RESET_PASSWORD_REQUEST = `#graphql
   ${STATUS_RESPONSE}
   mutation ResetPasswordRequest($email: String!, $coordinates: CoordinatesInput) {
     resetPasswordRequest(email: $email, coordinates: $coordinates) {
@@ -35,7 +33,7 @@ export const RESET_PASSWORD_REQUEST = gql`
   }
 `;
 
-export const RESET_PASSWORD_CONFIRM = gql`
+export const RESET_PASSWORD_CONFIRM = `#graphql
   ${STATUS_RESPONSE}
   mutation ResetPasswordConfirm($token: String!, $password: String!, $coordinates: CoordinatesInput) {
     resetPasswordConfirm(token: $token, password: $password, coordinates: $coordinates) {

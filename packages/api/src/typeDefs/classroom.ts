@@ -2,9 +2,7 @@
  * Apollo TypeDef: Classroom
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     classroom(id: ID!): Classroom
     classrooms(query: QueryInput): [Classroom!]!

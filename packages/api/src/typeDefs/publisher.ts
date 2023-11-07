@@ -2,9 +2,7 @@
  * apollo typeDef: Publisher
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     publisher(id: ID!): Publisher @cacheControl(maxAge: 3600)
     publishers(query: QueryInput): [Publisher!]! @cacheControl(maxAge: 3600)

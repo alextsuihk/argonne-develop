@@ -56,7 +56,7 @@ type Action =
 
 type Populate = { chats: ChatDocument[] };
 type PopulatedClassroom = Omit<ClassroomDocument, 'chats'> & Populate;
-export type ClassroomDocumentEx = PopulatedClassroom & { contentsToken: string }; // export for JEST
+type ClassroomDocumentEx = PopulatedClassroom & { contentsToken: string };
 
 const { MSG_ENUM } = LOCALE;
 const { CHAT, CONTENT, TENANT, USER } = LOCALE.DB_ENUM;

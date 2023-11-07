@@ -8,7 +8,6 @@ import { addDays } from 'date-fns';
 
 import { expectedDateFormat, expectedIdFormat, FAKE, jestSetup, jestTeardown } from '../../jest';
 import type { AnnouncementDocument } from '../../models/announcement';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -17,10 +16,7 @@ const route = 'announcements';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: UserDocument | null;
-  let normalUser: UserDocument | null;
-  let tenantAdmin: UserDocument | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single announcement format
   const expectedMinFormat = {
@@ -32,13 +28,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     endAt: expectedDateFormat(),
   };
 
-  beforeAll(async () => {
-    ({ adminUser, normalUser, tenantAdmin, tenantId } = await jestSetup(['admin', 'normal', 'tenantAdmin']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when getMany & getById', async () =>
-    getMany(route, { 'Jest-User': normalUser!._id }, expectedMinFormat, {
+    getMany(route, { 'Jest-User': jest.normalUser._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
@@ -47,7 +41,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should fail when accessing as guest', async () => getUnauthenticated(route, {}));
 
   test('should pass when CREATE, REMOVE & verify-REMOVE (as admin)', async () =>
-    createUpdateDelete<AnnouncementDocument>(route, { 'Jest-User': adminUser!._id.toString() }, [
+    createUpdateDelete<AnnouncementDocument>(route, { 'Jest-User': jest.adminUser._id }, [
       {
         action: 'create',
         data: { title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) },
@@ -57,17 +51,23 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     ]));
 
   test('should pass when CREATE, REMOVE & verify-REMOVE (as tenantAdmin)', async () =>
-    createUpdateDelete<AnnouncementDocument>(route, { 'Jest-User': tenantAdmin!._id.toString() }, [
+    createUpdateDelete<AnnouncementDocument>(route, { 'Jest-User': jest.tenantAdmin._id }, [
       {
         action: 'create',
-        data: { tenantId, title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) },
-        expectedMinFormat: { ...expectedMinFormat, tenant: tenantId!, title: FAKE, message: FAKE },
+        data: {
+          tenantId: jest.tenantId,
+          title: FAKE,
+          message: FAKE,
+          beginAt: addDays(Date.now(), 5),
+          endAt: addDays(Date.now(), 15),
+        },
+        expectedMinFormat: { ...expectedMinFormat, tenant: jest.tenantId, title: FAKE, message: FAKE },
       },
       { action: 'delete', data: {} },
     ]));
 
   test('should fail when CREATE without tenantId (as tenantAdmin)', async () =>
-    createUpdateDelete<AnnouncementDocument>(route, { 'Jest-User': tenantAdmin!._id.toString() }, [
+    createUpdateDelete<AnnouncementDocument>(route, { 'Jest-User': jest.tenantAdmin._id }, [
       {
         action: 'create',
         data: { title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) },

@@ -129,7 +129,7 @@ const fake = async (
 
                         return {
                           bidder: bidderId,
-                          ...(prob(0.5) && { price: faker.number.int({ min: 5, max: 50 }) * 1000 }),
+                          ...(prob(0.5) && { bounty: faker.number.int({ min: 5, max: 50 }) * 1000 }),
                           contents: bidContents.map(c => c._id),
                         };
                       })
@@ -178,7 +178,7 @@ const fake = async (
 
                     // extra
                     bidders: tutorUserIds,
-                    ...(prob(0.5) && { price: faker.number.int({ min: 1, max: 10 }) * 1000 }),
+                    ...(prob(0.5) && { bounty: faker.number.int({ min: 1, max: 10 }) * 1000 }),
                     ...(isBidding && { bids }),
                     ...(!isBidding && prob(0.5) && { paidAt: faker.date.soon({ days: 7 }) }),
                   }),

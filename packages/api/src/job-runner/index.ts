@@ -1,7 +1,9 @@
 /**
  * Job-Runner: Process Job Collection
  *
- * !note: single thread running one job at a time (not to overload CPU)
+ * !note:
+ * 1) single instance even with cluster of multiple express instances
+ * 2) single thread running one job at a time (not to overload CPU)
  */
 
 import { LOCALE } from '@argonne/common';
@@ -9,13 +11,15 @@ import { addMilliseconds } from 'date-fns';
 import Redis from 'ioredis';
 import type { UpdateQuery } from 'mongoose';
 import mongoose from 'mongoose';
+import { io } from 'socket.io-client';
 
 import configLoader from '../config/config-loader';
 import type { JobDocument } from '../models/job';
 import Job, { NEW_JOB_CHANNEL } from '../models/job';
 import { SYNC_JOB_CHANNEL } from '../models/sync-job';
-import { findSatelliteTenants } from '../models/tenant';
+import Tenant, { findSatelliteTenants } from '../models/tenant';
 import { redisClient } from '../redis';
+import { sleep } from '../utils/helper';
 import log from '../utils/log';
 import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
@@ -27,6 +31,26 @@ import sync from './sync';
 
 const { JOB } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
+
+/**
+ * In Satellite Mode, try to connect to Hub
+ */
+const satelliteSocket = config.mode === 'SATELLITE' ? io(DEFAULTS.ARGONNE_URL) : null;
+if (satelliteSocket) {
+  let connected = false;
+
+  (async () => {
+    while (!connected) {
+      const tenant = await Tenant.findPrimary();
+      if (tenant && tenant.apiKey) {
+        satelliteSocket.emit('JOIN_SATELLITE', { tenant: tenant._id.toString(), apiKey: tenant.apiKey });
+        connected = true;
+      }
+
+      await sleep(DEFAULTS.JOB_RUNNER.INTERVAL); // wait for tenant update (with valid apiKey)
+    }
+  })();
+}
 
 /**
  * Execute (or re-schedule) Job Runner
@@ -160,7 +184,9 @@ const start = async () => {
  * Tear Down
  * disconnect redisClient
  */
+
 const stop = () => {
+  satelliteSocket?.disconnect();
   subClient?.disconnect();
   clearInterval(timer);
 };

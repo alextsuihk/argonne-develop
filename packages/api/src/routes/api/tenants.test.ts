@@ -40,12 +40,7 @@ const route = 'tenants';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: UserDocument | null;
-  let normalUser: UserDocument | null;
-  let rootUser: UserDocument | null;
-  let tenantAdmin: UserDocument | null;
-  let htmlUrl: string;
-  let logoUrl: string;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single tenant format
   const expectedMinFormat = {
@@ -70,20 +65,15 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     updatedAt: expectedDateFormat(),
   };
 
-  beforeAll(async () => {
-    ({ adminUser, normalUser, rootUser, tenantAdmin } = await jestSetup(['admin', 'normal', 'root', 'tenantAdmin']));
-  });
-
-  afterAll(async () =>
-    Promise.all([htmlUrl && jestRemoveObject(htmlUrl), logoUrl && jestRemoveObject(logoUrl), jestTeardown()]),
-  );
+  beforeAll(async () => (jest = await jestSetup()));
+  afterAll(jestTeardown);
 
   test('should response a tenant list as guest user', async () => getMany(route, {}, expectedMinFormat, {}));
 
   test('should fail when sending a test email (as normalUser)', async () => {
     expect.assertions(3);
 
-    const { _id, emails } = normalUser!;
+    const { _id, emails } = jest.normalUser;
     const res = await request(app)
       .post(`/api/tenants/sendTestEmail`)
       .set({ 'Jest-User': _id })
@@ -96,7 +86,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should fail when sending a test email (without email or wrong email)', async () => {
     expect.assertions(6);
 
-    const { _id } = adminUser!;
+    const { _id } = jest.adminUser;
     const email = 'wrong@email.com';
     const res1 = await request(app).post(`/api/tenants/sendTestEmail`).set({ 'Jest-User': _id }).send({ email });
     expect(res1.body).toEqual({ errors: [{ code: MSG_ENUM.USER_INPUT_ERROR }], statusCode: 422, type: 'plain' });
@@ -116,7 +106,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should pass when sending a test email (as tenantAdmin)', async () => {
     expect.assertions(3);
 
-    const { _id, emails } = tenantAdmin!;
+    const { _id, emails } = jest.tenantAdmin;
     const res = await request(app)
       .post(`/api/tenants/sendTestEmail`)
       .set({ 'Jest-User': _id })
@@ -129,7 +119,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should pass when sending a test email (as admin)', async () => {
     expect.assertions(3);
 
-    const { _id, emails } = adminUser!;
+    const { _id, emails } = jest.adminUser;
     const res = await request(app)
       .post(`/api/tenants/sendTestEmail`)
       .set({ 'Jest-User': _id })
@@ -140,7 +130,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   });
 
   test('should pass when ADD, ADD_REMARK, UPDATE, REMOVE', async () => {
-    expect.assertions(3 * 4 + 3 * 1 + 3 * 2 + 6 * 1);
+    expect.assertions(3 * 4 + 3 * 1 + 3 * 3 + 6 * 1);
 
     const schools = await School.find({ deletedAt: { $exists: false } }).lean();
     const school = prob(0.5) && randomItem(schools)._id.toString(); // unchangeable
@@ -162,7 +152,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     const tenant = await createUpdateDelete<TenantDocument>(
       route,
-      { 'Jest-User': rootUser!._id }, // as root
+      { 'Jest-User': jest.rootUser._id }, // as root
       [
         {
           action: 'create',
@@ -172,7 +162,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         {
           action: 'addRemark',
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(rootUser!._id, FAKE) },
+          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(jest.rootUser._id, FAKE) },
         },
         {
           action: 'updateCore',
@@ -199,7 +189,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     await createUpdateDelete<TenantDocument>(
       route,
-      { 'Jest-User': rootUser!._id }, // add admins as root
+      { 'Jest-User': jest.rootUser._id }, // add admins as root
       [
         {
           action: 'update',
@@ -225,7 +215,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       website: `https://www.${domain}`,
       flaggedWords: prob(0.5) ? [] : [FAKE, FAKE2],
     };
-    [htmlUrl, logoUrl] = await Promise.all([jestPutObject(users[0]._id), jestPutObject(users[0]._id)]);
+    const [htmlUrl, logoUrl, stashUrl] = await Promise.all([
+      jestPutObject(users[0]._id),
+      jestPutObject(users[0]._id),
+      jestPutObject(users[0]._id),
+    ]);
 
     await createUpdateDelete<TenantDocument>(
       route,
@@ -241,6 +235,14 @@ describe(`${route.toUpperCase()} API Routes`, () => {
           data: { ...tenantExtra, htmlUrl: '', logoUrl },
           expectedMinFormat: { ...expectedMinFormat, ...tenantExtra, logoUrl },
         },
+        {
+          action: 'addStash', // simplified, not test removeStash
+          data: { title: FAKE, secret: FAKE2, url: stashUrl },
+          expectedMinFormat: {
+            ...expectedMinFormat,
+            stashes: [{ _id: expectedIdFormat, title: FAKE, secret: FAKE2, url: stashUrl }],
+          },
+        },
       ],
       { skipAssertion: true, overrideId: tenantId },
     );
@@ -248,9 +250,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     // remove
     await createUpdateDelete<TenantDocument>(
       route,
-      { 'Jest-User': rootUser!._id }, //
+      { 'Jest-User': jest.rootUser._id }, //
       [{ action: 'delete', data: {} }],
       { skipAssertion: true, overrideId: tenantId },
     );
+
+    // clean up
+    await Promise.all([jestRemoveObject(htmlUrl), jestRemoveObject(logoUrl), jestRemoveObject(stashUrl)]);
   });
 });

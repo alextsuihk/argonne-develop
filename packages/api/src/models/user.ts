@@ -47,7 +47,7 @@ const userSchema = new Schema(
     emails: [{ type: String, trim: true, index: true }],
 
     password: { type: String, required: true },
-    oAuth2s: [{ type: String, index: true }],
+    oAuth2s: [{ type: String, index: true }], // format `GOOGLE#${subId}`
 
     avatarUrl: String,
     messengers: [String], // `WHATSAPP#+85212345678` uppercase for verified messenger, 'mobile#+85298765432' for unverified

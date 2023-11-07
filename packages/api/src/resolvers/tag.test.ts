@@ -9,23 +9,23 @@ import { LOCALE } from '@argonne/common';
 
 import configLoader from '../config/config-loader';
 import {
+  FAKE,
+  FAKE2_LOCALE,
+  FAKE_LOCALE,
+  apolloContext,
   apolloExpect,
-  ApolloServer,
+  apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
-  FAKE,
-  FAKE_LOCALE,
-  FAKE2_LOCALE,
   jestSetup,
   jestTeardown,
   prob,
   randomItem,
-  testServer,
 } from '../jest';
+import type { TagDocument } from '../models/tag';
 import Tag from '../models/tag';
-import type { UserDocument } from '../models/user';
 import { ADD_TAG, ADD_TAG_REMARK, GET_TAG, GET_TAGS, REMOVE_TAG, UPDATE_TAG } from '../queries/tag';
 
 const { MSG_ENUM } = LOCALE;
@@ -33,10 +33,7 @@ const { DEFAULTS } = configLoader;
 
 // Top level of this test suite:
 describe('Tag GraphQL', () => {
-  let adminServer: ApolloServer | null;
-  let adminUser: UserDocument | null;
-  let guestServer: ApolloServer | null;
-  let normalUsers: UserDocument[] | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedNormalFormat = {
     _id: expectedIdFormat,
@@ -54,27 +51,23 @@ describe('Tag GraphQL', () => {
     remarks: expect.any(Array), // could be empty array without any remarks
   };
 
-  beforeAll(async () => {
-    ({ adminServer, adminUser, guestServer, normalUsers } = await jestSetup(['admin', 'guest', 'normal'], {
-      apollo: true,
-    }));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should response an array of data when GET all', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({ query: GET_TAGS });
+    const res = await apolloTestServer.executeOperation({ query: GET_TAGS }, { contextValue: apolloContext(null) });
     apolloExpect(res, 'data', { tags: expect.arrayContaining([expectedNormalFormat]) });
   });
 
   test('should response an array of data when GET all with arguments', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({
-      query: GET_TAGS,
-      variables: { updatedAfter: '2000-01-01', updatedBefore: '2100-12-31', skipDeleted: true },
-    });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_TAGS, variables: { updatedAfter: '2000-01-01', updatedBefore: '2100-12-31', skipDeleted: true } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'data', { tags: expect.arrayContaining([expectedNormalFormat]) });
   });
 
@@ -83,41 +76,46 @@ describe('Tag GraphQL', () => {
 
     const tags = await Tag.find({ deletedAt: { $exists: false } }).lean();
     const id = randomItem(tags)._id.toString();
-    const res = await guestServer!.executeOperation({ query: GET_TAG, variables: { id } });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_TAG, variables: { id } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'data', { tag: expectedNormalFormat });
   });
 
   test('should fail when GET non-existing document without ID argument', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({ query: GET_TAG });
+    const res = await apolloTestServer.executeOperation({ query: GET_TAG }, { contextValue: apolloContext(null) });
     apolloExpect(res, 'error', 'Variable "$id" of required type "ID!" was not provided.');
   });
 
   test('should fail when GET non-existing document without valid Mongo ID argument', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({ query: GET_TAG, variables: { id: 'invalid-mongoID' } });
-    apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.INVALID_ID}`);
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_TAG, variables: { id: 'invalid-mongoID' } },
+      { contextValue: apolloContext(null) },
+    );
+    apolloExpect(res, 'errorContaining', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
   });
 
   test('should fail when mutating without ADMIN role & without sufficient creditability', async () => {
     expect.assertions(2);
 
-    const user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.CREATE_TAG);
+    const user = jest.normalUsers.find(user => user.creditability < DEFAULTS.CREDITABILITY.CREATE_TAG);
     if (!user) throw 'no valid user to proceed';
-    const userServer = testServer(user);
 
     // add a document
-    const res = await userServer.executeOperation({
-      query: ADD_TAG,
-      variables: { tag: { name: FAKE_LOCALE, description: FAKE2_LOCALE } },
-    });
+    const res = await apolloTestServer.executeOperation(
+      { query: ADD_TAG, variables: { tag: { name: FAKE_LOCALE, description: FAKE2_LOCALE } } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // add remark
-    const res3 = await userServer.executeOperation({
-      query: ADD_TAG_REMARK,
-      variables: { id: FAKE, remark: FAKE },
-    });
+    const res3 = await apolloTestServer.executeOperation(
+      { query: ADD_TAG_REMARK, variables: { id: FAKE, remark: FAKE } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res3, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ADMIN}`);
   });
 
@@ -125,52 +123,55 @@ describe('Tag GraphQL', () => {
     expect.assertions(6);
 
     // add a document
-    const createdRes = await adminServer!.executeOperation({
-      query: ADD_TAG,
-      variables: { tag: { name: FAKE_LOCALE, description: FAKE2_LOCALE } },
-    });
+    const createdRes = await apolloTestServer.executeOperation<{ addTag: TagDocument }>(
+      { query: ADD_TAG, variables: { tag: { name: FAKE_LOCALE, description: FAKE2_LOCALE } } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(createdRes, 'data', { addTag: expectedAdminFormat });
-    const newId: string = createdRes.data!.addTag._id;
+    const newId = createdRes.body.kind === 'single' ? createdRes.body.singleResult.data!.addTag._id.toString() : null;
 
     // update without sufficient creditability
-    const user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.UPDATE_TAG);
+    const user = jest.normalUsers.find(user => user.creditability < DEFAULTS.CREDITABILITY.UPDATE_TAG);
     if (!user) throw 'no valid user to proceed';
-    const updatedFailRes = await testServer(user!).executeOperation({
-      query: UPDATE_TAG,
-      variables: { id: newId, tag: { name: FAKE2_LOCALE, description: FAKE_LOCALE } },
-    });
+    const updatedFailRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_TAG, variables: { id: newId, tag: { name: FAKE2_LOCALE, description: FAKE_LOCALE } } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(updatedFailRes, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // update newly created document
-    const updatedRes = await adminServer!.executeOperation({
-      query: UPDATE_TAG,
-      variables: { id: newId, tag: { name: FAKE2_LOCALE, description: FAKE_LOCALE } },
-    });
+    const updatedRes = await apolloTestServer.executeOperation(
+      {
+        query: UPDATE_TAG,
+        variables: { id: newId, tag: { name: FAKE2_LOCALE, description: FAKE_LOCALE } },
+      },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(updatedRes, 'data', { updateTag: expectedAdminFormat });
 
     // add remark
-    const addRemarkRes = await adminServer!.executeOperation({
-      query: ADD_TAG_REMARK,
-      variables: { id: newId, remark: FAKE },
-    });
+    const addRemarkRes = await apolloTestServer.executeOperation(
+      { query: ADD_TAG_REMARK, variables: { id: newId, remark: FAKE } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(addRemarkRes, 'data', {
-      addTagRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
+      addTagRemark: { ...expectedAdminFormat, ...expectedRemark(jest.adminUser._id, FAKE, true) },
     });
 
     // delete without sufficient creditability
-    const user2 = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.REMOVE_TAG);
-    if (!user) throw 'no valid user to proceed';
-    const removedFailRes = await testServer(user2!).executeOperation({
-      query: REMOVE_TAG,
-      variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) },
-    });
+    const user2 = jest.normalUsers.find(user => user.creditability < DEFAULTS.CREDITABILITY.REMOVE_TAG);
+    if (!user2) throw 'no valid user to proceed';
+    const removedFailRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_TAG, variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) } },
+      { contextValue: apolloContext(user2) },
+    );
     apolloExpect(removedFailRes, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // delete newly created document
-    const removedRes = await adminServer!.executeOperation({
-      query: REMOVE_TAG,
-      variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) },
-    });
+    const removedRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_TAG, variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(removedRes, 'data', { removeTag: { code: MSG_ENUM.COMPLETED } });
   });
 
@@ -178,11 +179,17 @@ describe('Tag GraphQL', () => {
     expect.assertions(2);
 
     // add without name
-    let res = await adminServer!.executeOperation({ query: ADD_TAG, variables: { tag: { description: FAKE_LOCALE } } });
+    let res = await apolloTestServer.executeOperation(
+      { query: ADD_TAG, variables: { tag: { description: FAKE_LOCALE } } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res, 'errorContaining', 'Field "name" of required type "LocaleInput!" was not provided.');
 
     // add without description
-    res = await adminServer!.executeOperation({ query: ADD_TAG, variables: { tag: { name: FAKE_LOCALE } } });
+    res = await apolloTestServer.executeOperation(
+      { query: ADD_TAG, variables: { tag: { name: FAKE_LOCALE } } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res, 'errorContaining', 'Field "description" of required type "LocaleInput!" was not provided.');
   });
 });

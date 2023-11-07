@@ -3,12 +3,14 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
+import gql from 'graphql-tag'; // to deduplicate fragment name (when nesting)
 
 import { REMARK, STATUS_RESPONSE } from './common';
 import { CONTRIBUTION_FIELDS } from './contribution';
 
 export const BOOK_ASSIGNMENT_FIELDS = gql`
+  ${CONTRIBUTION_FIELDS}
+  ${REMARK}
   fragment BookAssignmentFields on BookAssignment {
     _id
     flags

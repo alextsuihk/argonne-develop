@@ -3,17 +3,15 @@
  * Commonly used graphql fragments
  */
 
-import { gql } from 'apollo-server-express';
-
-export const BID = gql`
+export const BID = `#graphql
   fragment BidFields on Bid {
     bidder
-    price
+    bounty
     contents
   }
 `;
 
-export const LOCALE = gql`
+export const LOCALE = `#graphql
   fragment LocaleFields on Locale {
     enUS
     zhCN
@@ -21,7 +19,7 @@ export const LOCALE = gql`
   }
 `;
 
-export const REMARK = gql`
+export const REMARK = `#graphql
   fragment RemarkFields on Remark {
     u
     t
@@ -29,13 +27,13 @@ export const REMARK = gql`
   }
 `;
 
-export const STATUS_RESPONSE = gql`
+export const STATUS_RESPONSE = `#graphql
   fragment StatusResponse on StatusResponse {
     code
   }
 `;
 
-export const MEMBER = gql`
+export const MEMBER = `#graphql
   fragment MemberFields on Member {
     user
     flags
@@ -43,7 +41,7 @@ export const MEMBER = gql`
   }
 `;
 
-export const CHAT = gql`
+export const CHAT = `#graphql
   ${MEMBER}
   fragment ChatFields on Chat {
     _id

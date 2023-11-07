@@ -5,24 +5,27 @@
 
 import { LOCALE } from '@argonne/common';
 
+import tutorInverseRankingController from '../controllers/tutor-inverse-ranking';
 import {
+  apolloContext,
   apolloExpect,
-  ApolloServer,
+  apolloTestServer,
   expectedIdFormat,
   jestSetup,
   jestTeardown,
   randomItem,
   shuffle,
-  testServer,
 } from '../jest';
 import Question from '../models/question';
+import type { UserDocument } from '../models/user';
 import { GET_TUTOR_INVERSE_RANKING, GET_TUTOR_INVERSE_RANKINGS } from '../queries/tutor-inverse-ranking';
 
 const { MSG_ENUM } = LOCALE;
 
 // Top tutor-inverse-ranking of this test suite:
 describe('Tutor-Inverse-Ranking GraphQL', () => {
-  let tutorServer: ApolloServer;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
+  let tutorUser: UserDocument;
 
   const expectedFormat = {
     _id: expectedIdFormat,
@@ -32,10 +35,10 @@ describe('Tutor-Inverse-Ranking GraphQL', () => {
   };
 
   beforeAll(async () => {
-    const { normalUsers, tenantId } = await jestSetup(['normal'], { apollo: true });
+    jest = await jestSetup();
 
     const questions = await Question.find({
-      tenant: tenantId,
+      tenant: jest.tenantId,
       tutor: { $exists: true },
       correctness: { $exists: true },
       explicitness: { $exists: true },
@@ -44,36 +47,44 @@ describe('Tutor-Inverse-Ranking GraphQL', () => {
     if (!questions.length) throw 'No questions with proper ranking info to proceed';
 
     const tutorUserIds = questions.map(q => q.tutor).sort(shuffle);
-    const user = normalUsers!.find(u => tutorUserIds.some(tutorUserId => tutorUserId!.equals(u._id)));
-    tutorServer = testServer(user!);
+    tutorUser = jest.normalUsers.find(u => tutorUserIds.some(tutorUserId => tutorUserId!.equals(u._id)))!;
   });
   afterAll(jestTeardown);
 
   test('should response an array of data when GET all, and GET One by studentId', async () => {
     expect.assertions(2);
 
-    const res = await tutorServer.executeOperation({ query: GET_TUTOR_INVERSE_RANKINGS });
+    const res = await apolloTestServer.executeOperation<{
+      tutorInverseRankings: Awaited<ReturnType<typeof tutorInverseRankingController.find>>;
+    }>({ query: GET_TUTOR_INVERSE_RANKINGS }, { contextValue: apolloContext(tutorUser) });
     apolloExpect(res, 'data', { tutorInverseRankings: expect.arrayContaining([expectedFormat]) });
 
-    const studentId = randomItem(res.data!.tutorInverseRankings as { _id: string }[])._id.toString();
-    const res2 = await tutorServer.executeOperation({ query: GET_TUTOR_INVERSE_RANKING, variables: { id: studentId } });
+    const studentId =
+      res.body.kind === 'single' ? randomItem(res.body.singleResult.data!.tutorInverseRankings)._id.toString() : null;
+    const res2 = await apolloTestServer.executeOperation(
+      { query: GET_TUTOR_INVERSE_RANKING, variables: { id: studentId } },
+      { contextValue: apolloContext(tutorUser) },
+    );
     apolloExpect(res2, 'data', { tutorInverseRanking: { ...expectedFormat, _id: studentId } });
   });
 
   test('should fail when GET One without ID argument', async () => {
     expect.assertions(1);
 
-    const res = await tutorServer!.executeOperation({ query: GET_TUTOR_INVERSE_RANKING });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_TUTOR_INVERSE_RANKING },
+      { contextValue: apolloContext(tutorUser) },
+    );
     apolloExpect(res, 'error', 'Variable "$id" of required type "ID!" was not provided.');
   });
 
   test('should fail when GET One without valid Mongo ID argument', async () => {
     expect.assertions(1);
 
-    const res = await tutorServer!.executeOperation({
-      query: GET_TUTOR_INVERSE_RANKING,
-      variables: { id: 'invalid-mongoID' },
-    });
-    apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.INVALID_ID}`);
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_TUTOR_INVERSE_RANKING, variables: { id: 'invalid-mongoID' } },
+      { contextValue: apolloContext(tutorUser) },
+    );
+    apolloExpect(res, 'errorContaining', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
   });
 });

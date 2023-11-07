@@ -8,7 +8,8 @@ import { LOCALE } from '@argonne/common';
 
 import {
   apolloExpect,
-  ApolloServer,
+  apolloContext,
+  apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
   expectedRemark,
@@ -21,7 +22,6 @@ import {
   mongoId,
   prob,
   randomItem,
-  testServer,
 } from '../jest';
 import School from '../models/school';
 import type { TenantDocument } from '../models/tenant';
@@ -47,17 +47,8 @@ import { schoolYear } from '../utils/helper';
 const { MSG_ENUM } = LOCALE;
 const { USER } = LOCALE.DB_ENUM;
 
-describe('Auth-Extra GraphQL (token)', () => {
-  let guestServer: ApolloServer | null;
-  let normalServer: ApolloServer | null;
-  let rootServer: ApolloServer | null;
-  let rootUser: UserDocument | null;
-  let normalUser: UserDocument | null;
-
-  let tenant: TenantDocument | null;
-  let tenantAdmin: UserDocument | null;
-  let tenantAdminServer: ApolloServer | null;
-  let tenantId: string | null;
+describe('User GraphQL (token)', () => {
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedFormat = {
     _id: expectedIdFormat,
@@ -83,10 +74,8 @@ describe('Auth-Extra GraphQL (token)', () => {
   };
 
   beforeAll(async () => {
-    ({ guestServer, normalServer, normalUser, rootServer, rootUser, tenant, tenantAdmin, tenantAdminServer, tenantId } =
-      await jestSetup(['guest', 'normal', 'root', 'tenantAdmin'], { apollo: true }));
-
-    if (!tenant!.school) throw 'Tenant must be a school tenant in order to run user.test';
+    jest = await jestSetup();
+    if (!jest.tenant.school) throw 'Tenant must be a school tenant in order to run user.test';
   });
   afterAll(jestTeardown);
 
@@ -100,27 +89,41 @@ describe('Auth-Extra GraphQL (token)', () => {
     expect.assertions(2);
 
     // const variables = { query: { skipDeleted: false } };
-    const manyRes = await rootServer!.executeOperation({ query: GET_USERS });
+    const manyRes = await apolloTestServer.executeOperation<{ users: UserDocument[] }>(
+      { query: GET_USERS },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(manyRes, 'data', {
       users: expect.arrayContaining([expectedFormat]),
     });
 
-    const id = (randomItem(manyRes.data!.users) as { _id: string })._id;
-    const oneRes = await rootServer!.executeOperation({ query: GET_USER, variables: { id } });
+    const id = manyRes.body.kind === 'single' ? randomItem(manyRes.body.singleResult.data!.users)._id.toString() : null;
+    const oneRes = await apolloTestServer.executeOperation(
+      { query: GET_USER, variables: { id } },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(oneRes, 'data', { user: { ...expectedFormat, _id: id } });
   });
 
   test('should response an array of data when GET all and Get One (as school tenantAdmin)', async () => {
     expect.assertions(2);
 
-    const manyRes = await tenantAdminServer!.executeOperation({ query: GET_USERS });
+    const manyRes = await apolloTestServer.executeOperation<{ users: UserDocument[] }>(
+      { query: GET_USERS },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(manyRes, 'data', {
-      users: expect.arrayContaining([{ ...expectedFormat, tenants: expect.arrayContaining([tenantId]) }]),
+      users: expect.arrayContaining([{ ...expectedFormat, tenants: expect.arrayContaining([jest.tenantId]) }]),
     });
 
-    const id = (randomItem(manyRes.data!.users) as { _id: string })._id;
-    const oneRes = await tenantAdminServer!.executeOperation({ query: GET_USER, variables: { id } });
-    apolloExpect(oneRes, 'data', { user: { ...expectedFormat, _id: id, tenants: expect.arrayContaining([tenantId]) } });
+    const id = manyRes.body.kind === 'single' ? randomItem(manyRes.body.singleResult.data!.users)._id.toString() : null;
+    const oneRes = await apolloTestServer.executeOperation(
+      { query: GET_USER, variables: { id } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
+    apolloExpect(oneRes, 'data', {
+      user: { ...expectedFormat, _id: id, tenants: expect.arrayContaining([jest.tenantId]) },
+    });
   });
 
   test('should response an array of data when GET all and Get One (as non-school tenantAdmin)', async () => {
@@ -140,12 +143,17 @@ describe('Auth-Extra GraphQL (token)', () => {
       violations: [],
     }; // studentId is hidden, show one tenantId
 
-    const server = testServer(admin);
-    const manyRes = await server.executeOperation({ query: GET_USERS });
+    const manyRes = await apolloTestServer.executeOperation<{ users: UserDocument[] }>(
+      { query: GET_USERS },
+      { contextValue: apolloContext(admin) },
+    );
     apolloExpect(manyRes, 'data', { users: expect.arrayContaining([expectedFormatEx]) });
 
-    const id = (randomItem(manyRes.data!.users) as { _id: string })._id;
-    const oneRes = await server.executeOperation({ query: GET_USER, variables: { id } });
+    const id = manyRes.body.kind === 'single' ? randomItem(manyRes.body.singleResult.data!.users)._id.toString() : null;
+    const oneRes = await apolloTestServer.executeOperation(
+      { query: GET_USER, variables: { id } },
+      { contextValue: apolloContext(admin) },
+    );
     apolloExpect(oneRes, 'data', { user: { ...expectedFormatEx, _id: id } });
 
     // clean up
@@ -155,18 +163,30 @@ describe('Auth-Extra GraphQL (token)', () => {
     ]);
   });
 
-  test('should fail when  GET All or Get One (as guest or non TenantAdmin)', async () => {
+  test('should fail when  GET All or Get One (as guest or normalUser)', async () => {
     expect.assertions(4);
-    const manyRes = await guestServer!.executeOperation({ query: GET_USERS });
+    const manyRes = await apolloTestServer.executeOperation(
+      { query: GET_USERS },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(manyRes, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
 
-    const oneRes = await guestServer!.executeOperation({ query: GET_USER, variables: { id: mongoId().toString() } });
+    const oneRes = await apolloTestServer.executeOperation(
+      { query: GET_USER, variables: { id: mongoId().toString() } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(oneRes, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
 
-    const manyRes2 = await normalServer!.executeOperation({ query: GET_USERS });
+    const manyRes2 = await apolloTestServer.executeOperation(
+      { query: GET_USERS },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(manyRes2, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
-    const oneRes2 = await normalServer!.executeOperation({ query: GET_USER, variables: { id: mongoId().toString() } });
+    const oneRes2 = await apolloTestServer.executeOperation(
+      { query: GET_USER, variables: { id: mongoId().toString() } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(oneRes2, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
   });
 
@@ -180,37 +200,47 @@ describe('Auth-Extra GraphQL (token)', () => {
     const { user: admin } = await createUser(nonSchoolTenant._id.toString());
     await Tenant.updateOne({ _id: nonSchoolTenant._id }, { $addToSet: { admins: admin._id } });
 
-    const server = testServer(admin); // non school tenantAdmin
-
     // ADD_USER
     const tenantId = nonSchoolTenant._id.toString();
     const { name, emails } = genUser(null);
-    const addRes = await guestServer!.executeOperation({ query: ADD_USER, variables: { email: emails[0], name } });
+    const addRes = await apolloTestServer.executeOperation(
+      { query: ADD_USER, variables: { email: emails[0], name } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(addRes, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
 
-    const add2Res = await server.executeOperation({ query: ADD_USER, variables: { email: emails[0], name, tenantId } });
+    const add2Res = await apolloTestServer.executeOperation(
+      { query: ADD_USER, variables: { email: emails[0], name, tenantId } },
+      { contextValue: apolloContext(admin) },
+    );
     apolloExpect(add2Res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // ADD_USER_REMARK
     const id = user._id.toString();
-    const updateRes = await guestServer!.executeOperation({ query: ADD_USER_REMARK, variables: { id, remark: FAKE } });
+    const updateRes = await apolloTestServer.executeOperation(
+      { query: ADD_USER_REMARK, variables: { id, remark: FAKE } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(updateRes, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
 
-    const update2Res = await server.executeOperation({ query: ADD_USER_REMARK, variables: { id, remark: FAKE } });
+    const update2Res = await apolloTestServer.executeOperation(
+      { query: ADD_USER_REMARK, variables: { id, remark: FAKE } },
+      { contextValue: apolloContext(admin) },
+    );
     apolloExpect(update2Res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // CHANGE_USER_PASSWORD
     const password = User.genValidPassword();
-    const changePasswdRes = await guestServer!.executeOperation({
-      query: CHANGE_USER_PASSWORD,
-      variables: { id, password },
-    });
+    const changePasswdRes = await apolloTestServer.executeOperation(
+      { query: CHANGE_USER_PASSWORD, variables: { id, password } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(changePasswdRes, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
 
-    const changePasswd2Res = await server!.executeOperation({
-      query: CHANGE_USER_PASSWORD,
-      variables: { id, password },
-    });
+    const changePasswd2Res = await apolloTestServer.executeOperation(
+      { query: CHANGE_USER_PASSWORD, variables: { id, password } },
+      { contextValue: apolloContext(admin) },
+    );
     apolloExpect(changePasswd2Res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // clean up
@@ -227,7 +257,10 @@ describe('Auth-Extra GraphQL (token)', () => {
     const email = emails[0]!;
 
     // add user
-    const addRes = await rootServer!.executeOperation({ query: ADD_USER, variables: { tenantId, email, name } });
+    const addRes = await apolloTestServer.executeOperation(
+      { query: ADD_USER, variables: { tenantId: jest.tenantId, email, name } },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(addRes, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
   });
 
@@ -237,21 +270,25 @@ describe('Auth-Extra GraphQL (token)', () => {
     const { name, emails } = genUser(null);
 
     // ADD_USER by (school) tenantAdmin
-    const create = { tenantId, email: emails[0]!, name, ...(prob(0.5) && { studentId: FAKE }) };
-    const addRes = await tenantAdminServer!.executeOperation({ query: ADD_USER, variables: create });
+    const create = { tenantId: jest.tenantId, email: emails[0]!, name, ...(prob(0.5) && { studentId: FAKE }) };
+    const addRes = await apolloTestServer.executeOperation<{ addUser: UserDocument }>(
+      { query: ADD_USER, variables: create },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(addRes, 'data', {
       addUser: {
         ...expectedFormat,
         flags: [USER.FLAG.REQUIRE_PASSWORD_CHANGE],
-        tenants: [tenantId],
+        tenants: [jest.tenantId],
         name,
         emails: [emails[0]!.toUpperCase()], // upper-case for unverified email
-        ...(create.studentId && { studentIds: [`${tenantId}#${FAKE}`] }),
+        ...(create.studentId && { studentIds: [`${jest.tenantId}#${FAKE}`] }),
       },
     });
 
     // clean up
-    await User.deleteOne({ _id: addRes.data!.addUser._id });
+    const id = addRes.body.kind === 'single' ? addRes.body.singleResult.data!.addUser._id.toString() : null;
+    await User.deleteOne({ _id: id });
   });
 
   test('should fail when add already existing users (not in tenantId) (as tenantAdmin)', async () => {
@@ -260,10 +297,10 @@ describe('Auth-Extra GraphQL (token)', () => {
     const { user } = await createUser(null);
 
     // ADD_USER
-    const addRes = await tenantAdminServer!.executeOperation({
-      query: ADD_USER,
-      variables: { tenantId, email: user.emails[0], name: FAKE },
-    });
+    const addRes = await apolloTestServer.executeOperation(
+      { query: ADD_USER, variables: { tenantId: jest.tenantId, email: user.emails[0], name: FAKE } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(addRes, 'error', `MSG_CODE#${MSG_ENUM.AUTH_EMAIL_ALREADY_REGISTERED}`);
 
     // clean up
@@ -272,34 +309,37 @@ describe('Auth-Extra GraphQL (token)', () => {
 
   test('should pass when add already existing users (already in tenantId) (as tenantAdmin)', async () => {
     // ADD_USER
-    const addRes = await tenantAdminServer!.executeOperation({
-      query: ADD_USER,
-      variables: { tenantId, email: normalUser!.emails[0], name: FAKE },
-    });
+    const addRes = await apolloTestServer.executeOperation(
+      { query: ADD_USER, variables: { tenantId: jest.tenantId, email: jest.normalUser.emails[0], name: FAKE } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
 
-    apolloExpect(addRes, 'data', { addUser: { ...expectedFormat, _id: normalUser!._id.toString() } });
+    apolloExpect(addRes, 'data', { addUser: { ...expectedFormat, _id: jest.normalUser._id.toString() } });
   });
 
   test('should pass when change password (as root or tenantAdmin)', async () => {
     expect.assertions(4);
 
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
     const password = User.genValidPassword();
 
     // CHANGE_USER_PASSWORD (by ROOT)
-    const changePasswordRes = await rootServer!.executeOperation({
-      query: CHANGE_USER_PASSWORD,
-      variables: { id, password },
-    });
+    const changePasswordRes = await apolloTestServer.executeOperation(
+      { query: CHANGE_USER_PASSWORD, variables: { id, password } },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(changePasswordRes, 'data', { changeUserPassword: { code: MSG_ENUM.COMPLETED } });
     let updatedUser = await User.findByIdAndUpdate(id, { $pull: { flags: USER.FLAG.REQUIRE_PASSWORD_CHANGE } }).lean(); // read back & remove flag
     expect(updatedUser!.flags).toEqual([USER.FLAG.REQUIRE_PASSWORD_CHANGE]);
 
     // CHANGE_USER_PASSWORD (by tenantAdmin)
-    const changePassword2Res = await tenantAdminServer!.executeOperation({
-      query: CHANGE_USER_PASSWORD,
-      variables: { id, password },
-    });
+    const changePassword2Res = await apolloTestServer.executeOperation(
+      {
+        query: CHANGE_USER_PASSWORD,
+        variables: { id, password },
+      },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(changePassword2Res, 'data', { changeUserPassword: { code: MSG_ENUM.COMPLETED } });
     updatedUser = await User.findById(id).lean();
     expect(updatedUser!.flags).toEqual([USER.FLAG.REQUIRE_PASSWORD_CHANGE]);
@@ -311,33 +351,33 @@ describe('Auth-Extra GraphQL (token)', () => {
   test('should pass when add & remove feature', async () => {
     expect.assertions(4);
 
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     // ADD_USER_FEATURE & REMOVE_USER_FEATURE (by ROOT)
     const feature = randomItem(Object.keys(USER.FEATURE));
-    const addFeatureRes = await rootServer!.executeOperation({
-      query: ADD_USER_FEATURE,
-      variables: { id, feature },
-    });
+    const addFeatureRes = await apolloTestServer.executeOperation(
+      { query: ADD_USER_FEATURE, variables: { id, feature } },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(addFeatureRes, 'data', { addUserFeature: { ...expectedFormat, features: [feature] } });
 
-    const removeFeatureRes = await rootServer!.executeOperation({
-      query: REMOVE_USER_FEATURE,
-      variables: { id, feature },
-    });
+    const removeFeatureRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_USER_FEATURE, variables: { id, feature } },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(removeFeatureRes, 'data', { removeUserFeature: { ...expectedFormat, features: [] } });
 
     // ADD_USER_FEATURE & REMOVE_USER_FEATURE (by tenantAdmin)
-    const addFeature2Res = await tenantAdminServer!.executeOperation({
-      query: ADD_USER_FEATURE,
-      variables: { id, feature },
-    });
+    const addFeature2Res = await apolloTestServer.executeOperation(
+      { query: ADD_USER_FEATURE, variables: { id, feature } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(addFeature2Res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ROOT}`);
 
-    const removeFeature2Res = await tenantAdminServer!.executeOperation({
-      query: REMOVE_USER_FEATURE,
-      variables: { id, feature },
-    });
+    const removeFeature2Res = await apolloTestServer.executeOperation(
+      { query: REMOVE_USER_FEATURE, variables: { id, feature } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(removeFeature2Res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ROOT}`);
 
     // clean up
@@ -347,28 +387,28 @@ describe('Auth-Extra GraphQL (token)', () => {
   test('should pass when add remark', async () => {
     expect.assertions(2);
 
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     // ADD_USER_REMARK (by root)
-    const addRemarkRes = await rootServer!.executeOperation({
-      query: ADD_USER_REMARK,
-      variables: { id, remark: FAKE },
-    });
+    const addRemarkRes = await apolloTestServer.executeOperation(
+      { query: ADD_USER_REMARK, variables: { id, remark: FAKE } },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(addRemarkRes, 'data', {
-      addUserRemark: { ...expectedFormat, ...expectedRemark(rootUser!._id, FAKE, true) },
+      addUserRemark: { ...expectedFormat, ...expectedRemark(jest.rootUser._id, FAKE, true) },
     });
 
     // ADD_USER_REMARK (by tenantAdmin)
-    const addRemark2Res = await tenantAdminServer!.executeOperation({
-      query: ADD_USER_REMARK,
-      variables: { id, remark: FAKE2 },
-    });
+    const addRemark2Res = await apolloTestServer.executeOperation(
+      { query: ADD_USER_REMARK, variables: { id, remark: FAKE2 } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(addRemark2Res, 'data', {
       addUserRemark: {
         ...expectedFormat,
         remarks: [
-          { t: expectedDateFormat(true), u: rootUser!._id.toString(), m: FAKE }, // added by root
-          { t: expectedDateFormat(true), u: tenantAdmin!._id.toString(), m: FAKE2 }, // added by tenantAdmin
+          { t: expectedDateFormat(true), u: jest.rootUser._id.toString(), m: FAKE }, // added by root
+          { t: expectedDateFormat(true), u: jest.tenantAdmin._id.toString(), m: FAKE2 }, // added by tenantAdmin
         ],
       },
     });
@@ -380,33 +420,39 @@ describe('Auth-Extra GraphQL (token)', () => {
   test('should pass when set & clear flag', async () => {
     expect.assertions(4);
 
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     // SET_USER_FLAG & REMOVE_USER_FLAG (by ROOT)
     const flag = USER.FLAG.DEMO;
-    const setFlagRes = await rootServer!.executeOperation({
-      query: SET_USER_FLAG,
-      variables: { id, flag },
-    });
+    const setFlagRes = await apolloTestServer.executeOperation(
+      {
+        query: SET_USER_FLAG,
+        variables: { id, flag },
+      },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(setFlagRes, 'data', { setUserFlag: { ...expectedFormat, flags: [flag] } });
 
-    const clearFlagRes = await rootServer!.executeOperation({
-      query: CLEAR_USER_FLAG,
-      variables: { id, flag },
-    });
+    const clearFlagRes = await apolloTestServer.executeOperation(
+      {
+        query: CLEAR_USER_FLAG,
+        variables: { id, flag },
+      },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(clearFlagRes, 'data', { clearUserFlag: { ...expectedFormat, flags: [] } });
 
     // SET_USER_FLAG & CLEAR_USER_FLAG (by tenantAdmin)
-    const setFlag2Res = await tenantAdminServer!.executeOperation({
-      query: SET_USER_FLAG,
-      variables: { id, flag },
-    });
+    const setFlag2Res = await apolloTestServer.executeOperation(
+      { query: SET_USER_FLAG, variables: { id, flag } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(setFlag2Res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ROOT}`);
 
-    const clearFlag2Res = await tenantAdminServer!.executeOperation({
-      query: CLEAR_USER_FLAG,
-      variables: { id, flag },
-    });
+    const clearFlag2Res = await apolloTestServer.executeOperation(
+      { query: CLEAR_USER_FLAG, variables: { id, flag } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(clearFlag2Res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ROOT}`);
 
     // clean up
@@ -416,25 +462,25 @@ describe('Auth-Extra GraphQL (token)', () => {
   test('should pass when add schoolHistory', async () => {
     expect.assertions(3);
 
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
-    const tenant = await Tenant.findById(tenantId!).lean();
+    const tenant = await Tenant.findById(jest.tenantId).lean();
     const school = await School.findById(tenant!.school).lean();
     const schoolId = school!._id.toString();
 
     // ADD_USER_SCHOOL_HISTORY (by root)
     const history = { year: schoolYear(), level: randomItem(school!.levels).toString() };
-    const addHistoryRes = await rootServer!.executeOperation({
-      query: ADD_USER_SCHOOL_HISTORY,
-      variables: { id, ...history },
-    });
+    const addHistoryRes = await apolloTestServer.executeOperation(
+      { query: ADD_USER_SCHOOL_HISTORY, variables: { id, ...history } },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(addHistoryRes, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // ADD_USER_SCHOOL_HISTORY (by tenantAdmin)
-    const addHistory2Res = await tenantAdminServer!.executeOperation({
-      query: ADD_USER_SCHOOL_HISTORY,
-      variables: { id, ...history },
-    });
+    const addHistory2Res = await apolloTestServer.executeOperation(
+      { query: ADD_USER_SCHOOL_HISTORY, variables: { id, ...history } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(addHistory2Res, 'data', {
       addUserSchoolHistory: {
         ...expectedFormat,
@@ -444,10 +490,10 @@ describe('Auth-Extra GraphQL (token)', () => {
 
     // ADD_USER_SCHOOL_HISTORY (by tenantAdmin) (simulating next year)
     const history2 = { year: schoolYear(1), level: randomItem(school!.levels).toString(), schoolClass: '1X' };
-    const addHistory3Res = await tenantAdminServer!.executeOperation({
-      query: ADD_USER_SCHOOL_HISTORY,
-      variables: { id, ...history2 },
-    });
+    const addHistory3Res = await apolloTestServer.executeOperation(
+      { query: ADD_USER_SCHOOL_HISTORY, variables: { id, ...history2 } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(addHistory3Res, 'data', {
       addUserSchoolHistory: {
         ...expectedFormat,
@@ -465,14 +511,20 @@ describe('Auth-Extra GraphQL (token)', () => {
   test('should pass when suspend user', async () => {
     expect.assertions(2);
 
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     // SUSPEND_USER (by ROOT)
-    const suspendRes = await rootServer!.executeOperation({ query: SUSPEND_USER, variables: { id } });
+    const suspendRes = await apolloTestServer.executeOperation(
+      { query: SUSPEND_USER, variables: { id } },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(suspendRes, 'data', { suspendUser: { ...expectedFormat, suspendUtil: expectedDateFormat(true) } });
 
     // SUSPEND_USER (by tenantAdmin)
-    const suspend2Res = await tenantAdminServer!.executeOperation({ query: SUSPEND_USER, variables: { id } });
+    const suspend2Res = await apolloTestServer.executeOperation(
+      { query: SUSPEND_USER, variables: { id } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(suspend2Res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ROOT}`);
 
     // clean up
@@ -482,16 +534,22 @@ describe('Auth-Extra GraphQL (token)', () => {
   test('should pass when updateIdentifiedAt', async () => {
     expect.assertions(2);
 
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     // UPDATE_USER_IDENTIFIED_AT (by ROOT)
-    const res = await rootServer!.executeOperation({ query: UPDATE_USER_IDENTIFIED_AT, variables: { id } });
+    const res = await apolloTestServer.executeOperation(
+      { query: UPDATE_USER_IDENTIFIED_AT, variables: { id } },
+      { contextValue: apolloContext(jest.rootUser) },
+    );
     apolloExpect(res, 'data', {
       updateUserIdentifiedAt: { ...expectedFormat, identifiedAt: expectedDateFormat(true) },
     });
 
     // UPDATE_USER_IDENTIFIED_AT (by tenantAdmin)
-    const res2 = await tenantAdminServer!.executeOperation({ query: UPDATE_USER_IDENTIFIED_AT, variables: { id } });
+    const res2 = await apolloTestServer.executeOperation(
+      { query: UPDATE_USER_IDENTIFIED_AT, variables: { id } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(res2, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ROOT}`);
 
     // clean up

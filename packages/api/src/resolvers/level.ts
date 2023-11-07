@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import levelController from '../controllers/level';
 import { tryCatch } from './root';
 
@@ -13,13 +13,13 @@ const { addRemark, create, find, findOne, remove, update } = levelController;
 
 export default {
   Query: {
-    level: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => findOne(req, args)),
-    levels: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => find(req, args)),
+    level: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => findOne(req, args)),
+    levels: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => find(req, args)),
   },
   Mutation: {
-    addLevel: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
-    addLevelRemark: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addRemark(req, args)),
-    removeLevel: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => remove(req, args)),
-    updateLevel: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args)),
+    addLevel: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => create(req, args)),
+    addLevelRemark: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => addRemark(req, args)),
+    removeLevel: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => remove(req, args)),
+    updateLevel: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => update(req, args)),
   },
 };

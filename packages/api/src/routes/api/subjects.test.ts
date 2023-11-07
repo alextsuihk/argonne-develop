@@ -26,7 +26,7 @@ const { createUpdateDelete, getMany } = commonTest;
 describe('Subject API Routes', () => {
   const route = 'subjects';
 
-  let adminUser: UserDocument | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single subject format
   const expectedMinFormat = {
@@ -38,9 +38,7 @@ describe('Subject API Routes', () => {
     updatedAt: expectedDateFormat(),
   };
 
-  beforeAll(async () => {
-    ({ adminUser } = await jestSetup(['admin']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when getMany & getById', async () =>
@@ -52,7 +50,7 @@ describe('Subject API Routes', () => {
 
     await createUpdateDelete<SubjectDocument>(
       route,
-      { 'Jest-User': adminUser!._id },
+      { 'Jest-User': jest.adminUser._id },
 
       [
         {
@@ -63,7 +61,7 @@ describe('Subject API Routes', () => {
         {
           action: 'addRemark',
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
+          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(jest.adminUser._id, FAKE) },
         },
         {
           action: 'update',

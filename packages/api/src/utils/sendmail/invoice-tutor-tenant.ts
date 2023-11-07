@@ -9,6 +9,7 @@ import Tenant from '../../models/tenant';
 import User from '../../models/user';
 import { startChatGroup } from '../chat';
 import { sendmail } from './common';
+import { sleep } from '../helper';
 
 const { enUS } = LOCALE.DB_ENUM.SYSTEM.LOCALE;
 const { config } = configLoader;
@@ -36,6 +37,6 @@ export default async (): Promise<void> => {
     ]);
 
     await sendmail(emails, subject, body, `${__filename}: [ ${subject} ] ${JSON.stringify(emails)}`);
-    await new Promise(resolve => setTimeout(resolve, 5000)); // add some delay, not to stress email server
+    await sleep(1000 * 60 * 5); // add some delay, not to stress email server
   }
 };

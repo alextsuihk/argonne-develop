@@ -10,7 +10,8 @@ import { addDays } from 'date-fns';
 import configLoader from '../config/config-loader';
 import {
   apolloExpect,
-  ApolloServer,
+  apolloContext,
+  apolloTestServer,
   expectedIdFormat,
   expectedUserFormatApollo as expectedUserFormat,
   FAKE,
@@ -57,15 +58,13 @@ const { MESSENGER, SYSTEM, USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
 
 describe('Auth-Extra GraphQL (token)', () => {
-  let guestServer: ApolloServer | null;
-  let normalUser: UserDocument | null;
-  let normalServer: ApolloServer | null;
-  let url: string | undefined;
+  let user: UserDocument;
 
   beforeAll(async () => {
-    ({ guestServer, normalServer, normalUser } = await jestSetup(['guest', 'normal'], { apollo: true }));
+    const { normalUsers } = await jestSetup();
+    user = normalUsers.find(user => !(user.idx % 2))!; // pick an even index use (avoiding conflict with API)
   });
-  afterAll(async () => Promise.all([url && jestRemoveObject(url), jestTeardown()]));
+  afterAll(jestTeardown);
 
   console.log('WIP: REMOVE_PUSH_SUBSCRIPTIONS, OAUTH2_LINK & OAUTH2_UNLINK (Apollo)');
 
@@ -75,7 +74,7 @@ describe('Auth-Extra GraphQL (token)', () => {
     // add apiKey
     const add = { scope: FAKE, expireAt: addDays(Date.now(), 1), ...(prob(0.5) && { note: FAKE2 }) };
     const apiKeys = [
-      ...normalUser!.apiKeys.map(api => ({ ...api, token: expect.any(String), note: api.note || null })),
+      ...user.apiKeys.map(api => ({ ...api, token: expect.any(String), note: api.note || null })),
       {
         _id: expectedIdFormat,
         token: expect.any(String),
@@ -84,18 +83,32 @@ describe('Auth-Extra GraphQL (token)', () => {
         note: add.note || null,
       },
     ];
-    const addRes = await normalServer!.executeOperation({ query: ADD_API_KEY, variables: add });
+    const addRes = await apolloTestServer.executeOperation(
+      { query: ADD_API_KEY, variables: add },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(addRes, 'data', { addApiKey: apiKeys });
 
     // list apiKeys
-    const listRes = await normalServer!.executeOperation({ query: LIST_API_KEYS });
+    const listRes = await apolloTestServer.executeOperation<{ listApiKeys: UserDocument['apiKeys'] }>(
+      { query: LIST_API_KEYS },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(listRes, 'data', { listApiKeys: apiKeys });
 
     // remove apiKey
-    const id = listRes.data!.listApiKeys.at(-1)._id;
-    const removeRes = await normalServer!.executeOperation({ query: REMOVE_API_KEY, variables: { id } });
+    const id = listRes.body.kind === 'single' ? listRes.body.singleResult.data!.listApiKeys.at(-1)?._id : null;
+
+    const removeRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_API_KEY, variables: { id: id! } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(removeRes, 'data', {
-      removeApiKey: normalUser!.apiKeys.map(api => ({ ...api, token: expect.any(String), note: api.note ?? null })),
+      removeApiKey: user.apiKeys.map(api => ({
+        ...api,
+        token: expect.any(String),
+        note: api.note ?? null,
+      })),
     });
   });
 
@@ -104,45 +117,60 @@ describe('Auth-Extra GraphQL (token)', () => {
     const email = `JEST-${randomString()}@example.com`;
 
     // add email
-    const add1Res = await normalServer!.executeOperation({ query: ADD_EMAIL, variables: { email } });
+    const add1Res = await apolloTestServer.executeOperation(
+      { query: ADD_EMAIL, variables: { email } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(add1Res, 'data', {
       addEmail: expect.objectContaining({
         ...expectedUserFormat,
-        emails: [...normalUser!.emails, email.toUpperCase()], // unverified email
+        emails: [...user.emails, email.toUpperCase()], // unverified email
       }),
     });
 
     // remove email
-    const remove1Res = await normalServer!.executeOperation({ query: REMOVE_EMAIL, variables: { email } });
+    const remove1Res = await apolloTestServer.executeOperation(
+      { query: REMOVE_EMAIL, variables: { email } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(remove1Res, 'data', {
-      removeEmail: expect.objectContaining({ ...expectedUserFormat, emails: normalUser!.emails }), // back to original
+      removeEmail: expect.objectContaining({ ...expectedUserFormat, emails: user.emails }), // back to original
     });
 
     // add2 email
-    const add2Res = await normalServer!.executeOperation({ query: ADD_EMAIL, variables: { email } });
+    const add2Res = await apolloTestServer.executeOperation(
+      { query: ADD_EMAIL, variables: { email } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(add2Res, 'data', {
       addEmail: expect.objectContaining({
         ...expectedUserFormat,
-        emails: [...normalUser!.emails, email.toUpperCase()],
+        emails: [...user.emails, email.toUpperCase()],
       }),
     });
 
     // send verification
-    const sendVerificationRes = await normalServer!.executeOperation({
-      query: SEND_EMAIL_VERIFICATION,
-      variables: { email },
-    });
+    const sendVerificationRes = await apolloTestServer.executeOperation(
+      { query: SEND_EMAIL_VERIFICATION, variables: { email } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(sendVerificationRes, 'data', { sendEmailVerification: { code: MSG_ENUM.COMPLETED } });
 
     // verify email
     const confirmToken = await token.signStrings([EMAIL_TOKEN_PREFIX, email], 5);
-    const verifyRes = await guestServer!.executeOperation({ query: VERIFY_EMAIL, variables: { token: confirmToken } });
+    const verifyRes = await apolloTestServer.executeOperation(
+      { query: VERIFY_EMAIL, variables: { token: confirmToken } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(verifyRes, 'data', { verifyEmail: { code: MSG_ENUM.COMPLETED } });
 
     // remove2 email
-    const remove2Res = await normalServer!.executeOperation({ query: REMOVE_EMAIL, variables: { email } });
+    const remove2Res = await apolloTestServer.executeOperation(
+      { query: REMOVE_EMAIL, variables: { email } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(remove2Res, 'data', {
-      removeEmail: expect.objectContaining({ ...expectedUserFormat, emails: normalUser!.emails }),
+      removeEmail: expect.objectContaining({ ...expectedUserFormat, emails: user.emails }),
     });
   });
 
@@ -150,15 +178,21 @@ describe('Auth-Extra GraphQL (token)', () => {
     expect.assertions(1);
 
     const email = `JEST-${randomString()}.valid@example.com`;
-    const res = await guestServer!.executeOperation({ query: IS_EMAIL_AVAILABLE, variables: { email } });
+    const res = await apolloTestServer.executeOperation(
+      { query: IS_EMAIL_AVAILABLE, variables: { email } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'data', { isEmailAvailable: true });
   });
 
   test('should response false when email is not available', async () => {
     expect.assertions(1);
 
-    const [email] = normalUser!.emails;
-    const res = await guestServer!.executeOperation({ query: IS_EMAIL_AVAILABLE, variables: { email } });
+    const [email] = user!.emails;
+    const res = await apolloTestServer.executeOperation(
+      { query: IS_EMAIL_AVAILABLE, variables: { email } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'data', { isEmailAvailable: false });
   });
 
@@ -166,7 +200,10 @@ describe('Auth-Extra GraphQL (token)', () => {
     expect.assertions(1);
 
     const INVALID_EMAIL = 'invalid_mail'; // yup thinks invalid@email is valid
-    const res = await guestServer!.executeOperation({ query: IS_EMAIL_AVAILABLE, variables: { email: INVALID_EMAIL } });
+    const res = await apolloTestServer.executeOperation(
+      { query: IS_EMAIL_AVAILABLE, variables: { email: INVALID_EMAIL } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'errorContaining', 'email must be a valid email');
   });
 
@@ -179,54 +216,57 @@ describe('Auth-Extra GraphQL (token)', () => {
     const upperCase = `${provider.toUpperCase()}#${account}`;
 
     // add messenger
-    const addRes = await normalServer!.executeOperation({ query: ADD_MESSENGER, variables: { provider, account } });
+    const addRes = await apolloTestServer.executeOperation(
+      { query: ADD_MESSENGER, variables: { provider, account } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(addRes, 'data', {
       addMessenger: expect.objectContaining({
         ...expectedUserFormat,
-        messengers: [...normalUser!.messengers, lowercase], // lower case for unverified
+        messengers: [...user.messengers, lowercase], // lower case for unverified
       }),
     });
 
     // confirm token is generated in VerificationToken collection
-    const originalToken = await VerificationToken.findOne({ user: normalUser!._id, messenger: lowercase }).lean();
-    expect(originalToken!.user.toString()).toEqual(normalUser!._id.toString());
+    const originalToken = await VerificationToken.findOne({ user: user._id, messenger: lowercase }).lean();
+    expect(originalToken!.user.toString()).toEqual(user._id.toString());
     expect(originalToken!.messenger).toBe(lowercase);
 
     // simulating resending verification token
-    const sendVerificationRes = await normalServer!.executeOperation({
-      query: SEND_MESSENGER_VERIFICATION,
-      variables: { provider, account },
-    });
+    const sendVerificationRes = await apolloTestServer.executeOperation(
+      { query: SEND_MESSENGER_VERIFICATION, variables: { provider, account } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(sendVerificationRes, 'data', { sendMessengerVerification: { code: MSG_ENUM.COMPLETED } });
 
-    const updatedToken = await VerificationToken.findOne({ user: normalUser!._id, messenger: lowercase }).lean();
+    const updatedToken = await VerificationToken.findOne({ user: user._id, messenger: lowercase }).lean();
     expect(
       !originalToken!._id.equals(updatedToken!._id) &&
         originalToken!.token !== updatedToken!.token &&
         updatedToken &&
-        normalUser!._id.equals(updatedToken.user) &&
+        user._id.equals(updatedToken.user) &&
         updatedToken.messenger === lowercase,
     ).toBeTrue();
 
     // verify messenger
-    const verifyRes = await normalServer!.executeOperation({
-      query: VERIFY_MESSENGER,
-      variables: { provider, account, token: updatedToken!.token },
-    });
+    const verifyRes = await apolloTestServer.executeOperation(
+      { query: VERIFY_MESSENGER, variables: { provider, account, token: updatedToken!.token } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(verifyRes, 'data', {
       verifyMessenger: expect.objectContaining({
         ...expectedUserFormat,
-        messengers: [...normalUser!.messengers, upperCase], // upper case for verified
+        messengers: [...user.messengers, upperCase], // upper case for verified
       }),
     });
 
     // remove messenger
-    const removeRes = await normalServer!.executeOperation({
-      query: REMOVE_MESSENGER,
-      variables: { provider, account },
-    });
+    const removeRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_MESSENGER, variables: { provider, account } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(removeRes, 'data', {
-      removeMessenger: expect.objectContaining({ ...expectedUserFormat, messengers: normalUser!.messengers }),
+      removeMessenger: expect.objectContaining({ ...expectedUserFormat, messengers: user.messengers }),
     });
   });
 
@@ -241,24 +281,30 @@ describe('Auth-Extra GraphQL (token)', () => {
       receivable: prob(0.5),
       ...(prob(0.5) && { bank: 'HSBC' }),
     };
-    const addRes = await normalServer!.executeOperation({ query: ADD_PAYMENT_METHOD, variables: { ...payment } });
+    const addRes = await apolloTestServer.executeOperation<{ addPaymentMethod: UserDocument }>(
+      { query: ADD_PAYMENT_METHOD, variables: { ...payment } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(addRes, 'data', {
       addPaymentMethod: expect.objectContaining({
         ...expectedUserFormat,
-        paymentMethods: [
-          ...normalUser!.paymentMethods,
-          { _id: expectedIdFormat, ...payment, bank: payment.bank || null },
-        ],
+        paymentMethods: [...user.paymentMethods, { _id: expectedIdFormat, ...payment, bank: payment.bank || null }],
       }),
     });
 
     // remove paymentMethod
-    const id = addRes.data!.addPaymentMethod.paymentMethods.at(-1)._id;
-    const removeRes = await normalServer!.executeOperation({ query: REMOVE_PAYMENT_METHOD, variables: { id } });
+    const id =
+      addRes.body.kind === 'single'
+        ? addRes.body.singleResult.data!.addPaymentMethod.paymentMethods.at(-1)?._id.toString()
+        : null;
+    const removeRes = await apolloTestServer!.executeOperation(
+      { query: REMOVE_PAYMENT_METHOD, variables: { id: id! } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(removeRes, 'data', {
       removePaymentMethod: expect.objectContaining({
         ...expectedUserFormat,
-        paymentMethods: normalUser!.paymentMethods,
+        paymentMethods: user.paymentMethods,
       }),
     });
   });
@@ -267,49 +313,69 @@ describe('Auth-Extra GraphQL (token)', () => {
     expect.assertions(2);
 
     // add avatarUrl
-    url = await jestPutObject(normalUser!._id);
-    const addRes = await normalServer!.executeOperation({ query: UPDATE_AVATAR, variables: { avatarUrl: url } });
+    const url = await jestPutObject(user._id);
+    const addRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_AVATAR, variables: { avatarUrl: url } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(addRes, 'data', { updateAvatar: expect.objectContaining({ ...expectedUserFormat, avatarUrl: url }) });
 
     // remove avatarUrl
-    const removeRes = await normalServer!.executeOperation({ query: UPDATE_AVATAR }); // pass in NO avatarUrl (to remove)
+    const removeRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_AVATAR },
+      { contextValue: apolloContext(user) },
+    ); // pass in NO avatarUrl (to remove)
     apolloExpect(removeRes, 'data', {
       updateAvatar: expect.objectContaining({ ...expectedUserFormat, avatarUrl: null }),
     });
+
+    await jestRemoveObject(url); // clean up
   });
 
   test('should pass when add & remove stash', async () => {
     expect.assertions(2);
 
-    const add = {
-      title: FAKE,
-      secret: FAKE2,
-      url: await jestPutObject(normalUser!._id),
-    };
-    const addRes = await normalServer!.executeOperation({ query: ADD_STASH, variables: add });
+    const url = await jestPutObject(user._id);
+    const add = { title: FAKE, secret: FAKE2, url };
+    const addRes = await apolloTestServer.executeOperation<{ addStash: UserDocument }>(
+      { query: ADD_STASH, variables: add },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(addRes, 'data', {
       addStash: expect.objectContaining({
         ...expectedUserFormat,
-        stashes: [...normalUser!.stashes, { _id: expectedIdFormat, ...add }],
+        stashes: [...user.stashes, { _id: expectedIdFormat, ...add }],
       }),
     });
 
-    const id = addRes.data!.addStash.stashes.at(-1)._id;
-    const removeRes = await normalServer!.executeOperation({ query: REMOVE_STASH, variables: { id } });
+    const id =
+      addRes.body.kind === 'single' ? addRes.body.singleResult.data!.addStash.stashes.at(-1)?._id.toString() : null;
+    const removeRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_STASH, variables: { id: id! } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(removeRes, 'data', {
-      removeStash: expect.objectContaining({ ...expectedUserFormat, stashes: normalUser!.stashes }),
+      removeStash: expect.objectContaining({ ...expectedUserFormat, stashes: user.stashes }),
     });
+
+    await jestRemoveObject(url); // clean up
   });
 
   test('should pass when update locale', async () => {
     expect.assertions(2);
 
     let locale = randomItem(Object.keys(SYSTEM.LOCALE).filter(l => l !== DEFAULTS.USER.LOCALE));
-    const res1 = await normalServer!.executeOperation({ query: UPDATE_LOCALE, variables: { locale } });
+    const res1 = await apolloTestServer.executeOperation(
+      { query: UPDATE_LOCALE, variables: { locale } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res1, 'data', { updateLocale: expect.objectContaining({ ...expectedUserFormat, locale }) });
 
     locale = DEFAULTS.USER.LOCALE;
-    const res2 = await normalServer!.executeOperation({ query: UPDATE_LOCALE, variables: { locale } });
+    const res2 = await apolloTestServer.executeOperation(
+      { query: UPDATE_LOCALE, variables: { locale } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res2, 'data', { updateLocale: expect.objectContaining({ ...expectedUserFormat, locale }) });
   });
 
@@ -319,13 +385,19 @@ describe('Auth-Extra GraphQL (token)', () => {
     const availability = randomItem(
       Object.keys(USER.AVAILABILITY).filter(x => x !== USER.AVAILABILITY.ONLINE && x !== USER.AVAILABILITY.OFFLINE),
     );
-    const res1 = await normalServer!.executeOperation({ query: UPDATE_AVAILABILITY, variables: { availability } });
+    const res1 = await apolloTestServer!.executeOperation(
+      { query: UPDATE_AVAILABILITY, variables: { availability } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res1, 'data', {
       updateAvailability: expect.objectContaining({ ...expectedUserFormat, availability }),
     });
 
     // $unset availability
-    const res2 = await normalServer!.executeOperation({ query: UPDATE_AVAILABILITY, variables: {} });
+    const res2 = await apolloTestServer!.executeOperation(
+      { query: UPDATE_AVAILABILITY, variables: {} },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res2, 'data', {
       updateAvailability: expect.objectContaining({ ...expectedUserFormat, availability: null }),
     });
@@ -341,12 +413,18 @@ describe('Auth-Extra GraphQL (token)', () => {
       dob: new Date(),
     };
 
-    const res1 = await normalServer!.executeOperation({ query: UPDATE_PROFILE, variables: update });
+    const res1 = await apolloTestServer.executeOperation(
+      { query: UPDATE_PROFILE, variables: update },
+      { contextValue: apolloContext(user) },
+    );
     const dob = update.dob.getTime(); // cast to number
     apolloExpect(res1, 'data', { updateProfile: expect.objectContaining({ ...expectedUserFormat, ...update, dob }) });
 
     // clear out profile (except name is not clearable)
-    const res2 = await normalServer!.executeOperation({ query: UPDATE_PROFILE, variables: { name: FAKE } });
+    const res2 = await apolloTestServer.executeOperation(
+      { query: UPDATE_PROFILE, variables: { name: FAKE } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res2, 'data', {
       updateProfile: expect.objectContaining({ ...expectedUserFormat, formalName: null, yob: null, dob: null }),
     });

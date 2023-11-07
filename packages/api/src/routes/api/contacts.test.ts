@@ -1,5 +1,3 @@
-//! try to make friends cross tenants
-
 /**
  * JEST Test: /api/contacts routes
  *
@@ -11,7 +9,7 @@ import request from 'supertest';
 import app from '../../app';
 import { expectedDateFormat, expectedIdFormat, FAKE, jestSetup, jestTeardown, prob, shuffle } from '../../jest';
 import type { UserDocument } from '../../models/user';
-import User from '../../models/user';
+import User, { activeCond } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -21,8 +19,7 @@ const route = 'contacts';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: UserDocument | null;
-  let normalUsers: UserDocument[] | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedMinFormat = {
     _id: expectedIdFormat,
@@ -34,14 +31,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     updatedAt: expectedDateFormat(),
   };
 
-  beforeAll(async () => {
-    ({ normalUser, normalUsers } = await jestSetup(['normal']));
-  });
-
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when getMany & getById', async () => {
-    const user = normalUsers!.find(u => u.contacts.length);
+    const user = jest.normalUsers.find(u => u.contacts.length);
     if (!user) throw 'No valid users (with contacts)';
 
     await getMany(route, { 'Jest-User': user._id }, expectedMinFormat, {
@@ -51,13 +45,36 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     });
   });
 
+  test('should fail when trying to make cross-tenant friend', async () => {
+    expect.assertions(2 * 3);
+
+    const friend = await User.findOne({ tenants: { $nin: jest.normalUser.tenants }, ...activeCond }).lean();
+    if (!friend) throw 'There is no potential cross-tenant user';
+
+    // create contactToken
+    const tokenRes = await request(app)
+      .post('/api/contacts/createToken')
+      .send(prob(0.5) ? { expiresIn: 5 } : {})
+      .set({ 'Jest-User': jest.normalUser._id });
+    expect(tokenRes.body).toEqual({ data: { token: expect.any(String), expireAt: expectedDateFormat() } });
+    expect(tokenRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(tokenRes.status).toBe(200);
+    const { token } = tokenRes.body.data;
+
+    // try to bind
+    const addRes = await request(app).post(`/api/contacts`).send({ token }).set({ 'Jest-User': friend._id });
+    expect(addRes.body).toEqual({ type: 'plain', statusCode: 422, errors: [{ code: MSG_ENUM.USER_INPUT_ERROR }] });
+    expect(addRes.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(addRes.status).toBe(422);
+  });
+
   test('should pass when generate token, add contact, and then remove', async () => {
     expect.assertions(18);
 
-    const userId = normalUser!._id.toString();
+    const userId = jest.normalUser._id.toString();
 
-    const myContactIds = normalUser!.contacts.map(c => c.user);
-    const friend = normalUsers!
+    const myContactIds = jest.normalUser.contacts.map(c => c.user);
+    const friend = jest.normalUsers
       .slice(1) // skip normalUser himself (idx 0)
       .sort(shuffle)
       .find(({ _id }) => !myContactIds.some(id => id.equals(_id)));

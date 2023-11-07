@@ -3,13 +3,12 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
-export const GET_SERVER_INFO = gql`
+export const GET_SERVER_INFO = `#graphql
   query GetServerInfo {
     serverInfo {
       mode
       primaryTenantId
+      status
       minio
       timestamp
       version
@@ -20,13 +19,13 @@ export const GET_SERVER_INFO = gql`
   }
 `;
 
-export const GET_SERVER_TIME = gql`
+export const GET_SERVER_TIME = `#graphql
   query ServerTime {
     serverTime
   }
 `;
 
-export const PING = gql`
+export const PING = `#graphql
   query Ping {
     ping
   }

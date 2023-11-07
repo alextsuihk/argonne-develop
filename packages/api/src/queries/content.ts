@@ -3,9 +3,7 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
-const CONTENT_FIELDS = gql`
+const CONTENT_FIELDS = `#graphql
   fragment ContentFields on Content {
     _id
     flags
@@ -14,14 +12,10 @@ const CONTENT_FIELDS = gql`
     data
     createdAt
     updatedAt
-
-    createdAt
-    updatedAt
-    deletedAt
   }
 `;
 
-export const GET_CONTENTS = gql`
+export const GET_CONTENTS = `#graphql
   ${CONTENT_FIELDS}
   query GetContents($token: String!, $ids: [String!], $query: QueryInput) {
     contents(token: $token, ids: $ids, query: $query) {

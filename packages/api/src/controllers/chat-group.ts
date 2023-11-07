@@ -53,7 +53,7 @@ type Action =
 type To = 'toAdmin' | 'toAlex' | 'toTenantAdmins' | 'toTenantCounselors' | 'toTenantSupports';
 type Populate = { chats: ChatDocument[] };
 type PopulatedChatGroup = Omit<ChatGroupDocument, 'chats'> & Populate;
-export type ChatGroupDocumentEx = PopulatedChatGroup & { contentsToken: string }; // export for JEST
+type ChatGroupDocumentEx = PopulatedChatGroup & { contentsToken: string };
 
 const { MSG_ENUM } = LOCALE;
 const { CONTENT, CHAT, CHAT_GROUP, TENANT } = LOCALE.DB_ENUM;

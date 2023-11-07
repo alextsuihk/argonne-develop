@@ -2,9 +2,7 @@
  * apollo typeDef: Presigned-Url
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Mutation {
     addPresignedUrl(bucketType: String!, ext: String!): PresignedUrl!
   }

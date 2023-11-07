@@ -281,7 +281,7 @@ const update = async (req: Request, args: unknown): Promise<ContactWithAvatarUrl
   const { userId, userTenants } = auth(req);
   const { id: friendId, name } = await contactNameSchema.concat(idSchema).validate(args);
 
-  const friend = await User.findOne({ _id: friendId, ...activeCond }).lean();
+  const friend = await User.findOne({ _id: friendId, tenants: { $in: userTenants }, ...activeCond }).lean();
   if (!friend) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
   const now = new Date();

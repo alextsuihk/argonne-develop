@@ -9,7 +9,8 @@ import { LOCALE } from '@argonne/common';
 
 import {
   apolloExpect,
-  ApolloServer,
+  apolloContext,
+  apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
@@ -22,6 +23,7 @@ import {
   prob,
   randomItem,
 } from '../jest';
+import type { DistrictDocument } from '../models/district';
 import District from '../models/district';
 import type { UserDocument } from '../models/user';
 import {
@@ -37,10 +39,7 @@ const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('District GraphQL', () => {
-  let adminServer: ApolloServer | null;
-  let adminUser: UserDocument | null;
-  let guestServer: ApolloServer | null;
-  let normalServer: ApolloServer | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedNormalFormat = {
     _id: expectedIdFormat,
@@ -58,17 +57,16 @@ describe('District GraphQL', () => {
     remarks: expect.any(Array), // could be empty array without any remarks
   };
 
-  beforeAll(async () => {
-    ({ adminServer, adminUser, guestServer, normalServer } = await jestSetup(['admin', 'guest', 'normal'], {
-      apollo: true,
-    }));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should response an array of data when GET all', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({ query: GET_DISTRICTS });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_DISTRICTS },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'data', { districts: expect.arrayContaining([expectedNormalFormat]) });
   });
 
@@ -77,91 +75,103 @@ describe('District GraphQL', () => {
 
     const districts = await District.find({ deletedAt: { $exists: false } }).lean();
     const id = randomItem(districts)._id.toString();
-    const res = await guestServer!.executeOperation({ query: GET_DISTRICT, variables: { id } });
+
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_DISTRICT, variables: { id } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'data', { district: expectedNormalFormat });
   });
 
   test('should fail when GET non-existing document without ID argument', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({ query: GET_DISTRICT });
+    const res = await apolloTestServer.executeOperation({ query: GET_DISTRICT }, { contextValue: apolloContext(null) });
     apolloExpect(res, 'error', 'Variable "$id" of required type "ID!" was not provided.');
   });
 
   test('should fail when GET non-existing document without valid Mongo ID argument', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({ query: GET_DISTRICT, variables: { id: 'invalid-mongoID' } });
-    apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.INVALID_ID}`);
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_DISTRICT, variables: { id: 'invalid-mongoID' } },
+      { contextValue: apolloContext(null) },
+    );
+    apolloExpect(res, 'errorContaining', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
   });
 
   test('should fail when mutating without ADMIN role', async () => {
     expect.assertions(2);
 
-    // add a document
-    const res = await normalServer!.executeOperation({
-      query: ADD_DISTRICT,
-      variables: { district: { name: FAKE_LOCALE, region: FAKE_LOCALE } },
-    });
+    // add a document (as normal user)
+    const res = await apolloTestServer.executeOperation(
+      { query: ADD_DISTRICT, variables: { district: { name: FAKE_LOCALE, region: FAKE_LOCALE } } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ADMIN}`);
 
-    // add remark
-    const res2 = await normalServer!.executeOperation({
-      query: ADD_DISTRICT_REMARK,
-      variables: { id: FAKE, remark: FAKE },
-    });
+    // add remark (as normal user)
+    const res2 = await apolloTestServer.executeOperation(
+      { query: ADD_DISTRICT_REMARK, variables: { id: FAKE, remark: FAKE } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res2, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ADMIN}`);
   });
 
   test('should pass when ADD, ADD_REMARK, & UPDATE & DELETE', async () => {
-    expect.assertions(4);
+    let assertions = 0;
 
-    // add a document
-    const createdRes = await adminServer!.executeOperation({
-      query: ADD_DISTRICT,
-      variables: { district: { name: FAKE_LOCALE, region: FAKE2_LOCALE } },
-    });
-    apolloExpect(createdRes, 'data', { addDistrict: expectedAdminFormat });
-    const newId: string = createdRes.data!.addDistrict._id;
+    // add a document (as admin)
+    const create = { name: FAKE_LOCALE, region: FAKE2_LOCALE };
+    const createdRes = await apolloTestServer.executeOperation<{ addDistrict: DistrictDocument }>(
+      { query: ADD_DISTRICT, variables: { district: create } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
+    assertions += apolloExpect(createdRes, 'data', { addDistrict: { ...expectedAdminFormat, ...create } });
+    const newId =
+      createdRes.body.kind === 'single' ? createdRes.body.singleResult.data!.addDistrict._id.toString() : null;
 
     // add remark
     const remark = `addRemark: ${FAKE}`;
-    const addRemarkRes = await adminServer!.executeOperation({
-      query: ADD_DISTRICT_REMARK,
-      variables: { id: newId, remark },
-    });
-    apolloExpect(addRemarkRes, 'data', {
-      addDistrictRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, remark, true) },
+    const addRemarkRes = await apolloTestServer.executeOperation(
+      { query: ADD_DISTRICT_REMARK, variables: { id: newId, remark } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
+    assertions += apolloExpect(addRemarkRes, 'data', {
+      addDistrictRemark: { ...expectedAdminFormat, ...expectedRemark(jest.adminUser._id, remark, true) },
     });
 
     // update newly created document
-    const updatedRes = await adminServer!.executeOperation({
-      query: UPDATE_DISTRICT,
-      variables: { id: newId, district: { name: FAKE2_LOCALE, region: FAKE_LOCALE } },
-    });
-    apolloExpect(updatedRes, 'data', { updateDistrict: expectedAdminFormat });
+    const update = { name: FAKE2_LOCALE, region: FAKE_LOCALE };
+    const updatedRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_DISTRICT, variables: { id: newId, district: update } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
+    assertions += apolloExpect(updatedRes, 'data', { updateDistrict: { ...expectedAdminFormat, ...update } });
 
     // delete newly created document
-    const removedRes = await adminServer!.executeOperation({
-      query: REMOVE_DISTRICT,
-      variables: { id: newId, ...(prob(0.5) && { remark: `remove: ${FAKE}` }) },
-    });
-    apolloExpect(removedRes, 'data', { removeDistrict: { code: MSG_ENUM.COMPLETED } });
+    const removedRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_DISTRICT, variables: { id: newId, ...(prob(0.5) && { remark: `remove: ${FAKE}` }) } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
+    assertions += apolloExpect(removedRes, 'data', { removeDistrict: { code: MSG_ENUM.COMPLETED } });
+
+    expect.assertions(assertions);
   });
 
   test('should fail when ADD without name or region', async () => {
     expect.assertions(2);
 
     // add without region
-    const res1 = await adminServer!.executeOperation({
-      query: ADD_DISTRICT,
-      variables: { district: { name: FAKE_LOCALE } },
-    });
+    const res1 = await apolloTestServer.executeOperation(
+      { query: ADD_DISTRICT, variables: { district: { name: FAKE_LOCALE } } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res1, 'errorContaining', 'Field "region" of required type "LocaleInput!" was not provided.');
 
     // add without name
-    const res2 = await adminServer!.executeOperation({
-      query: ADD_DISTRICT,
-      variables: { district: { region: FAKE_LOCALE } },
-    });
+    const res2 = await apolloTestServer.executeOperation(
+      { query: ADD_DISTRICT, variables: { district: { region: FAKE_LOCALE } } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res2, 'errorContaining', 'Field "name" of required type "LocaleInput!" was not provided.');
   });
 });

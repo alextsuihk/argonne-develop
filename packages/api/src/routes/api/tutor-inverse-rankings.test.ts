@@ -5,7 +5,6 @@
 
 import { expectedIdFormat, jestSetup, jestTeardown, shuffle } from '../../jest';
 import Question from '../../models/question';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { getMany } = commonTest;
@@ -14,7 +13,7 @@ const route = 'tutor-inverse-rankings';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let user: UserDocument | undefined;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedFormat = {
     _id: expectedIdFormat,
@@ -23,11 +22,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     punctuality: expect.toBeOneOf([null, expect.any(Number)]),
   };
 
-  beforeAll(async () => {
-    const { normalUsers, tenantId } = await jestSetup(['normal'], { apollo: true });
+  beforeAll(async () => (jest = await jestSetup()));
+  afterAll(jestTeardown);
 
+  test('should pass when getMany & getById', async () => {
     const questions = await Question.find({
-      tenant: tenantId,
+      tenant: jest.tenantId,
       tutor: { $exists: true },
       correctness: { $exists: true },
       explicitness: { $exists: true },
@@ -36,14 +36,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     if (!questions.length) throw 'No questions with proper ranking info to proceed';
 
     const tutorUserIds = questions.map(q => q.tutor).sort(shuffle);
-    user = normalUsers!.find(u => tutorUserIds.some(tutorUserId => tutorUserId!.equals(u._id)));
-  });
-  afterAll(jestTeardown);
+    const tutorUser = jest.normalUsers.find(u => tutorUserIds.some(tutorUserId => tutorUserId!.equals(u._id)));
 
-  test('should pass when getMany & getById', async () =>
-    getMany(route, { 'Jest-User': user!._id }, expectedFormat, {
+    await getMany(route, { 'Jest-User': tutorUser!._id }, expectedFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
-    }));
+    });
+  });
 });

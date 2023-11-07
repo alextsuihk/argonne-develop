@@ -14,11 +14,9 @@ const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe(`Analytics API Routes`, () => {
-  let normalUser: UserDocument | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
-  beforeAll(async () => {
-    ({ normalUser } = await jestSetup(['normal']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when POST session data', async () => {
@@ -26,7 +24,7 @@ describe(`Analytics API Routes`, () => {
 
     const res = await request(app)
       .post(`/api/analytics/session`)
-      .set({ 'Jest-User': normalUser!._id })
+      .set({ 'Jest-User': jest.normalUser._id })
       .send({ fullscreen: prob(0.5), token: FAKE });
     expect(res.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');

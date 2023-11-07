@@ -22,7 +22,7 @@ const tokenSchema = new Schema(
     expireAt: { type: Date, required: true, expires: 5 }, // auto delete expireAt + 5 seconds
 
     authUser: { type: Schema.Types.ObjectId, ref: 'User' }, // original auth User in case of impersonated,
-    ip: { type: String, required: true },
+    ip: { type: String, default: 'unknown' },
     ua: { type: String, required: true },
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,

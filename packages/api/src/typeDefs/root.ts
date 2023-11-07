@@ -1,6 +1,5 @@
-import { gql } from 'apollo-server-express';
+export default `#graphql
 
-export default gql`
   directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ENUM_VALUE
 
   enum CacheControlScope {
@@ -42,7 +41,7 @@ export default gql`
 
   type Bid {
     bidder: String!
-    price: Int
+    bounty: Int
     contents: [String!]!
   }
 
@@ -80,6 +79,14 @@ export default gql`
     u: String
     m: String!
   }
+
+  type Stash {
+    _id: ID!
+    title: String!
+    secret: String!
+    url: String!
+  }
+
 
   # standard successful response, code is HTTP status
   type StatusResponse {

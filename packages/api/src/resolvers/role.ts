@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import roleController from '../controllers/role';
 import { tryCatch } from './root';
 
@@ -13,10 +13,11 @@ const { findOne, updateRole } = roleController;
 
 export default {
   Query: {
-    role: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => findOne(req, args)),
+    role: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => findOne(req, args)),
   },
   Mutation: {
-    addRole: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateRole(req, args, 'addRole')),
-    removeRole: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateRole(req, args, 'removeRole')),
+    addRole: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => updateRole(req, args, 'addRole')),
+    removeRole: async (_: unk, args: unk, { req }: ApolloContext) =>
+      tryCatch(() => updateRole(req, args, 'removeRole')),
   },
 };

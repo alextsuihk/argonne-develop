@@ -3,9 +3,7 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
-const TUTOR_INVERSE_RANKING_FIELDS = gql`
+const TUTOR_INVERSE_RANKING_FIELDS = `#graphql
   fragment TutorInverseRankingFields on TutorInverseRanking {
     _id
     correctness
@@ -14,7 +12,7 @@ const TUTOR_INVERSE_RANKING_FIELDS = gql`
   }
 `;
 
-export const GET_TUTOR_INVERSE_RANKING = gql`
+export const GET_TUTOR_INVERSE_RANKING = `#graphql
   ${TUTOR_INVERSE_RANKING_FIELDS}
   query GetTutorInverseRanking($id: ID!) {
     tutorInverseRanking(id: $id) {
@@ -23,7 +21,7 @@ export const GET_TUTOR_INVERSE_RANKING = gql`
   }
 `;
 
-export const GET_TUTOR_INVERSE_RANKINGS = gql`
+export const GET_TUTOR_INVERSE_RANKINGS = `#graphql
   ${TUTOR_INVERSE_RANKING_FIELDS}
   query GetTutorInverseRankings {
     tutorInverseRankings {

@@ -77,6 +77,11 @@ export const schoolYear = (adjust = 0) => {
 export const shuffle = (): number => Math.random() - 0.5;
 
 /**
+ * Sleep (in milliseconds)
+ */
+export const sleep = async (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
  * Terminate application
  */
 export const terminate = (message: string): never => {

@@ -3,9 +3,7 @@
  *
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     contribution(id: ID!): Contribution
     contributions(query: QueryInput): [Contribution!]!

@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import typographyController from '../controllers/typography';
 import { tryCatch } from './root';
 
@@ -13,16 +13,17 @@ const { addCustom, addRemark, create, find, findOne, removeCustom, remove, updat
 
 export default {
   Query: {
-    typographies: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => find(req, args)),
-    typography: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => findOne(req, args)),
+    typographies: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => find(req, args)),
+    typography: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => findOne(req, args)),
   },
 
   Mutation: {
-    addCustomTypography: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addCustom(req, args)),
-    addTypographyRemark: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addRemark(req, args)),
-    addTypography: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
-    removeCustomTypography: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => removeCustom(req, args)),
-    removeTypography: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => remove(req, args)),
-    updateTypography: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args)),
+    addCustomTypography: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => addCustom(req, args)),
+    addTypographyRemark: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => addRemark(req, args)),
+    addTypography: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => create(req, args)),
+    removeCustomTypography: async (_: unk, args: unk, { req }: ApolloContext) =>
+      tryCatch(() => removeCustom(req, args)),
+    removeTypography: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => remove(req, args)),
+    updateTypography: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => update(req, args)),
   },
 };

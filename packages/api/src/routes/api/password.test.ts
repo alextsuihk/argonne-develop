@@ -7,9 +7,9 @@ import request from 'supertest';
 
 import app from '../../app';
 import configLoader from '../../config/config-loader';
-import { genUser, jestSetup, jestTeardown } from '../../jest';
+import { genUser, jestSetup, jestTeardown, randomString } from '../../jest';
 import User from '../../models/user';
-import token, { PASSWORD_TOKEN_PREFIX } from '../../utils/token';
+import token, { PASSWORD_TOKEN_PREFIX, REFRESH_TOKEN_PREFIX } from '../../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 const { DEFAULTS } = configLoader;
@@ -20,20 +20,17 @@ describe('Password API Routes', () => {
   let refreshToken: string;
 
   const user = genUser(null);
-  const { _id, emails, password: oldPassword } = user; // destructure before saving. user.password is hashed once save()
-  const newPassword = User.genValidPassword();
+  const { password: oldPassword } = user; // destructure before saving. user.password is hashed once save()
 
   beforeAll(async () => {
-    await jestSetup([]);
-
-    [{ accessToken, refreshToken }] = await Promise.all([
-      token.createTokens(user, { ip: '0.0.0.0', ua: 'jest' }),
+    await jestSetup();
+    [refreshToken] = await Promise.all([
+      token.signStrings([REFRESH_TOKEN_PREFIX, user._id.toString(), randomString()], DEFAULTS.JWT.EXPIRES.REFRESH),
       user.save(),
     ]);
   });
-
   afterAll(async () => {
-    await User.deleteOne({ _id }); // delete test user
+    await User.deleteOne({ _id: user._id });
     await jestTeardown();
   });
 
@@ -42,7 +39,7 @@ describe('Password API Routes', () => {
 
     const res = await request(app)
       .post('/api/password/change')
-      .set({ Authorization: `Bearer ${accessToken}` })
+      .set({ 'Jest-User': user._id })
       .send({ currPassword: oldPassword, newPassword: oldPassword, refreshToken });
     expect(res.body).toEqual({ errors: [{ code: MSG_ENUM.USER_INPUT_ERROR }], statusCode: 422, type: 'plain' });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
@@ -54,8 +51,8 @@ describe('Password API Routes', () => {
 
     const res = await request(app)
       .post('/api/password/change')
-      .set({ Authorization: `Bearer ${accessToken}` })
-      .send({ currPassword: oldPassword, newPassword: newPassword, refreshToken });
+      .set({ 'Jest-User': user._id })
+      .send({ currPassword: oldPassword, newPassword: User.genValidPassword(), refreshToken });
     expect(res.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(200);
@@ -64,7 +61,7 @@ describe('Password API Routes', () => {
   test('should response "completed" when request password reset', async () => {
     expect.assertions(3);
 
-    const res = await request(app).post('/api/password/reset-request').send({ email: emails[0] });
+    const res = await request(app).post('/api/password/reset-request').send({ email: user.emails[0] });
     expect(res.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(200);
@@ -75,7 +72,7 @@ describe('Password API Routes', () => {
 
     const res = await request(app)
       .post('/api/password/reset-confirm')
-      .send({ token: 'invalid', password: newPassword });
+      .send({ token: 'invalid', password: User.genValidPassword() });
     expect(res.body).toEqual({ errors: [{ code: MSG_ENUM.TOKEN_ERROR }], statusCode: 400, type: 'plain' });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(400);
@@ -85,13 +82,13 @@ describe('Password API Routes', () => {
     expect.assertions(3);
 
     const resetToken = await token.signStrings(
-      [PASSWORD_TOKEN_PREFIX, _id.toString()],
+      [PASSWORD_TOKEN_PREFIX, user._id.toString()],
       DEFAULTS.AUTH.PASSWORD_RESET_EXPIRES_IN,
     );
 
     const res = await request(app)
       .post('/api/password/reset-confirm')
-      .send({ token: resetToken, password: newPassword });
+      .send({ token: resetToken, password: User.genValidPassword() });
     expect(res.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(200);

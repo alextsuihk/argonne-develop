@@ -3,11 +3,9 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
 import { REMARK } from './common';
 
-const TUTOR_FIELDS = gql`
+const TUTOR_FIELDS = `#graphql
   ${REMARK}
   fragment TutorFields on Tutor {
     _id
@@ -49,7 +47,7 @@ const TUTOR_FIELDS = gql`
   }
 `;
 
-export const GET_TUTOR = gql`
+export const GET_TUTOR = `#graphql
   ${TUTOR_FIELDS}
   query GetTutor($id: ID!) {
     tutor(id: $id) {
@@ -58,7 +56,7 @@ export const GET_TUTOR = gql`
   }
 `;
 
-export const GET_TUTORS = gql`
+export const GET_TUTORS = `#graphql
   ${TUTOR_FIELDS}
   query GetTutors($query: QueryInput) {
     tutors(query: $query) {
@@ -67,7 +65,7 @@ export const GET_TUTORS = gql`
   }
 `;
 
-export const ADD_TUTOR_CREDENTIAL = gql`
+export const ADD_TUTOR_CREDENTIAL = `#graphql
   ${TUTOR_FIELDS}
   mutation AddTutorCredential($title: String!, $proofs: [String!]!) {
     addTutorCredential(title: $title, proofs: $proofs) {
@@ -76,7 +74,7 @@ export const ADD_TUTOR_CREDENTIAL = gql`
   }
 `;
 
-export const ADD_TUTOR_REMARK = gql`
+export const ADD_TUTOR_REMARK = `#graphql
   ${TUTOR_FIELDS}
   mutation AddTutorRemark($id: ID!, $remark: String!) {
     addTutorRemark(id: $id, remark: $remark) {
@@ -85,7 +83,7 @@ export const ADD_TUTOR_REMARK = gql`
   }
 `;
 
-export const ADD_TUTOR_SPECIALTY = gql`
+export const ADD_TUTOR_SPECIALTY = `#graphql
   ${TUTOR_FIELDS}
   mutation AddTutorSpecialty(
     $tenantId: String!
@@ -100,7 +98,7 @@ export const ADD_TUTOR_SPECIALTY = gql`
   }
 `;
 
-export const REMOVE_TUTOR_CREDENTIAL = gql`
+export const REMOVE_TUTOR_CREDENTIAL = `#graphql
   ${TUTOR_FIELDS}
   mutation RemoveTutorCredential($subId: String!) {
     removeTutorCredential(subId: $subId) {
@@ -109,7 +107,7 @@ export const REMOVE_TUTOR_CREDENTIAL = gql`
   }
 `;
 
-export const REMOVE_TUTOR_SPECIALTY = gql`
+export const REMOVE_TUTOR_SPECIALTY = `#graphql
   ${TUTOR_FIELDS}
   mutation RemoveTutorSpecialty($subId: String!) {
     removeTutorSpecialty(subId: $subId) {
@@ -118,7 +116,7 @@ export const REMOVE_TUTOR_SPECIALTY = gql`
   }
 `;
 
-export const UPDATE_TUTOR = gql`
+export const UPDATE_TUTOR = `#graphql
   ${TUTOR_FIELDS}
   mutation UpdateTutor($intro: String, $officeHour: String) {
     updateTutor(intro: $intro, officeHour: $officeHour) {
@@ -127,7 +125,7 @@ export const UPDATE_TUTOR = gql`
   }
 `;
 
-export const VERIFY_TUTOR_CREDENTIAL = gql`
+export const VERIFY_TUTOR_CREDENTIAL = `#graphql
   ${TUTOR_FIELDS}
   mutation VerifyTutorCredential($id: ID!, $subId: String!) {
     verifyTutorCredential(id: $id, subId: $subId) {

@@ -2,9 +2,7 @@
  * apollo typeDef: Typography
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     typography(id: ID!): Typography @cacheControl(maxAge: 3600)
     typographies(query: QueryInput): [Typography!]! @cacheControl(maxAge: 3600)

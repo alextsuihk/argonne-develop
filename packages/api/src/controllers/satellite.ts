@@ -46,7 +46,8 @@ import Token from '../models/token';
 import Typography from '../models/typography';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';
-import { dnsLookup, mongoId, randomString, shuffle } from '../utils/helper';
+import redisCache from '../redis';
+import { dnsLookup, mongoId, randomString, shuffle, sleep } from '../utils/helper';
 import log from '../utils/log';
 import { notifySync } from '../utils/notify-sync';
 import storage, { client as minioClient, privateBucket, publicBucket } from '../utils/storage';
@@ -97,7 +98,7 @@ const cloneContents = async (contentsToken: string, accessToken: string | null, 
       throw new Error('Invalid Content');
     // const contents = fake(Content); // TODO: fake
     const { insertedCount } = await Content.insertMany(contents, { rawResult: true });
-    await new Promise(resolve => setTimeout(resolve, wait)); // wait (ms) between fetching
+    await sleep(wait); // wait (ms) between fetching
 
     return insertedCount;
   } catch (error) {
@@ -164,7 +165,7 @@ const seedComplete: RequestHandler = async (req, res, next) => {
       {
         $set: {
           satelliteIp: req.ip,
-          satelliteStatus: hasError ? TENANT.SATELLITE_STATUS.INIT_FAIL : TENANT.SATELLITE_STATUS.INIT_SUCCESS,
+          satelliteStatus: hasError ? TENANT.SATELLITE_STATUS.INIT_FAIL : TENANT.SATELLITE_STATUS.READY,
           'seedings.0.completedAt': new Date(),
           'seedings.0.result': result,
         },
@@ -327,13 +328,25 @@ const seedRequest: RequestHandler = async (req, res, next) => {
 /**
  * Satellite handles Setup-Satellite request from React-Client [Apollo ONLY]
  * !note: it takes a while to process: for hub to generate JSON file, and satellite to download seedData
+ *
+ * only single instance could be executed within 30 mins
  */
 const setup = async (req: Request, args: unknown): Promise<StatusResponse> => {
+  const SATELLITE_INITIALIZATION_KEY = 'SatelliteInitialization';
   satelliteModeOnly();
+
+  const previousInstance = await redisCache.get<string>(SATELLITE_INITIALIZATION_KEY);
+  if (previousInstance)
+    throw {
+      statusCode: 400,
+      code: MSG_ENUM.SATELLITE_ERROR,
+      message: `Initialization is in Progress. If fail, please retry after ${new Date(previousInstance)}`,
+    };
 
   const [primaryTenant, { token, url }] = await Promise.all([
     Tenant.findPrimary(),
     tokenSchema.concat(urlSchema).validate(args),
+    redisCache.set(SATELLITE_INITIALIZATION_KEY, addSeconds(Date.now(), 30 * 60), 30 * 60),
   ]);
   if (primaryTenant) throw { statusCode: 500, code: MSG_ENUM.SATELLITE_ERROR, message: 'Satellite is Initialized' };
 
@@ -469,7 +482,7 @@ const setup = async (req: Request, args: unknown): Promise<StatusResponse> => {
   await Promise.all([
     Tenant.updateOne(
       { _id: tenantId },
-      { satelliteStatus: hasError ? TENANT.SATELLITE_STATUS.INIT_FAIL : TENANT.SATELLITE_STATUS.INITIALIZING },
+      { satelliteStatus: hasError ? TENANT.SATELLITE_STATUS.INIT_FAIL : TENANT.SATELLITE_STATUS.READY },
     ),
     DatabaseEvent.log(null, '/tenants', 'setupSatellite', {
       completedAt: new Date(),
@@ -498,7 +511,7 @@ const sync: RequestHandler = async (req, res, next) => {
     const { apiKey, attempt, syncJobId, stringifiedNotify, stringifiedSync, tenantId, timestamp, version } =
       await satelliteSyncSchema.validate(req.body);
 
-    const tenant = await findSatelliteTenantById(tenantId, 'sync'); // only proceed after SATELLITE_STATUS.INIT_SUCCESS
+    const tenant = await findSatelliteTenantById(tenantId, 'sync'); // only proceed after SATELLITE_STATUS.READY
     if (!tenant?.satelliteUrl || tenant.apiKey !== apiKey) throw { statusCode: 400, code: MSG_ENUM.SATELLITE_ERROR };
 
     if (!timestamp || Math.abs(timestamp.getTime() - Date.now()) > 3000) {

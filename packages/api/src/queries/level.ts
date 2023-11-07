@@ -3,11 +3,9 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-const LEVEL_FIELDS = gql`
+const LEVEL_FIELDS = `#graphql
   ${LOCALE}
   ${REMARK}
   fragment LevelFields on Level {
@@ -28,7 +26,7 @@ const LEVEL_FIELDS = gql`
   }
 `;
 
-export const ADD_LEVEL = gql`
+export const ADD_LEVEL = `#graphql
   ${LEVEL_FIELDS}
   mutation AddLevel($level: LevelInput!) {
     addLevel(level: $level) {
@@ -37,7 +35,7 @@ export const ADD_LEVEL = gql`
   }
 `;
 
-export const ADD_LEVEL_REMARK = gql`
+export const ADD_LEVEL_REMARK = `#graphql
   ${LEVEL_FIELDS}
   mutation AddLevelRemark($id: ID!, $remark: String!) {
     addLevelRemark(id: $id, remark: $remark) {
@@ -46,7 +44,7 @@ export const ADD_LEVEL_REMARK = gql`
   }
 `;
 
-export const GET_LEVEL = gql`
+export const GET_LEVEL = `#graphql
   ${LEVEL_FIELDS}
   query GetLevel($id: ID!) {
     level(id: $id) {
@@ -55,7 +53,7 @@ export const GET_LEVEL = gql`
   }
 `;
 
-export const GET_LEVELS = gql`
+export const GET_LEVELS = `#graphql
   ${LEVEL_FIELDS}
   query GetLevels($query: QueryInput) {
     levels(query: $query) {
@@ -64,7 +62,7 @@ export const GET_LEVELS = gql`
   }
 `;
 
-export const REMOVE_LEVEL = gql`
+export const REMOVE_LEVEL = `#graphql
   ${STATUS_RESPONSE}
   mutation RemoveLevel($id: ID!, $remark: String) {
     removeLevel(id: $id, remark: $remark) {
@@ -73,7 +71,7 @@ export const REMOVE_LEVEL = gql`
   }
 `;
 
-export const UPDATE_LEVEL = gql`
+export const UPDATE_LEVEL = `#graphql
   ${LEVEL_FIELDS}
   mutation UpdateLevel($id: ID!, $level: LevelInput!) {
     updateLevel(id: $id, level: $level) {

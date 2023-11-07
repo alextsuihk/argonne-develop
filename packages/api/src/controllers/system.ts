@@ -28,7 +28,7 @@ import common from './common';
 type GetAction = 'health' | 'ping' | 'server-info' | 'status' | 'time';
 
 const { MSG_ENUM } = LOCALE;
-const { JOB } = LOCALE.DB_ENUM;
+const { JOB, TENANT } = LOCALE.DB_ENUM;
 const { config, DEFAULTS } = configLoader;
 const { assertUnreachable, isAdmin } = common;
 
@@ -81,7 +81,8 @@ const getServerInfo = async () => {
 
   return {
     mode,
-    primaryTenantId: primaryTenant && primaryTenant._id.toString(), // null or string
+    primaryTenantId: primaryTenant?._id.toString() || null,
+    status: config.mode === 'HUB' ? TENANT.SATELLITE_STATUS.READY : primaryTenant?.satelliteStatus || null,
     minio: config.server.minio.serverUrl,
     timestamp: Date.now(),
     version,
@@ -130,10 +131,6 @@ const getStatus = async (req: Request) => {
    * wrapping with Promise.race to timeout in case mongoose connection is down
    */
   const checkMongo = async () => {
-    if (mongoose.connection.readyState !== 1) await new Promise(resolve => setTimeout(resolve, 50));
-    if (mongoose.connection.readyState !== 1) await new Promise(resolve => setTimeout(resolve, 100));
-    if (mongoose.connection.readyState !== 1) await new Promise(resolve => setTimeout(resolve, 200));
-
     const state = ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState];
     const pool = mongoose.connections.length;
 

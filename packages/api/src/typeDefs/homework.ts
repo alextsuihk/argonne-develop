@@ -2,9 +2,7 @@
  * Apollo TypeDef: Homework
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     homework(id: ID!): Homework
     homeworks(query: QueryInput): [Homework!]!

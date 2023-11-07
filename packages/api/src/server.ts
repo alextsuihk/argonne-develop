@@ -10,43 +10,45 @@
  *      - SINGLE job-runner runs on NON-accessible port, dedicates to dispatch & execute (by internal & external runners)
  */
 
-import { createServer } from 'http';
+import type { BaseContext } from '@apollo/server';
+import { ApolloServer } from '@apollo/server';
+import { expressMiddleware } from '@apollo/server/express4';
+import { ApolloServerPluginCacheControl } from '@apollo/server/plugin/cacheControl';
+import { ApolloServerPluginDrainHttpServer } from '@apollo/server/plugin/drainHttpServer';
+import type { Request, Response } from 'express';
+import http from 'http';
 import mongoose from 'mongoose';
-import { io } from 'socket.io-client';
 
-import apollo from './apollo';
 import app from './app';
 import configLoader from './config/config-loader';
 import jobRunner from './job-runner';
-import Tenant from './models/tenant';
 import { redisClient } from './redis';
+import resolvers from './resolvers';
 import socketServer from './socket-server';
+import typeDefs from './typeDefs';
 import { isDevMode } from './utils/environment';
 import log from './utils/log';
 import scheduler from './utils/scheduler';
 
-const { config, DEFAULTS } = configLoader;
+export type ApolloContext = { req: Request; res: Response };
+
+const { config } = configLoader;
 const { NODE_APP_INSTANCE = 'X', JOB_RUNNER } = process.env;
 const port = JOB_RUNNER === 'dedicated' ? config.port + 1001 : config.port;
 const enableJobRunner = NODE_APP_INSTANCE === 'X' || (JOB_RUNNER === 'dedicated' && NODE_APP_INSTANCE === '0');
 
-const httpServer = createServer(app); // create express HTTP server;
-const satelliteSocket = config.mode === 'SATELLITE' ? io(DEFAULTS.ARGONNE_URL) : null;
+const httpServer = http.createServer(app); // create express HTTP server;
 
-const satelliteConnectToHub = async () => {
-  if (satelliteSocket) {
-    let connected = false;
-    while (!connected) {
-      const tenant = await Tenant.findPrimary();
-      if (tenant && tenant.apiKey) {
-        satelliteSocket.emit('JOIN_SATELLITE', { tenant: tenant._id.toString(), apiKey: tenant.apiKey });
-        connected = true;
-      }
+const apolloServer = new ApolloServer<ApolloContext>({
+  typeDefs,
+  resolvers,
 
-      await new Promise(resolve => setTimeout(resolve, DEFAULTS.JOB_RUNNER.INTERVAL)); // wait for tenant update (with valid apiKey)
-    }
-  }
-};
+  plugins: [
+    ApolloServerPluginDrainHttpServer({ httpServer }),
+    ApolloServerPluginCacheControl({ defaultMaxAge: 3600, calculateHttpHeaders: false }), // Don't send the `cache-control` response header.
+  ],
+  csrfPrevention: true,
+});
 
 // start up server & listen on ipv4 only
 (async () => {
@@ -68,10 +70,13 @@ const satelliteConnectToHub = async () => {
     mongoose.connection.on('all', () => log('error', 'mongoose encounters unknown error'));
 
     await Promise.all([
-      apollo.start(),
+      apolloServer.start(),
       socketServer.start(httpServer),
       enableJobRunner && Promise.all([jobRunner.start(), scheduler.start()]),
     ]);
+
+    // app.use('/graphql', cors<cors.CorsRequest>(), express.json(), expressMiddleware(apolloServer)); // TODO: WIP: app.ts handle cors & json() alread
+    app.use('/graphql', expressMiddleware(apolloServer, { context: async ({ req, res }) => ({ req, res }) }));
 
     await Promise.all([
       new Promise<void>(resolve => httpServer.listen({ port, host: '0.0.0.0' }, resolve)),
@@ -79,8 +84,6 @@ const satelliteConnectToHub = async () => {
     ]);
 
     process.send && process.send('ready'); // send message to PM2
-
-    if (config.mode === 'SATELLITE') satelliteConnectToHub(); // no need to await
   } catch (error) {
     console.error(error); // eslint-disable-line no-console
     log('error', `App Server (${NODE_APP_INSTANCE}) fails to start up on ${port} @ ${new Date()}`); // POST a message to logger
@@ -94,15 +97,14 @@ const gracefulShutdown = async () => {
   const now = new Date();
   try {
     redisClient.disconnect();
-    satelliteSocket?.close();
+    jobRunner.stop();
     await Promise.race([
       new Promise<void>(resolve => setTimeout(resolve, 1000)),
       Promise.all([
-        jobRunner.stop(),
+        apolloServer.stop(),
         socketServer.stop(),
         new Promise<void>(resolve => httpServer.close(() => resolve())),
         mongoose.connection.close(false),
-        apollo.stop(), // just for safety, this.stop() is called at SIGINT or SIGTERM (stopOnTerminationSignals)
         log('info', `App Server (${NODE_APP_INSTANCE}) shutting down @ ${now}`),
       ]),
     ]);

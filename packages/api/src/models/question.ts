@@ -53,7 +53,7 @@ const questionSchema = new Schema(
     timeSpent: Number,
 
     // bidding
-    price: Number, // initial offer price
+    bounty: Number, // initial offer bounty
 
     bidders: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }],
     bids: [bidDefinition],

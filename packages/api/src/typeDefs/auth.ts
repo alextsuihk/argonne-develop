@@ -4,12 +4,10 @@
 
 // TODO: PlaceHolder... https://dev.to/alvarojsnish/graphql-mongodb-the-easy-way-ngc
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     authServiceToken(client: String!): AuthService
-    isEmailAvailable(email: String!): Boolean
+    isEmailAvailable(email: String!): Boolean!
     listApiKeys: [ApiKey!]!
     listSockets: [String!]!
     listTokens: [Token!]!
@@ -204,13 +202,6 @@ export default gql`
   type LogoutOtherResponse {
     code: String
     count: Int
-  }
-
-  type Stash {
-    _id: ID!
-    title: String!
-    secret: String!
-    url: String!
   }
 
   type Token {

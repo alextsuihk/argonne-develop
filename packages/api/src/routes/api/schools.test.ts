@@ -6,13 +6,13 @@
 import { LOCALE } from '@argonne/common';
 
 import {
+  FAKE,
+  FAKE2_LOCALE,
+  FAKE_LOCALE,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
-  FAKE,
-  FAKE_LOCALE,
-  FAKE2_LOCALE,
   jestPutObject,
   jestRemoveObject,
   jestSetup,
@@ -24,7 +24,6 @@ import {
 import District from '../../models/district';
 import Level from '../../models/level';
 import type { SchoolDocument } from '../../models/school';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;
@@ -35,9 +34,7 @@ const route = 'schools';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: UserDocument | null;
-  let url: string | undefined;
-  let url2: string | undefined;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single school format
   const expectedMinFormat = {
@@ -58,10 +55,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     updatedAt: expectedDateFormat(),
   };
 
-  beforeAll(async () => {
-    ({ adminUser } = await jestSetup(['admin']));
-  });
-  afterAll(async () => Promise.all([url && jestRemoveObject(url), url2 && jestRemoveObject(url2), jestTeardown()]));
+  beforeAll(async () => (jest = await jestSetup()));
+  afterAll(jestTeardown);
 
   test('should pass when getMany & getById', async () =>
     getMany(route, {}, expectedMinFormat, { testGetById: true, testInvalidId: true, testNonExistingId: true }));
@@ -72,7 +67,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       Level.find({ code: { $regex: '[S][1-6]' }, deletedAt: { $exists: false } }),
     ]);
 
-    [url, url2] = await Promise.all([jestPutObject(adminUser!._id), jestPutObject(adminUser!._id)]);
+    const [url, url2] = await Promise.all([jestPutObject(jest.adminUser._id), jestPutObject(jest.adminUser._id)]);
 
     const fake = (type: 'create' | 'update') => ({
       code: FAKE.toUpperCase(),
@@ -94,12 +89,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const create = fake('create');
     const update = fake('update');
 
-    await createUpdateDelete<SchoolDocument>(route, { 'Jest-User': adminUser!._id }, [
+    await createUpdateDelete<SchoolDocument>(route, { 'Jest-User': jest.adminUser._id }, [
       { action: 'create', data: create, expectedMinFormat: { ...expectedMinFormat, ...create } },
       {
         action: 'addRemark',
         data: { remark: FAKE },
-        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
+        expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(jest.adminUser._id, FAKE) },
       },
       {
         action: 'update',
@@ -121,5 +116,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       },
       { action: 'delete', data: {} },
     ]);
+
+    // clean up
+    await Promise.all([jestRemoveObject(url), jestRemoveObject(url2)]);
   });
 });

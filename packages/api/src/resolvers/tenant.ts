@@ -3,24 +3,27 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import tenantController from '../controllers/tenant';
 import { tryCatch } from './root';
 
 type unk = unknown;
 
-const { addRemark, create, find, remove, sendTestEmail, updateCore, updateExtra } = tenantController;
+const { addRemark, addStash, create, find, remove, removeStash, sendTestEmail, updateCore, updateExtra } =
+  tenantController;
 
 export default {
   Query: {
-    tenants: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => find(req, args)),
+    tenants: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => find(req, args)),
   },
   Mutation: {
-    addTenant: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
-    addTenantRemark: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addRemark(req, args)),
-    removeTenant: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => remove(req, args)),
-    sendTestEmail: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => sendTestEmail(req, args)),
-    updateTenantCore: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateCore(req, args)),
-    updateTenantExtra: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => updateExtra(req, args)),
+    addTenant: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => create(req, args)),
+    addTenantRemark: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => addRemark(req, args)),
+    addTenantStash: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => addStash(req, args)),
+    removeTenant: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => remove(req, args)),
+    removeTenantStash: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => removeStash(req, args)),
+    sendTestEmail: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => sendTestEmail(req, args)),
+    updateTenantCore: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => updateCore(req, args)),
+    updateTenantExtra: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => updateExtra(req, args)),
   },
 };

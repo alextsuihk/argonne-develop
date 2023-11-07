@@ -3,11 +3,9 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-const TYPOGRAPHY_FIELDS = gql`
+const TYPOGRAPHY_FIELDS = `#graphql
   ${LOCALE}
   ${REMARK}
   fragment TypographyFields on Typography {
@@ -40,7 +38,7 @@ const TYPOGRAPHY_FIELDS = gql`
   }
 `;
 
-export const ADD_CUSTOM_TYPOGRAPHY = gql`
+export const ADD_CUSTOM_TYPOGRAPHY = `#graphql
   ${TYPOGRAPHY_FIELDS}
   mutation AddCustomTypography($id: ID!, $tenantId: String!, $custom: TypographyCustomInput!) {
     addCustomTypography(id: $id, tenantId: $tenantId, custom: $custom) {
@@ -49,7 +47,7 @@ export const ADD_CUSTOM_TYPOGRAPHY = gql`
   }
 `;
 
-export const ADD_TYPOGRAPHY = gql`
+export const ADD_TYPOGRAPHY = `#graphql
   ${TYPOGRAPHY_FIELDS}
   mutation AddTypography($typography: TypographyInput!) {
     addTypography(typography: $typography) {
@@ -58,7 +56,7 @@ export const ADD_TYPOGRAPHY = gql`
   }
 `;
 
-export const ADD_TYPOGRAPHY_REMARK = gql`
+export const ADD_TYPOGRAPHY_REMARK = `#graphql
   ${TYPOGRAPHY_FIELDS}
   mutation AddTypographyRemark($id: ID!, $remark: String!) {
     addTypographyRemark(id: $id, remark: $remark) {
@@ -67,7 +65,7 @@ export const ADD_TYPOGRAPHY_REMARK = gql`
   }
 `;
 
-export const GET_TYPOGRAPHY = gql`
+export const GET_TYPOGRAPHY = `#graphql
   ${TYPOGRAPHY_FIELDS}
   query GetTypography($id: ID!) {
     typography(id: $id) {
@@ -76,7 +74,7 @@ export const GET_TYPOGRAPHY = gql`
   }
 `;
 
-export const GET_TYPOGRAPHIES = gql`
+export const GET_TYPOGRAPHIES = `#graphql
   ${TYPOGRAPHY_FIELDS}
   query GetTypographies($query: QueryInput) {
     typographies(query: $query) {
@@ -85,7 +83,7 @@ export const GET_TYPOGRAPHIES = gql`
   }
 `;
 
-export const REMOVE_CUSTOM_TYPOGRAPHY = gql`
+export const REMOVE_CUSTOM_TYPOGRAPHY = `#graphql
   ${TYPOGRAPHY_FIELDS}
   mutation RemoveCustomTypography($id: ID!, $tenantId: String!) {
     removeCustomTypography(id: $id, tenantId: $tenantId) {
@@ -94,7 +92,7 @@ export const REMOVE_CUSTOM_TYPOGRAPHY = gql`
   }
 `;
 
-export const REMOVE_TYPOGRAPHY = gql`
+export const REMOVE_TYPOGRAPHY = `#graphql
   ${STATUS_RESPONSE}
   mutation RemoveTypography($id: ID!, $remark: String) {
     removeTypography(id: $id, remark: $remark) {
@@ -103,7 +101,7 @@ export const REMOVE_TYPOGRAPHY = gql`
   }
 `;
 
-export const UPDATE_TYPOGRAPHY = gql`
+export const UPDATE_TYPOGRAPHY = `#graphql
   ${TYPOGRAPHY_FIELDS}
   mutation UpdateTypography($id: ID!, $typography: TypographyInput!) {
     updateTypography(id: $id, typography: $typography) {

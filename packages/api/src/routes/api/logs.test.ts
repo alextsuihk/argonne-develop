@@ -16,13 +16,11 @@ const route = 'logs';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: UserDocument | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedResponse = { code: MSG_ENUM.COMPLETED, id: expect.any(String) };
 
-  beforeAll(async () => {
-    ({ normalUser } = await jestSetup(['normal']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when POST log as normalUser', async () => {
@@ -30,7 +28,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const res = await request(app)
       .post(`/api/${route}`)
       .send({ level: 'info', msg: FAKE, ...(prob(0.5) && { extra: FAKE_LOCALE }), ...(prob(0.5) && { url: FAKE }) })
-      .set({ 'Jest-User': normalUser!._id });
+      .set({ 'Jest-User': jest.normalUser._id });
     expect(res.body).toEqual(expectedResponse);
     expect(res.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res.status).toBe(201);

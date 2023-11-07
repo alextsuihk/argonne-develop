@@ -9,11 +9,12 @@ import { LOCALE } from '@argonne/common';
 import { addDays } from 'date-fns';
 
 import {
+  FAKE,
+  apolloContext,
   apolloExpect,
-  ApolloServer,
+  apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
-  FAKE,
   jestSetup,
   jestTeardown,
   prob,
@@ -21,20 +22,13 @@ import {
 } from '../jest';
 import type { AnnouncementDocument } from '../models/announcement';
 import Announcement from '../models/announcement';
-import type { UserDocument } from '../models/user';
 import { ADD_ANNOUNCEMENT, GET_ANNOUNCEMENT, GET_ANNOUNCEMENTS, REMOVE_ANNOUNCEMENT } from '../queries/announcement';
 
 const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('Announcement GraphQL', () => {
-  let adminServer: ApolloServer | null;
-  let guestServer: ApolloServer | null;
-  let normalServer: ApolloServer | null;
-  let normalUser: UserDocument | null;
-  let tenantAdmin: UserDocument | null;
-  let tenantAdminServer: ApolloServer | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedFormat = {
     _id: expectedIdFormat,
@@ -49,18 +43,16 @@ describe('Announcement GraphQL', () => {
     deletedAt: expect.toBeOneOf([null, expectedDateFormat(true)]),
   };
 
-  beforeAll(async () => {
-    ({ adminServer, guestServer, normalServer, normalUser, tenantAdmin, tenantAdminServer, tenantId } = await jestSetup(
-      ['admin', 'guest', 'normal', 'tenantAdmin'],
-      { apollo: true },
-    ));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should response an array of data when GET all', async () => {
     expect.assertions(1);
 
-    const res = await normalServer!.executeOperation({ query: GET_ANNOUNCEMENTS });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_ANNOUNCEMENTS },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'data', { announcements: expect.arrayContaining([expectedFormat]) });
   });
 
@@ -68,10 +60,10 @@ describe('Announcement GraphQL', () => {
     expect.assertions(2);
 
     // in case database has no valid (non-expired) announcement, create a site-wide & tenant-specific announcements
-    await Announcement.create<Partial<AnnouncementDocument>>([
-      { title: FAKE, message: FAKE, beginAt: new Date(), endAt: addDays(Date.now(), 10) },
+    const announcements = await Announcement.create<Partial<AnnouncementDocument>>([
+      { title: FAKE, message: FAKE, beginAt: new Date(), endAt: addDays(Date.now(), 10) }, // all tenant announcement
       {
-        tenant: randomItem(normalUser!.tenants),
+        tenant: randomItem(jest.normalUser.tenants),
         title: FAKE,
         message: FAKE,
         beginAt: new Date(),
@@ -80,131 +72,154 @@ describe('Announcement GraphQL', () => {
     ]);
 
     const [siteWideAnnouncements, tenantAnnouncements] = await Promise.all([
+      Announcement.find({ tenant: { $exists: false }, endAt: { $gte: new Date() }, deletedAt: { $exists: false } }),
       Announcement.find({
-        tenant: { $exists: false },
-        endAt: { $gte: new Date() },
-        deletedAt: { $exists: false },
-      }),
-      Announcement.find({
-        tenant: { $in: normalUser!.tenants },
+        tenant: { $in: jest.normalUser.tenants },
         endAt: { $gte: new Date() },
         deletedAt: { $exists: false },
       }),
     ]);
 
-    const res1 = await normalServer!.executeOperation({
-      query: GET_ANNOUNCEMENT,
-      variables: { id: randomItem(siteWideAnnouncements)._id.toString() },
-    });
+    const res1 = await apolloTestServer.executeOperation(
+      { query: GET_ANNOUNCEMENT, variables: { id: randomItem(siteWideAnnouncements)._id.toString() } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res1, 'data', { announcement: expectedFormat });
 
-    const res2 = await normalServer!.executeOperation({
-      query: GET_ANNOUNCEMENT,
-      variables: { id: randomItem(tenantAnnouncements)._id.toString() },
-    });
+    const res2 = await apolloTestServer.executeOperation(
+      { query: GET_ANNOUNCEMENT, variables: { id: randomItem(tenantAnnouncements)._id.toString() } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res2, 'data', { announcement: expectedFormat });
+
+    // clean up
+    await Announcement.deleteMany({ _id: { $in: announcements.map(a => a._id) } });
   });
 
   test('should fail when GET non-existing document without ID argument', async () => {
     expect.assertions(1);
-    const res = await normalServer!.executeOperation({ query: GET_ANNOUNCEMENT });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_ANNOUNCEMENT },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'error', 'Variable "$id" of required type "ID!" was not provided.');
   });
 
   test('should fail when GET non-existing document without valid Mongo ID argument', async () => {
     expect.assertions(1);
-    const res = await normalServer!.executeOperation({
-      query: GET_ANNOUNCEMENT,
-      variables: { id: 'invalid-mongoID' },
-    });
-    apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.INVALID_ID}`);
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_ANNOUNCEMENT, variables: { id: 'invalid-mongoID' } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
+    apolloExpect(res, 'errorContaining', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
   });
 
   test('should fail when mutating without ADMIN role as guest', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({
-      query: ADD_ANNOUNCEMENT,
-      variables: {
-        announcement: { title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) },
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: ADD_ANNOUNCEMENT,
+        variables: {
+          announcement: { title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) },
+        },
       },
-    });
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
   });
 
   test('should fail when mutating without ADMIN role as normal user', async () => {
     expect.assertions(1);
 
-    const res = await normalServer!.executeOperation({
-      query: ADD_ANNOUNCEMENT,
-      variables: {
-        announcement: { title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) },
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: ADD_ANNOUNCEMENT,
+        variables: {
+          announcement: { title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) },
+        },
       },
-    });
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
   });
 
   test('should pass when ADD & DELETE (as admin)', async () => {
     expect.assertions(2);
 
-    const createdRes = await adminServer!.executeOperation({
-      query: ADD_ANNOUNCEMENT,
-      variables: {
-        announcement: {
-          title: 'Jest Apollo Title',
-          message: 'Jest Apollo Message',
-          beginAt: addDays(Date.now(), 5),
-          endAt: addDays(Date.now(), 15),
-        },
+    const create = {
+      title: 'Jest Apollo Title',
+      message: 'Jest Apollo Message',
+      beginAt: addDays(Date.now(), 5),
+      endAt: addDays(Date.now(), 15),
+    };
+    const createdRes = await apolloTestServer.executeOperation<{ addAnnouncement: AnnouncementDocument }>(
+      { query: ADD_ANNOUNCEMENT, variables: { announcement: create } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
+    apolloExpect(createdRes, 'data', {
+      addAnnouncement: {
+        ...expectedFormat,
+        ...create,
+        beginAt: create.beginAt.getTime(),
+        endAt: create.endAt.getTime(),
       },
     });
-    apolloExpect(createdRes, 'data', { addAnnouncement: expectedFormat });
 
-    const removedRes = await adminServer!.executeOperation({
-      query: REMOVE_ANNOUNCEMENT,
-      variables: { id: createdRes.data!.addAnnouncement._id, ...(prob(0.5) && { remark: FAKE }) },
-    });
+    const newId =
+      createdRes.body.kind === 'single' ? createdRes.body.singleResult.data!.addAnnouncement._id.toString() : null;
+
+    const removedRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_ANNOUNCEMENT, variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(removedRes, 'data', { removeAnnouncement: { code: MSG_ENUM.COMPLETED } });
   });
 
   test('should pass when ADD & DELETE (with tenantId) (as tenantAdmin)', async () => {
     expect.assertions(2);
 
-    const createdRes = await tenantAdminServer!.executeOperation({
-      query: ADD_ANNOUNCEMENT,
-      variables: {
-        announcement: {
-          tenantId,
-          title: `Jest Apollo Title (tenantAdmin ${tenantAdmin!.name})`,
-          message: `Jest Apollo Message (tenantAdmin ${tenantAdmin!.name})`,
-          beginAt: addDays(Date.now(), 5),
-          endAt: addDays(Date.now(), 15),
-        },
+    const create = {
+      title: `Jest Apollo Title (tenantAdmin ${jest.tenantAdmin.name})`,
+      message: `Jest Apollo Message (tenantAdmin ${jest.tenantAdmin.name})`,
+      beginAt: addDays(Date.now(), 5),
+      endAt: addDays(Date.now(), 15),
+    };
+    const createdRes = await apolloTestServer.executeOperation<{ addAnnouncement: AnnouncementDocument }>(
+      { query: ADD_ANNOUNCEMENT, variables: { announcement: { ...create, tenantId: jest.tenantId } } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
+    apolloExpect(createdRes, 'data', {
+      addAnnouncement: {
+        ...expectedFormat,
+        ...create,
+        tenant: jest.tenantId,
+        beginAt: create.beginAt.getTime(),
+        endAt: create.endAt.getTime(),
       },
     });
-    apolloExpect(createdRes, 'data', { addAnnouncement: { ...expectedFormat, tenant: tenantId } });
 
-    const removedRes = await tenantAdminServer!.executeOperation({
-      query: REMOVE_ANNOUNCEMENT,
-      variables: { id: createdRes.data!.addAnnouncement._id, ...(prob(0.5) && { remark: FAKE }) },
-    });
+    const newId =
+      createdRes.body.kind === 'single' ? createdRes.body.singleResult.data!.addAnnouncement._id.toString() : null;
+    const removedRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_ANNOUNCEMENT, variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) } },
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(removedRes, 'data', { removeAnnouncement: { code: MSG_ENUM.COMPLETED } });
   });
 
   test('should fail when ADD & DELETE (WITHOUT tenantId) (as tenantAdmin)', async () => {
     expect.assertions(1);
 
-    const res = await tenantAdminServer!.executeOperation({
-      query: ADD_ANNOUNCEMENT,
-      variables: {
-        announcement: {
-          title: `Jest Apollo Title (tenantAdmin ${tenantAdmin!.name})`,
-          message: `Jest Apollo Message (tenantAdmin ${tenantAdmin!.name})`,
-          beginAt: addDays(Date.now(), 5),
-          endAt: addDays(Date.now(), 15),
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: ADD_ANNOUNCEMENT,
+        variables: {
+          announcement: { title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) },
         },
       },
-    });
+      { contextValue: apolloContext(jest.tenantAdmin) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
   });
 
@@ -212,31 +227,43 @@ describe('Announcement GraphQL', () => {
     expect.assertions(4);
 
     // add without title
-    const res1 = await adminServer!.executeOperation({
-      query: ADD_ANNOUNCEMENT,
-      variables: { announcement: { message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) } },
-    });
+    const res1 = await apolloTestServer.executeOperation(
+      {
+        query: ADD_ANNOUNCEMENT,
+        variables: { announcement: { message: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) } },
+      },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res1, 'errorContaining', 'Field "title" of required type "String!" was not provided.');
 
     // add without message
-    const res2 = await adminServer!.executeOperation({
-      query: ADD_ANNOUNCEMENT,
-      variables: { announcement: { title: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) } },
-    });
+    const res2 = await apolloTestServer.executeOperation(
+      {
+        query: ADD_ANNOUNCEMENT,
+        variables: { announcement: { title: FAKE, beginAt: addDays(Date.now(), 5), endAt: addDays(Date.now(), 15) } },
+      },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res2, 'errorContaining', 'Field "message" of required type "String!" was not provided.');
 
     // add without beginAt
-    const res3 = await adminServer!.executeOperation({
-      query: ADD_ANNOUNCEMENT,
-      variables: { announcement: { title: FAKE, message: FAKE, endAt: addDays(Date.now(), 5) } },
-    });
+    const res3 = await apolloTestServer.executeOperation(
+      {
+        query: ADD_ANNOUNCEMENT,
+        variables: { announcement: { title: FAKE, message: FAKE, endAt: addDays(Date.now(), 5) } },
+      },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res3, 'errorContaining', 'Field "beginAt" of required type "DateInput!" was not provided.');
 
     // add without endAt
-    const res4 = await adminServer!.executeOperation({
-      query: ADD_ANNOUNCEMENT,
-      variables: { announcement: { title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 15) } },
-    });
+    const res4 = await apolloTestServer.executeOperation(
+      {
+        query: ADD_ANNOUNCEMENT,
+        variables: { announcement: { title: FAKE, message: FAKE, beginAt: addDays(Date.now(), 15) } },
+      },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res4, 'errorContaining', 'Field "endAt" of required type "DateInput!" was not provided.');
   });
 });

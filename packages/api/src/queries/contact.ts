@@ -3,11 +3,9 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
 import { STATUS_RESPONSE } from './common';
 
-const CONTACT_FIELDS = gql`
+const CONTACT_FIELDS = `#graphql
   fragment ContactFields on Contact {
     _id
     flags
@@ -20,7 +18,7 @@ const CONTACT_FIELDS = gql`
   }
 `;
 
-export const GET_CONTACT_TOKEN = gql`
+export const GET_CONTACT_TOKEN = `#graphql
   query GetContactToken($expiresIn: Int) {
     contactToken(expiresIn: $expiresIn) {
       token
@@ -29,7 +27,7 @@ export const GET_CONTACT_TOKEN = gql`
   }
 `;
 
-export const ADD_CONTACT = gql`
+export const ADD_CONTACT = `#graphql
   ${CONTACT_FIELDS}
   mutation AddContact($token: String!) {
     addContact(token: $token) {
@@ -38,7 +36,7 @@ export const ADD_CONTACT = gql`
   }
 `;
 
-export const GET_CONTACT = gql`
+export const GET_CONTACT = `#graphql
   ${CONTACT_FIELDS}
   query GetContact($id: ID!) {
     contact(id: $id) {
@@ -47,7 +45,7 @@ export const GET_CONTACT = gql`
   }
 `;
 
-export const GET_CONTACTS = gql`
+export const GET_CONTACTS = `#graphql
   ${CONTACT_FIELDS}
   query GetContacts {
     contacts {
@@ -56,7 +54,7 @@ export const GET_CONTACTS = gql`
   }
 `;
 
-export const REMOVE_CONTACT = gql`
+export const REMOVE_CONTACT = `#graphql
   ${STATUS_RESPONSE}
   mutation RemoveContact($id: ID!) {
     removeContact(id: $id) {
@@ -65,7 +63,7 @@ export const REMOVE_CONTACT = gql`
   }
 `;
 
-export const UPDATE_CONTACT = gql`
+export const UPDATE_CONTACT = `#graphql
   ${CONTACT_FIELDS}
   mutation UpdateContact($id: ID!, $name: String!) {
     updateContact(id: $id, name: $name) {

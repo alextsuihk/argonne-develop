@@ -1,5 +1,3 @@
-//! try to make friends cross tenants
-
 /**
  * JEST Test: /api/tenant-binding routes
  *
@@ -10,7 +8,6 @@ import request from 'supertest';
 
 import app from '../../app';
 import { expectedDateFormat, genUser, jestSetup, jestTeardown, prob, randomString } from '../../jest';
-import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import token, { REFRESH_TOKEN_PREFIX } from '../../utils/token';
 import commonTest from './rest-api-test';
@@ -22,21 +19,16 @@ const route = 'tenant-binding';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: UserDocument | null;
-  let tenantAdmin: UserDocument | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
-  beforeAll(async () => {
-    ({ normalUser, tenantAdmin, tenantId } = await jestSetup(['normal', 'tenantAdmin']));
-  });
-
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should fail when trying to createToken (as normalUser)', async () =>
-    createUpdateDelete(route, { 'Jest-User': normalUser!._id }, [
+    createUpdateDelete(route, { 'Jest-User': jest.normalUser._id }, [
       {
         action: 'create#createToken',
-        data: { tenantId: tenantId!, ...(prob(0.5) && { expiresIn: 11 }) },
+        data: { tenantId: jest.tenantId, ...(prob(0.5) && { expiresIn: 11 }) },
         expectedResponse: {
           statusCode: 403,
           data: { type: 'plain', statusCode: 403, errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }] },
@@ -48,7 +40,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     createUpdateDelete(route, {}, [
       {
         action: 'create#createToken',
-        data: { tenantId: tenantId!, ...(prob(0.5) && { expiresIn: 11 }) },
+        data: { tenantId: jest.tenantId, ...(prob(0.5) && { expiresIn: 11 }) },
         expectedResponse: {
           statusCode: 401,
           data: { type: 'plain', statusCode: 401, errors: [{ code: MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR }] },
@@ -57,7 +49,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     ]));
 
   test('should fail when creating a tenantToken with invalid parameters', async () =>
-    createUpdateDelete(route, { 'Jest-User': tenantAdmin!._id }, [
+    createUpdateDelete(route, { 'Jest-User': jest.tenantAdmin._id }, [
       {
         action: 'create#createToken',
         data: { expiresIn: 10 },
@@ -68,7 +60,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       },
       {
         action: 'create#createToken',
-        data: { tenantId: tenantId!, expiresIn: 'invalid' },
+        data: { tenantId: jest.tenantId, expiresIn: 'invalid' },
         expectedResponse: {
           statusCode: 422,
           data: { type: 'yup', statusCode: 422, errors: [{ code: MSG_ENUM.USER_INPUT_ERROR, param: 'expiresIn' }] },
@@ -88,8 +80,8 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     // tenantAdmin creates token
     const tokenRes = await request(app)
       .post('/api/tenant-binding/createToken')
-      .send({ tenantId: tenantId!, ...(prob(0.5) && { expiresIn: 10 }) })
-      .set({ 'Jest-User': tenantAdmin!._id });
+      .send({ tenantId: jest.tenantId, ...(prob(0.5) && { expiresIn: 10 }) })
+      .set({ 'Jest-User': jest.tenantAdmin._id });
     expect(tokenRes.body).toEqual({ data: { token: expect.any(String), expireAt: expectedDateFormat() } });
     expect(tokenRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(tokenRes.status).toBe(200);
@@ -107,20 +99,20 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     // check if binding is successful
     const updatedUser = await User.findOne({ _id: user._id }).lean();
-    expect(updatedUser?.tenants.some(t => t.equals(tenantId!))).toBeTrue();
+    expect(updatedUser?.tenants.some(t => t.equals(jest.tenantId))).toBeTrue();
 
     // tenantAdmin unbinds user
     const unBindRes = await request(app)
       .delete('/api/tenant-binding')
-      .send({ tenantId: tenantId!, userId: user._id })
-      .set({ 'Jest-User': tenantAdmin!._id });
+      .send({ tenantId: jest.tenantId, userId: user._id })
+      .set({ 'Jest-User': jest.tenantAdmin._id });
     expect(unBindRes.body).toEqual({ code: MSG_ENUM.COMPLETED });
     expect(unBindRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(unBindRes.status).toBe(200);
 
     // check if unbinding is successful
     const updated2User = await User.findOne({ _id: user._id }).lean();
-    expect(updated2User?.tenants.some(t => t.equals(tenantId!))).toBeFalse();
+    expect(updated2User?.tenants.some(t => t.equals(jest.tenantId))).toBeFalse();
 
     // clean up
     await User.deleteOne({ _id: user._id });

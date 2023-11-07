@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import tenantBindingController from '../controllers/tenant-binding';
 import { tryCatch } from './root';
 
@@ -13,10 +13,10 @@ const { bind, createToken, unbind } = tenantBindingController;
 
 export default {
   Query: {
-    tenantToken: (_: unk, args: unk, { req }: Ctx) => tryCatch(() => createToken(req, args)),
+    tenantToken: (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => createToken(req, args)),
   },
   Mutation: {
-    bindTenant: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => bind(req, args)),
-    unbindTenant: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => unbind(req, args)),
+    bindTenant: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => bind(req, args)),
+    unbindTenant: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => unbind(req, args)),
   },
 };

@@ -28,7 +28,7 @@ export type Auth = {
 };
 
 type Extra = {
-  ip: string;
+  ip?: string;
   ua: string;
   isPublic?: boolean;
   expiresIn?: number;

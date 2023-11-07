@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import contactController from '../controllers/contact';
 import { tryCatch } from './root';
 
@@ -13,13 +13,13 @@ const { find, findOne, create, createToken, update, remove } = contactController
 
 export default {
   Query: {
-    contact: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => findOne(req, args)),
-    contacts: async (_: unk, __: unk, { req }: Ctx) => tryCatch(() => find(req)),
-    contactToken: (_: unk, args: unk, { req }: Ctx) => tryCatch(() => createToken(req, args)),
+    contact: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => findOne(req, args)),
+    contacts: async (_: unk, __: unk, { req }: ApolloContext) => tryCatch(() => find(req)),
+    contactToken: (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => createToken(req, args)),
   },
   Mutation: {
-    addContact: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
-    removeContact: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => remove(req, args)),
-    updateContact: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args)),
+    addContact: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => create(req, args)),
+    removeContact: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => remove(req, args)),
+    updateContact: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => update(req, args)),
   },
 };

@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import analyticController from '../controllers/analytic';
 import { tryCatch } from './root';
 
@@ -13,6 +13,6 @@ const { session } = analyticController;
 
 export default {
   Mutation: {
-    analyticSession: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => session(req, args)),
+    analyticSession: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => session(req, args)),
   },
 };

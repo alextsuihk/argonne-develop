@@ -9,7 +9,15 @@ import { LOCALE } from '@argonne/common';
 import request from 'supertest';
 
 import app from '../app';
-import { apolloExpect, ApolloServer, expectedDateFormat, jestSetup, jestTeardown, randomString } from '../jest';
+import {
+  apolloExpect,
+  apolloContext,
+  apolloTestServer,
+  expectedDateFormat,
+  jestSetup,
+  jestTeardown,
+  randomString,
+} from '../jest';
 import Tenant from '../models/tenant';
 import type { UserDocument } from '../models/user';
 import { AUTH_SERVICE_TOKEN } from '../queries/auth-service';
@@ -19,14 +27,9 @@ const { TENANT } = LOCALE.DB_ENUM;
 
 // Top level of this test suite:
 describe('Auth-Services GraphQL', () => {
-  let normalServer: ApolloServer | null;
-  let normalUser: UserDocument | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
-  beforeAll(async () => {
-    ({ normalServer, normalUser, tenantId } = await jestSetup(['normal'], { apollo: true }));
-  });
-
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when generates authToken & gets user info', async () => {
@@ -40,36 +43,38 @@ describe('Auth-Services GraphQL', () => {
     // fake an authService
     const authService = [clientId, clientSecret, redirectUri, 'BARE', friendKey].join('#');
     const { matchedCount } = await Tenant.updateOne(
-      { _id: tenantId!, services: TENANT.SERVICE.AUTH_SERVICE },
+      { _id: jest.tenantId, services: TENANT.SERVICE.AUTH_SERVICE },
       { $push: { authServices: authService } },
     );
     if (!matchedCount) return; // does not have TENANT.SERVICE.AUTH_SERVICE
 
-    const tokenRes = await normalServer!.executeOperation({
-      query: AUTH_SERVICE_TOKEN,
-      variables: { client: `${tenantId!}#${clientId}` },
-    });
+    const tokenRes = await apolloTestServer.executeOperation<{ authServiceToken: { token: string } }>(
+      { query: AUTH_SERVICE_TOKEN, variables: { client: `${jest.tenantId}#${clientId}` } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(tokenRes, 'data', {
       authServiceToken: { clientId, token: expect.any(String), tokenExpireAt: expectedDateFormat(true), redirectUri },
     });
 
-    const authToken = await dataDecipher(tokenRes.data!.authServiceToken.token, clientSecret); // emulating 3rd party app to decipher data
-
-    const expectedFormat = expect.objectContaining({
-      _id: normalUser!._id.toString(),
-      name: normalUser!.name,
-      emails: normalUser!.emails,
-      schoolHistories: [
-        expect.objectContaining({ year: expect.any(String), school: expect.any(String), level: expect.any(String) }),
-      ],
-    });
-
     // fetch user info using authToken (from a 3rd party service)
+    const authToken =
+      tokenRes.body.kind === 'single'
+        ? await dataDecipher(tokenRes.body.singleResult.data!.authServiceToken.token, clientSecret)
+        : null;
     const userInfoRes = await request(app).get(`/api/auth/authServiceUserInfo/${authToken}`);
-    expect(userInfoRes.body).toEqual({ data: expectedFormat });
+    expect(userInfoRes.body).toEqual({
+      data: expect.objectContaining({
+        _id: jest.normalUser._id.toString(),
+        name: jest.normalUser.name,
+        emails: jest.normalUser.emails,
+        schoolHistories: [
+          expect.objectContaining({ year: expect.any(String), school: expect.any(String), level: expect.any(String) }),
+        ],
+      }),
+    });
     expect(userInfoRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(userInfoRes.status).toBe(200);
     // clean up
-    await Tenant.updateOne({ _id: tenantId! }, { $pull: { authServices: authService } });
+    await Tenant.updateOne({ _id: jest.tenantId }, { $pull: { authServices: authService } });
   });
 });

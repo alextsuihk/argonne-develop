@@ -394,10 +394,10 @@ const close = async (req: Request, args: unknown): Promise<QuestionDocumentEx> =
   ).lean();
   if (!question || !question.tutor) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
-  // const updatedQuestion =  question.price ? await pay(question) : question
+  // const updatedQuestion =  question.bounty ? await pay(question) : question
 
   const [transformed] = await Promise.all([
-    transform(userId, question.price ? await pay(question) : question),
+    transform(userId, question.bounty ? await pay(question) : question),
     notifySync(
       question.tenant,
       { userIds: [question.student, question.tutor], event: 'QUESTION' },
@@ -419,7 +419,7 @@ const close = async (req: Request, args: unknown): Promise<QuestionDocumentEx> =
 const closeByScheduler = async (): Promise<void> => {
   const [payingQuestions, closingQuestions, satellites] = await Promise.all([
     Question.find({
-      price: { $exists: true },
+      bounty: { $exists: true },
       tutor: { $exists: true },
       flags: { $nin: [QUESTION.FLAG.CLOSED, QUESTION.FLAG.DISPUTED, QUESTION.FLAG.PAID, QUESTION.FLAG.SCHOOL] },
       deletedAt: { $exists: false },
@@ -430,7 +430,7 @@ const closeByScheduler = async (): Promise<void> => {
     }).lean(),
     Question.find(
       {
-        $or: [{ price: { $exists: false } }, { tutor: { $exists: false } }],
+        $or: [{ bounty: { $exists: false } }, { tutor: { $exists: false } }],
         flags: { $ne: QUESTION.FLAG.CLOSED },
         deletedAt: { $exists: false },
         updatedAt: {
@@ -533,7 +533,7 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
     inputFields.book
       ? Book.exists({ _id: inputFields.book, level: inputFields.level, subjects: inputFields.subject })
       : null,
-    inputFields.classroom ? Classroom.exists({ _id: inputFields.classroom, students: userId }) : null,
+    inputFields.classroom ? Classroom.findOne({ _id: inputFields.classroom, students: userId }).lean() : null,
     inputFields.homework
       ? Homework.findOne({ _id: inputFields.homework, user: userId, deletedAt: { $exists: false } }).lean()
       : null,
@@ -541,6 +541,8 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
     Subject.exists({ _id: inputFields.subject, levels: inputFields.level, deletedAt: { $exists: false } }),
     Tenant.findByTenantId(tenantId),
   ]);
+  // ! the following is a better logic, unfortunately, JEST does not support this logic, will need React to handle the logic
+  // const userIds = tenant.school ? classroom?.teachers || [] : users.map(u => u._id); // for school tenant, could only ask classroom.teachers
   const userIds = users.map(u => u._id);
 
   if (
@@ -554,8 +556,7 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
   if (
     !Object.keys(QUESTION.LANG).includes(inputFields.lang) ||
     !userIds.length ||
-    userIds.some(u => u.equals(userId)) ||
-    uIds.length !== userIds.length ||
+    userIds.some(u => u.equals(userId)) || // you should ask yourself
     (inputFields.book && !book) ||
     (inputFields.classroom && !classroom) ||
     (inputFields.homework && !homework) ||
@@ -569,7 +570,7 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
   const flags: string[] = [];
   if (userFlags.includes(USER.FLAG.EDA)) flags.push(QUESTION.FLAG.EDA);
   if (tenant.school) flags.push(QUESTION.FLAG.SCHOOL);
-  if (tenant.school || userIds.length === 1) inputFields.price = 0;
+  if (tenant.school || userIds.length === 1) inputFields.bounty = 0;
 
   const question = new Question<Partial<QuestionDocument>>({
     ...inputFields,

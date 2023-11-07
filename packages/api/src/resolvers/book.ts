@@ -5,7 +5,7 @@
 
 // TODO: addBookSchool, removeBookSchool
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import bookController from '../controllers/book';
 import { tryCatch } from './root';
 
@@ -31,24 +31,28 @@ const {
 
 export default {
   Query: {
-    book: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => findOne(req, args)),
-    books: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => find(req, args)),
+    book: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => findOne(req, args)),
+    books: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => find(req, args)),
 
-    isIsbnAvailable: async (_: unk, args: unk, { req }: Ctx): Promise<boolean> =>
+    isIsbnAvailable: async (_: unk, args: unk, { req }: ApolloContext): Promise<boolean> =>
       tryCatch(() => isIsbnAvailable(req, args)),
   },
   Mutation: {
-    addBook: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
-    addBookAssignment: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addAssignment(req, args)),
-    addBookRemark: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addRemark(req, args)),
-    addBookRevision: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addRevision(req, args)),
-    addBookRevisionImage: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addRevisionImage(req, args)),
-    addBookSupplement: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => addSupplement(req, args)),
-    removeBook: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => remove(req, args)),
-    removeBookAssignment: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => removeAssignment(req, args)),
-    removeBookRevision: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => removeRevision(req, args)),
-    removeBookRevisionImage: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => removeRevisionImage(req, args)),
-    removeBookSupplement: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => removeSupplement(req, args)),
-    updateBook: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => update(req, args)),
+    addBook: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => create(req, args)),
+    addBookAssignment: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => addAssignment(req, args)),
+    addBookRemark: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => addRemark(req, args)),
+    addBookRevision: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => addRevision(req, args)),
+    addBookRevisionImage: async (_: unk, args: unk, { req }: ApolloContext) =>
+      tryCatch(() => addRevisionImage(req, args)),
+    addBookSupplement: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => addSupplement(req, args)),
+    removeBook: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => remove(req, args)),
+    removeBookAssignment: async (_: unk, args: unk, { req }: ApolloContext) =>
+      tryCatch(() => removeAssignment(req, args)),
+    removeBookRevision: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => removeRevision(req, args)),
+    removeBookRevisionImage: async (_: unk, args: unk, { req }: ApolloContext) =>
+      tryCatch(() => removeRevisionImage(req, args)),
+    removeBookSupplement: async (_: unk, args: unk, { req }: ApolloContext) =>
+      tryCatch(() => removeSupplement(req, args)),
+    updateBook: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => update(req, args)),
   },
 };

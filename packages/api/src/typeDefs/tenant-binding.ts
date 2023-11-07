@@ -1,10 +1,8 @@
 /**
- * apollo typeDef: TenantBing
+ * apollo typeDef: TenantBind
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     tenantToken(tenantId: String!, expiresIn: Int): TokenWithExpireAt!
   }

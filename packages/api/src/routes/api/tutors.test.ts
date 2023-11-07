@@ -38,10 +38,7 @@ const route = 'tutors';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: UserDocument | null;
-  let normalUsers: UserDocument[] | null;
-  let adminUser: UserDocument | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single credential format
   const expectedMinFormat = {
@@ -72,28 +69,24 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     subject: expectedIdFormat,
   };
 
-  beforeAll(async () => {
-    ({ normalUser, normalUsers, adminUser, tenantId } = await jestSetup(['admin', 'normal']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when getMany & getById (as student)', async () => {
     // find an intersection of levels of tutors & normalUsers
-    const tutors = await Tutor.find({
-      'specialties.level': { $in: normalUsers!.map(user => user.schoolHistories[0]?.level).filter(lvl => !!lvl) },
-      deletedAt: { $exists: false },
-    }).lean();
+    const levelIds = jest.normalUsers.map(user => user.schoolHistories[0]?.level).filter(lvl => !!lvl);
+    const tutors = await Tutor.find({ 'specialties.level': { $in: levelIds }, deletedAt: { $exists: false } }).lean();
+
     const tutorLevels = tutors
       .map(t => t.specialties.map(s => s.level))
       .flat()
       .sort(shuffle);
 
-    const student = normalUsers!.find(
+    const student = jest.normalUsers.find(
       ({ schoolHistories }) => schoolHistories[0] && tutorLevels.some(lvl => lvl.equals(schoolHistories[0].level)),
     );
 
     if (!student) throw `No valid student for testing`;
-
     await getMany<TutorDocument>(route, { 'Jest-User': student._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,
@@ -103,9 +96,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should pass when getMany & getById (as teacher)', async () => {
     const teacherLevel = await Level.findOne({ code: 'TEACHER' }).lean();
-    const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
+    const teacher = jest.normalUsers.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
     if (!teacher) throw `No valid teacher for testing`;
 
+    console.log('teacherId', teacher._id);
     await getMany<TutorDocument>(route, { 'Jest-User': teacher._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,
@@ -114,7 +108,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   });
 
   test('should pass when getMany & getById (as adminUser)', async () =>
-    getMany<TutorDocument>(route, { 'Jest-User': adminUser!._id }, expectedMinFormat, {
+    getMany<TutorDocument>(route, { 'Jest-User': jest.adminUser._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
@@ -123,13 +117,13 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should fail when GET many without authenticated', async () => getUnauthenticated(route, {}));
 
   test('should fail when GET one without authenticated', async () =>
-    getUnauthenticated(`${route}/${normalUser!._id}`, {}));
+    getUnauthenticated(`${route}/${jest.normalUser._id}`, {}));
 
   test('should fail when adding credential or specialty without identifiedAt', async () => {
     expect.assertions(3 + 3);
 
     // create a new user (without identifiedAt)
-    const user = genUser(tenantId!);
+    const user = genUser(jest.tenantId);
     await user.save();
 
     // add credential
@@ -145,7 +139,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const res2 = await request(app)
       .patch(`/api/${route}/addSpecialty`)
       .send({
-        tenantId,
+        tenantId: jest.tenantId,
         ...(prob(0.5) && { note: FAKE }),
         langs: [QUESTION.LANG.CSE],
         level: FAKE_ID,
@@ -163,11 +157,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should pass when create a tutor document with upsert()', async () => {
     expect.assertions(4 + 4);
 
-    //  create a new user (with identifiedAt)
-    const user = genUser(tenantId!, { identifiedAt: new Date() });
-    await user.save();
+    //  create two new users (with identifiedAt)
+    const user1 = genUser(jest.tenantId, { identifiedAt: new Date() });
+    const user2 = genUser(jest.tenantId, { identifiedAt: new Date() });
+    await Promise.all([user1.save(), user2.save()]);
 
-    // upsert with addSpecialty
+    // (user1) upsert with addSpecialty
     const subject = randomItem(await Subject.find({ deletedAt: { $exists: false } }).lean());
     const specialty = {
       ...(prob(0.5) && { note: `specialty ${FAKE}` }),
@@ -175,36 +170,39 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       level: randomItem(subject.levels).toString(),
       subject: subject._id.toString(),
     };
-    const res = await request(app)
+    const res1 = await request(app)
       .patch(`/api/${route}/addSpecialty`)
-      .send({ tenantId, ...specialty })
-      .set({ 'Jest-User': user._id });
-    expect(res.body).toEqual({ data: expect.objectContaining(expectedMinFormat) });
-    expect(res.header['content-type']).toBe('application/json; charset=utf-8');
-    expect(res.status).toBe(200);
-    const tutor = await Tutor.findOneAndDelete({ user: res.body.data._id }).lean(); // clean up
-    expect(tutor!.user.equals(user._id)).toBeTrue();
+      .send({ tenantId: jest.tenantId, ...specialty })
+      .set({ 'Jest-User': user1._id });
+    expect(res1.body).toEqual({ data: expect.objectContaining(expectedMinFormat) });
+    expect(res1.header['content-type']).toBe('application/json; charset=utf-8');
+    expect(res1.status).toBe(200);
+    const tutor1 = await Tutor.findOneAndDelete({ user: res1.body.data._id }).lean(); // clean up
+    expect(tutor1!.user.equals(user1._id)).toBeTrue();
 
-    // upsert with addCredential
+    // (user2) upsert with addCredential
     const res2 = await request(app)
       .patch(`/api/${route}/addCredential`)
       .send({ title: FAKE, proofs: [`${FAKE} PNG`] })
-      .set({ 'Jest-User': user._id });
+      .set({ 'Jest-User': user2._id });
     expect(res2.body).toEqual({ data: expect.objectContaining(expectedMinFormat) });
     expect(res2.header['content-type']).toBe('application/json; charset=utf-8');
     expect(res2.status).toBe(200);
-    const tutor2 = await Tutor.findOneAndDelete({ user: res.body.data._id }).lean(); // clean up
-    expect(tutor2!.user.equals(user._id)).toBeTrue();
+    const tutor2 = await Tutor.findOneAndDelete({ user: res2.body.data._id }).lean(); // clean up
+    expect(tutor2!.user.equals(user2._id)).toBeTrue();
 
     // clean up
-    await User.deleteOne({ _id: user._id });
+    await Promise.all([
+      User.deleteMany({ _id: { $in: [user1._id, user2._id] } }),
+      Tutor.deleteMany({ _id: { $in: [tutor1!._id, tutor2!._id] } }),
+    ]);
   });
 
   test('should pass the full suite', async () => {
     expect.assertions(3 * 7);
 
     // create a new user (with identifiedAt)
-    const user = genUser(tenantId!, { identifiedAt: new Date() });
+    const user = genUser(jest.tenantId, { identifiedAt: new Date() });
     await user.save();
 
     // upsert with addCredential
@@ -227,7 +225,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const verifyCredentialRes = await request(app)
       .patch(`/api/${route}/verifyCredential`)
       .send({ id: user._id, subId: credentialId })
-      .set({ 'Jest-User': adminUser!._id });
+      .set({ 'Jest-User': jest.adminUser._id });
     expect(verifyCredentialRes.body).toEqual({
       data: expect.objectContaining({
         ...expectedMinFormat,
@@ -254,9 +252,9 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const addRemarkRes = await request(app)
       .patch(`/api/${route}/addRemark`)
       .send({ id: user._id, remark: FAKE })
-      .set({ 'Jest-User': adminUser!._id });
+      .set({ 'Jest-User': jest.adminUser._id });
     expect(addRemarkRes.body).toEqual({
-      data: expect.objectContaining({ ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) }),
+      data: expect.objectContaining({ ...expectedMinFormat, ...expectedRemark(jest.adminUser._id, FAKE) }),
     });
     expect(addRemarkRes.header['content-type']).toBe('application/json; charset=utf-8');
     expect(addRemarkRes.status).toBe(200);
@@ -278,12 +276,12 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     };
     const addSpecialtyRes = await request(app)
       .patch(`/api/${route}/addSpecialty`)
-      .send({ tenantId, ...specialty })
+      .send({ tenantId: jest.tenantId, ...specialty })
       .set({ 'Jest-User': user._id });
     expect(addSpecialtyRes.body).toEqual({
       data: expect.objectContaining({
         ...expectedMinFormat,
-        specialties: [expect.objectContaining({ ...expectedSpecialtyMinFormat, tenant: tenantId, ...specialty })],
+        specialties: [expect.objectContaining({ ...expectedSpecialtyMinFormat, tenant: jest.tenantId, ...specialty })],
       }),
     });
     expect(addSpecialtyRes.header['content-type']).toBe('application/json; charset=utf-8');

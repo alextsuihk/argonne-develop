@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import tutorInverseRankingController from '../controllers/tutor-inverse-ranking';
 import { tryCatch } from './root';
 
@@ -13,7 +13,7 @@ const { find, findOne } = tutorInverseRankingController;
 
 export default {
   Query: {
-    tutorInverseRanking: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => findOne(req, args)),
-    tutorInverseRankings: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => find(req)),
+    tutorInverseRanking: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => findOne(req, args)),
+    tutorInverseRankings: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => find(req)),
   },
 };

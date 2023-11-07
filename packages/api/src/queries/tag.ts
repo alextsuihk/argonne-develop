@@ -3,11 +3,9 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-const TAG_FIELDS = gql`
+const TAG_FIELDS = `#graphql
   ${LOCALE}
   ${REMARK}
   fragment TagFields on Tag {
@@ -28,7 +26,7 @@ const TAG_FIELDS = gql`
   }
 `;
 
-export const ADD_TAG = gql`
+export const ADD_TAG = `#graphql
   ${TAG_FIELDS}
   mutation AddTag($tag: TagInput!) {
     addTag(tag: $tag) {
@@ -37,7 +35,7 @@ export const ADD_TAG = gql`
   }
 `;
 
-export const ADD_TAG_REMARK = gql`
+export const ADD_TAG_REMARK = `#graphql
   ${TAG_FIELDS}
   mutation AddTagRemark($id: ID!, $remark: String!) {
     addTagRemark(id: $id, remark: $remark) {
@@ -46,7 +44,7 @@ export const ADD_TAG_REMARK = gql`
   }
 `;
 
-export const GET_TAG = gql`
+export const GET_TAG = `#graphql
   ${TAG_FIELDS}
   query GetTag($id: ID!) {
     tag(id: $id) {
@@ -55,7 +53,7 @@ export const GET_TAG = gql`
   }
 `;
 
-export const GET_TAGS = gql`
+export const GET_TAGS = `#graphql
   ${TAG_FIELDS}
   query GetTags($query: QueryInput) {
     tags(query: $query) {
@@ -64,7 +62,7 @@ export const GET_TAGS = gql`
   }
 `;
 
-export const REMOVE_TAG = gql`
+export const REMOVE_TAG = `#graphql
   ${STATUS_RESPONSE}
   mutation RemoveTag($id: ID!, $remark: String) {
     removeTag(id: $id, remark: $remark) {
@@ -73,7 +71,7 @@ export const REMOVE_TAG = gql`
   }
 `;
 
-export const UPDATE_TAG = gql`
+export const UPDATE_TAG = `#graphql
   ${TAG_FIELDS}
   mutation UpdateTag($id: ID!, $tag: TagInput!) {
     updateTag(id: $id, tag: $tag) {

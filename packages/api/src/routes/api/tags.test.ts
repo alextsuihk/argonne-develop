@@ -29,8 +29,7 @@ const route = 'tags';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUsers: UserDocument[] | null;
-  let adminUser: UserDocument | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single tag format
   const expectedMinFormat = {
@@ -43,10 +42,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     updatedAt: expectedDateFormat(),
   };
 
-  beforeAll(async () => {
-    ({ adminUser, normalUsers } = await jestSetup(['admin', 'normal']));
-  });
-
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when getMany & getById', async () =>
@@ -60,7 +56,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     await createUpdateDelete<TagDocument>(
       route,
-      { 'Jest-User': adminUser!._id },
+      { 'Jest-User': jest.adminUser._id },
 
       [
         {
@@ -71,7 +67,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
         {
           action: 'addRemark',
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(adminUser!._id, FAKE) },
+          expectedMinFormat: { ...expectedMinFormat, ...expectedRemark(jest.adminUser._id, FAKE) },
         },
         {
           action: 'update',
@@ -87,7 +83,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect.assertions(3 + 3 + 3);
 
     // create without sufficient creditability
-    let user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.CREATE_TAG);
+    let user = jest.normalUsers.find(user => user.creditability < DEFAULTS.CREDITABILITY.CREATE_TAG);
     if (!user) throw 'User with sufficient creditability is required';
     let res = await request(app)
       .post('/api/tags')
@@ -101,11 +97,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     res = await request(app)
       .post('/api/tags')
       .send({ name: FAKE_LOCALE, description: FAKE2_LOCALE })
-      .set({ 'Jest-User': adminUser!._id });
+      .set({ 'Jest-User': jest.adminUser._id });
     const newId = res.body.data._id;
 
     // update without sufficient creditability
-    user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.UPDATE_TAG);
+    user = jest.normalUsers.find(user => user.creditability < DEFAULTS.CREDITABILITY.UPDATE_TAG);
     if (!user) throw 'User with sufficient creditability is required';
     res = await request(app)
       .patch(`/api/tags/${newId}`)
@@ -116,7 +112,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect(res.status).toBe(403);
 
     // remove without sufficient creditability
-    user = normalUsers!.find(user => user.creditability < DEFAULTS.CREDITABILITY.REMOVE_TAG);
+    user = jest.normalUsers.find(user => user.creditability < DEFAULTS.CREDITABILITY.REMOVE_TAG);
     if (!user) throw 'User with sufficient creditability is required';
     res = await request(app).delete(`/api/tags/${newId}`).set({ 'Jest-User': user._id });
     expect(res.body).toEqual({ errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }], statusCode: 403, type: 'plain' });
@@ -124,6 +120,6 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     expect(res.status).toBe(403);
 
     // clean-up
-    await request(app).delete(`/api/tags/${newId}`).set({ 'Jest-User': adminUser!._id });
+    await request(app).delete(`/api/tags/${newId}`).set({ 'Jest-User': jest.adminUser._id });
   });
 });

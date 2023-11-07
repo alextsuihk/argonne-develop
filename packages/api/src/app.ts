@@ -16,13 +16,11 @@ import type { NextFunction, Request, Response } from 'express';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import mongoose from 'mongoose';
 import morgan from 'morgan';
 
 import type { ControllerError } from './error';
 import { formatError } from './error';
 import { decodeHeader } from './middleware/auth';
-import redisCache from './redis';
 import routes from './routes';
 import { isDevMode, isProdMode } from './utils/environment';
 
@@ -35,19 +33,13 @@ const app = express();
 app.use(helmet({ crossOriginEmbedderPolicy: !isDevMode, contentSecurityPolicy: !isDevMode })); // to support Apollo Studio in devMode
 
 app.use(express.json());
-app.use(cors({ credentials: true, origin: ['http://localhost:3000'] })); // for development mode
-app.use(compression());
+app.use(cors({ credentials: true, origin: ['http://localhost:5173'] })); // for development mode
+// app.use(compression()); //! TODO:
 app.set('trust proxy', isProdMode); // to populate req.ip & req.ips (even behind nginx reverse proxy)
 
-// send statusCode 500 if Mongoose or Redis is not ready (prevent further operations); for Jest, wait a while for DB connections
-app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-  if (mongoose.connection.readyState !== 1) throw next({ statusCode: 500, code: MSG_ENUM.MONGOOSE_NOT_READY });
-  if (redisCache.getStatus() !== 'ready') throw next({ statusCode: 500, code: MSG_ENUM.REDIS_NOT_READY });
-  next();
-});
-
 // decode authentication or apiKey header (jwt)
-app.use(cookieParser());
+// app.use(cookieParser()); // TODO:
+console.log('app.ts re-enable compression() & cookieParse()');
 app.use(decodeHeader);
 
 if (isDevMode) app.use(morgan('dev')); // enable Morgan logger

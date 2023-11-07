@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import authController from '../controllers/auth';
 import { authServiceToken } from '../controllers/auth-service';
 import { tryCatch } from './root';
@@ -37,68 +37,78 @@ const {
 
 export default {
   Query: {
-    authServiceToken: (_: unk, args: unk, { req }: Ctx) => tryCatch(() => authServiceToken(req, args)),
-    isEmailAvailable: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => isEmailAvailable(req, args)),
-    listApiKeys: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => listApiKeys(req)),
-    listSockets: async (_: unk, __: unk, { req }: Ctx) => listSockets(req),
-    listTokens: async (_: unk, __: unk, { req }: Ctx) => tryCatch(() => listTokens(req)),
-    loginToken: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => loginToken(req, args)),
+    authServiceToken: (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => authServiceToken(req, args)),
+    isEmailAvailable: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => isEmailAvailable(req, args)),
+    listApiKeys: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => listApiKeys(req)),
+    listSockets: async (_: unk, __: unk, { req }: ApolloContext) => listSockets(req),
+    listTokens: async (_: unk, __: unk, { req }: ApolloContext) => tryCatch(() => listTokens(req)),
+    loginToken: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => loginToken(req, args)),
   },
 
   Mutation: {
     // login, logout, register, etc
-    deregister: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => deregister(req, res, args), true),
-    login: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => login(req, res, args), true),
-    loginWithStudentId: async (_: unk, args: unk, { req, res }: Ctx) =>
+    deregister: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => deregister(req, res, args), true),
+    login: async (_: unk, args: unk, { req, res }: ApolloContext) => tryCatch(() => login(req, res, args), true),
+    loginWithStudentId: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => loginWithStudentId(req, res, args), true),
-    loginWithToken: async (_: unk, args: unk, { req, res }: Ctx) =>
+    loginWithToken: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => loginWithToken(req, res, args), true),
-    logout: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => logout(req, res, args), true),
-    logoutOther: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => logoutOther(req, args), true),
-    oAuth2: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => oAuth2(req, res, args), true),
-    register: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => register(req, res, args), true),
-    renewToken: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => renewToken(req, res, args), true),
+    logout: async (_: unk, args: unk, { req, res }: ApolloContext) => tryCatch(() => logout(req, res, args), true),
+    logoutOther: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => logoutOther(req, args), true),
+    oAuth2: async (_: unk, args: unk, { req, res }: ApolloContext) => tryCatch(() => oAuth2(req, res, args), true),
+    register: async (_: unk, args: unk, { req, res }: ApolloContext) => tryCatch(() => register(req, res, args), true),
+    renewToken: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => renewToken(req, res, args), true),
 
     // impersonate
-    impersonateStart: async (_: unk, args: unk, { req, res }: Ctx) =>
+    impersonateStart: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => impersonateStart(req, res, args), true),
-    impersonateStop: async (_: unk, args: unk, { req, res }: Ctx) =>
+    impersonateStop: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => impersonateStop(req, res, args), true),
 
     // send verification
-    sendEmailVerification: async (_: unk, args: unk, { req, res }: Ctx) =>
+    sendEmailVerification: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => sendEmailVerification(req, args)),
-    sendMessengerVerification: async (_: unk, args: unk, { req, res }: Ctx) =>
+    sendMessengerVerification: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => sendMessengerVerification(req, args)),
 
     // update
-    addApiKey: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => addApiKey(req, args)),
-    removeApiKey: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => removeApiKey(req, args)),
+    addApiKey: async (_: unk, args: unk, { req, res }: ApolloContext) => tryCatch(() => addApiKey(req, args)),
+    removeApiKey: async (_: unk, args: unk, { req, res }: ApolloContext) => tryCatch(() => removeApiKey(req, args)),
 
-    addEmail: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addEmail')),
-    addMessenger: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addMessenger')),
-    addPaymentMethod: async (_: unk, args: unk, { req, res }: Ctx) =>
+    addEmail: async (_: unk, args: unk, { req, res }: ApolloContext) => tryCatch(() => update(req, args, 'addEmail')),
+    addMessenger: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => update(req, args, 'addMessenger')),
+    addPaymentMethod: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => update(req, args, 'addPaymentMethod')),
-    addPushSubscription: async (_: unk, args: unk, { req, res }: Ctx) =>
+    addPushSubscription: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => update(req, args, 'addPushSubscription')),
-    addStash: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'addStash')),
-    oAuth2Link: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'oAuth2Link')),
-    oAuth2Unlink: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'oAuth2Unlink')),
-    removeEmail: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'removeEmail')),
-    removeMessenger: async (_: unk, args: unk, { req, res }: Ctx) =>
+    addStash: async (_: unk, args: unk, { req, res }: ApolloContext) => tryCatch(() => update(req, args, 'addStash')),
+    oAuth2Link: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => update(req, args, 'oAuth2Link')),
+    oAuth2Unlink: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => update(req, args, 'oAuth2Unlink')),
+    removeEmail: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => update(req, args, 'removeEmail')),
+    removeMessenger: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => update(req, args, 'removeMessenger')),
-    removePaymentMethod: async (_: unk, args: unk, { req, res }: Ctx) =>
+    removePaymentMethod: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => update(req, args, 'removePaymentMethod')),
-    removePushSubscriptions: async (_: unk, args: unk, { req, res }: Ctx) =>
+    removePushSubscriptions: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => update(req, args, 'removePushSubscriptions')),
-    removeStash: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'removeStash')),
-    updateAvailability: async (_: unk, args: unk, { req, res }: Ctx) =>
+    removeStash: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => update(req, args, 'removeStash')),
+    updateAvailability: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => update(req, args, 'updateAvailability')),
-    updateAvatar: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'updateAvatar')),
-    updateLocale: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'updateLocale')),
-    updateProfile: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => update(req, args, 'updateProfile')),
-    verifyEmail: async (_: unk, args: unk, { req, res }: Ctx) => tryCatch(() => verifyEmail(req, args)),
-    verifyMessenger: async (_: unk, args: unk, { req, res }: Ctx) =>
+    updateAvatar: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => update(req, args, 'updateAvatar')),
+    updateLocale: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => update(req, args, 'updateLocale')),
+    updateProfile: async (_: unk, args: unk, { req, res }: ApolloContext) =>
+      tryCatch(() => update(req, args, 'updateProfile')),
+    verifyEmail: async (_: unk, args: unk, { req, res }: ApolloContext) => tryCatch(() => verifyEmail(req, args)),
+    verifyMessenger: async (_: unk, args: unk, { req, res }: ApolloContext) =>
       tryCatch(() => update(req, args, 'verifyMessenger')),
   },
 };

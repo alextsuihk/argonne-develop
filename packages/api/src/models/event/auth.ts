@@ -31,7 +31,7 @@ type Log = (
   user: Types.ObjectId,
   event: AuthEventType,
   ua: string,
-  ip: string,
+  ip: string | undefined,
   coord: { lat: number; lng: number } | null,
   remark?: string,
 ) => Promise<AuthEventDocument>;

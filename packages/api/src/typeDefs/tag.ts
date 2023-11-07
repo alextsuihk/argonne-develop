@@ -2,9 +2,7 @@
  * apollo typeDef: Tag
  */
 
-import { gql } from 'apollo-server-express';
-
-export default gql`
+export default `#graphql
   extend type Query {
     tag(id: ID!): Tag @cacheControl(maxAge: 3600)
     tags(query: QueryInput): [Tag!]! @cacheControl(maxAge: 3600)

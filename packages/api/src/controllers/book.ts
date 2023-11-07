@@ -51,7 +51,7 @@ type Populate = {
   supplements: (Omit<BookDocument['supplements'], 'contribution'> & { contribution: ContributionDocument })[];
 };
 type PopulatedBook = Omit<BookDocument, 'assignments' | 'supplements'> & Populate;
-export type BookDocumentEx = PopulatedBook & { contentsToken: string }; // export for JEST
+type BookDocumentEx = PopulatedBook & { contentsToken: string };
 
 const { MSG_ENUM } = LOCALE;
 const { CHAT_GROUP, CONTRIBUTION, USER } = LOCALE.DB_ENUM;
@@ -121,7 +121,11 @@ const transform = async (
     ...assignment,
     ...(hideRemark && { remarks: [] }),
     ...(!isAdmin(userRoles) && !isPublisherAdmin && !isTeacher && { solutions: [] }),
-    contribution: { ...assignment.contribution, ...(!isAdmin(userRoles) && { remarks: [] }) },
+    contribution: {
+      ...assignment.contribution,
+      ...(!isAdmin(userRoles) && { remarks: [] }),
+      ...(!isAdmin(userRoles) && !isPublisherAdmin && !isTeacher && { urls: [] }), // urls contains algorithm leading to solutions
+    },
   }));
 
   return {

@@ -92,16 +92,10 @@ const { DEFAULTS } = configLoader;
 
 const LOGIN_TOKEN_PREFIX = 'AUTH-LOGIN';
 
-const JWT_COOKIE = 'jwt';
-const cookieOptions: CookieOptions = {
-  httpOnly: true,
-  maxAge: DEFAULTS.JWT.EXPIRES.ACCESS * 1000,
-};
-
 /**
  * (helper) login message
  */
-const loginMsg = (locale: string, ip: string) =>
+const loginMsg = (locale: string, ip = 'unknown') =>
   extract(
     {
       enUS: `You are being logged in from IP (${ip}).`,
@@ -112,7 +106,7 @@ const loginMsg = (locale: string, ip: string) =>
   );
 
 /**
- * Clear expired user.suspendUtil
+ * (helper) Clear expired user.suspendUtil
  * ! note: user document might contain subset of fields
  */
 const clearExpiredUserSuspension = async (user: UserDocument): Promise<UserDocument> =>
@@ -123,6 +117,17 @@ const clearExpiredUserSuspension = async (user: UserDocument): Promise<UserDocum
         { fields: userNormalSelect, new: true },
       ).lean())!
     : user;
+
+/**
+ * (helper) setCookie
+ */
+const JWT_COOKIE = 'jwt';
+const setCookie = (res: Response, accessToken: string) => {
+  res.cookie(JWT_COOKIE, accessToken, { httpOnly: true, maxAge: DEFAULTS.JWT.EXPIRES.ACCESS * 1000 });
+};
+const clearCookie = (res: Response) => {
+  res.clearCookie(JWT_COOKIE);
+};
 
 /**
  * Delete User (soft deleted)
@@ -186,7 +191,7 @@ const deregister = async (req: Request, res: Response, args: unknown): Promise<S
     ),
   ]);
 
-  res.clearCookie(JWT_COOKIE);
+  clearCookie(res);
   return { code: MSG_ENUM.COMPLETED, days: Math.floor(ms(DEFAULTS.MONGOOSE.EXPIRES.USER) / 1000 / 3600 / 24) };
 };
 
@@ -257,7 +262,7 @@ const impersonateStart = async (req: Request, res: Response, args: unknown): Pro
     notifySync(null, { userIds: [userId], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
-  res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
+  setCookie(res, tokensResponse.accessToken);
   return { ...tokensResponse, user: impersonatedUser };
 };
 
@@ -280,7 +285,7 @@ const impersonateStop = async (req: Request, res: Response, args: unknown): Prom
     notifySync(null, { userIds: [userId], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
-  res.clearCookie(JWT_COOKIE);
+  clearCookie(res);
   return { code: MSG_ENUM.COMPLETED };
 };
 
@@ -330,9 +335,7 @@ const login = async (req: Request, res: Response, args: unknown): Promise<AuthRe
   ]);
 
   updatedUser.password = '*'.repeat(password.length); // remove password information
-  'accessToken' in tokensResponse
-    ? res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions) // update cookie only for successful token
-    : res.clearCookie(JWT_COOKIE);
+  'accessToken' in tokensResponse ? setCookie(res, tokensResponse.accessToken) : clearCookie(res);
   return { ...tokensResponse, user: updatedUser };
 };
 
@@ -371,9 +374,7 @@ const loginWithStudentId = async (req: Request, res: Response, args: unknown): P
   ]);
 
   updatedUser.password = '*'.repeat(password.length); // remove password information
-  'accessToken' in tokensResponse
-    ? res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions) // update cookie only for successful token
-    : res.clearCookie(JWT_COOKIE);
+  'accessToken' in tokensResponse ? setCookie(res, tokensResponse.accessToken) : clearCookie(res);
   updatedUser.password = '*'.repeat(password.length); // remove password information
   return { ...tokensResponse, user: updatedUser };
 };
@@ -430,7 +431,7 @@ const loginWithToken = async (req: Request, res: Response, args: unknown): Promi
     ),
   ]);
 
-  res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
+  setCookie(res, tokensResponse.accessToken);
   return { ...tokensResponse, user: updatedUser };
 };
 
@@ -448,7 +449,7 @@ const logout = async (req: Request, res: Response, args: unknown): Promise<Statu
     notifySync(null, { userIds: [userId], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
-  res.clearCookie(JWT_COOKIE);
+  clearCookie(res);
   return { code: MSG_ENUM.COMPLETED };
 };
 
@@ -504,9 +505,7 @@ const oAuth2 = async (req: Request, res: Response, args: unknown): Promise<AuthR
       ),
     ]);
 
-    'accessToken' in tokensResponse
-      ? res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions) // update cookie only for successful token
-      : res.clearCookie(JWT_COOKIE);
+    'accessToken' in tokensResponse ? setCookie(res, tokensResponse.accessToken) : clearCookie(res);
     return { ...tokensResponse, user: updatedUser };
   }
 
@@ -534,7 +533,7 @@ const oAuth2 = async (req: Request, res: Response, args: unknown): Promise<AuthR
     AuthEvent.log(createdUser._id, 'oauth', req.ua, req.ip, coordinates, `oauth register ${oAuthId}`),
   ]);
 
-  res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
+  setCookie(res, tokensResponse.accessToken);
   return { ...tokensResponse, user: registeredUser! };
 };
 
@@ -576,7 +575,7 @@ const register = async (req: Request, res: Response, args: unknown): Promise<Aut
     throw { statusCode: 500, code: MSG_ENUM.GENERAL_ERROR };
   }
 
-  res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions); // update cookie only for successful token
+  setCookie(res, tokensResponse.accessToken);
   return { ...tokensResponse, user: createdUserReadBack };
 };
 
@@ -602,8 +601,7 @@ const renewToken = async (req: Request, res: Response, args: unknown): Promise<A
     notifySync(null, { userIds: [user._id], event: 'AUTH-RELOAD' }, null), // effectively, force other tabs (in same browser) to reload tokens from localStorage
   ]);
 
-  res.cookie(JWT_COOKIE, tokensResponse.accessToken, cookieOptions);
-
+  setCookie(res, tokensResponse.accessToken);
   return { ...tokensResponse, user: updatedUser };
 };
 

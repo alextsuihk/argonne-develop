@@ -7,7 +7,6 @@ import { LOCALE } from '@argonne/common';
 
 import {
   apolloExpect,
-  ApolloServer,
   expectedChatFormatApollo as expectedChatFormat,
   expectedDateFormat,
   expectedIdFormat,
@@ -23,7 +22,8 @@ import {
   jestTeardown,
   prob,
   randomItem,
-  testServer,
+  apolloContext,
+  apolloTestServer,
 } from '../jest';
 import Book from '../models/book';
 import ChatGroup from '../models/chat-group';
@@ -57,21 +57,16 @@ import {
   UPDATE_CHAT_GROUP_CHAT_TITLE,
   UPDATE_CHAT_GROUP_USERS,
 } from '../queries/chat-group';
+import chatGroupController from '../controllers/chat-group';
+
+type ChatGroupDocumentEx = Awaited<ReturnType<typeof chatGroupController.create>>;
 
 const { MSG_ENUM } = LOCALE;
 const { CHAT, CHAT_GROUP } = LOCALE.DB_ENUM;
 
 // Top chat of this test suite:
 describe('ChatGroup GraphQL', () => {
-  let adminServer: ApolloServer | null;
-  let adminUser: UserDocument | null;
-  let guestServer: ApolloServer | null;
-  let normalServer: ApolloServer | null;
-  let normalUser: UserDocument | null;
-  let normalUsers: UserDocument[] | null;
-  let tenantId: string | null;
-  let url: string | undefined;
-  let url2: string | undefined;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedFormat = {
     _id: expectedIdFormat,
@@ -97,24 +92,22 @@ describe('ChatGroup GraphQL', () => {
     contentsToken: expect.any(String),
   };
 
-  beforeAll(async () => {
-    ({ adminServer, adminUser, guestServer, normalServer, normalUser, normalUsers, tenantId } = await jestSetup(
-      ['admin', 'guest', 'normal'],
-      { apollo: true },
-    ));
-  });
-
-  afterAll(async () => Promise.all([url && jestRemoveObject(url), url2 && jestRemoveObject(url2), jestTeardown()]));
+  beforeAll(async () => (jest = await jestSetup()));
+  afterAll(jestTeardown);
 
   test('should response an array of data when GET all (as adminUser)', async () => {
     expect.assertions(2);
 
-    const res = await adminServer!.executeOperation({ query: GET_CHAT_GROUPS });
+    const res = await apolloTestServer.executeOperation<{ chatGroups: ChatGroupDocumentEx[] }>(
+      { query: GET_CHAT_GROUPS },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res, 'data', { chatGroups: expect.arrayContaining([expectedFormat]) });
     expect(
-      res.data!.chatGroups.length
-        ? res.data!.chatGroups.some(chatGroup => chatGroup.key && chatGroup.flags.includes(CHAT_GROUP.FLAG.ADMIN))
-        : 'NO admin chatGroups',
+      res.body.kind === 'single' &&
+        res.body.singleResult.data!.chatGroups.some(
+          chatGroup => chatGroup.key && chatGroup.flags.includes(CHAT_GROUP.FLAG.ADMIN),
+        ),
     ).toBeTrue();
   });
 
@@ -122,37 +115,49 @@ describe('ChatGroup GraphQL', () => {
     expect.assertions(1);
 
     const chatGroups = await ChatGroup.find({
-      users: adminUser!._id,
+      users: jest.adminUser._id,
       key: { $exists: true },
       flags: CHAT_GROUP.FLAG.ADMIN,
       deletedAt: { $exists: false },
     }).lean();
 
     const id = randomItem(chatGroups)._id.toString();
-    const res = await adminServer!.executeOperation({ query: GET_CHAT_GROUP, variables: { id } });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_CHAT_GROUP, variables: { id } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res, 'data', { chatGroup: { ...expectedFormat, _id: id, key: expect.any(String) } });
   });
 
   test('should response an array of data when GET all (as normalUser)', async () => {
     expect.assertions(1);
 
-    const res = await normalServer!.executeOperation({ query: GET_CHAT_GROUPS });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_CHAT_GROUPS },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'data', { chatGroups: expect.arrayContaining([expectedFormat]) });
   });
 
   test('should response a single object when GET One by ID (as normalUser)', async () => {
     expect.assertions(1);
 
-    const chatGroups = await ChatGroup.find({ users: normalUser!, deletedAt: { $exists: false } }).lean();
+    const chatGroups = await ChatGroup.find({ users: jest.normalUser, deletedAt: { $exists: false } }).lean();
     const id = randomItem(chatGroups)._id.toString();
-    const res = await normalServer!.executeOperation({ query: GET_CHAT_GROUP, variables: { id } });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_CHAT_GROUP, variables: { id } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'data', { chatGroup: { ...expectedFormat, _id: id } });
   });
 
   test('should fail when GET all (as guest)', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({ query: GET_CHAT_GROUPS });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_CHAT_GROUPS },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
   });
 
@@ -160,23 +165,29 @@ describe('ChatGroup GraphQL', () => {
     expect.assertions(1);
 
     const chatGroup = await ChatGroup.findOne().lean();
-    const res = await guestServer!.executeOperation({
-      query: GET_CHAT_GROUP,
-      variables: { id: chatGroup!._id.toString() },
-    });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_CHAT_GROUP, variables: { id: chatGroup!._id.toString() } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_ACCESS_TOKEN_ERROR}`);
   });
 
   test('should fail when GET non-existing document without ID argument', async () => {
     expect.assertions(1);
-    const res = await normalServer!.executeOperation({ query: GET_CHAT_GROUP });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_CHAT_GROUP },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'error', 'Variable "$id" of required type "ID!" was not provided.');
   });
 
   test('should fail when GET non-existing document without valid Mongo ID argument', async () => {
     expect.assertions(1);
-    const res = await normalServer!.executeOperation({ query: GET_CHAT_GROUP, variables: { id: 'invalid-mongoID' } });
-    apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.INVALID_ID}`);
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_CHAT_GROUP, variables: { id: 'invalid-mongoID' } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
+    apolloExpect(res, 'errorContaining', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
   });
 
   test('should pass when JOIN book chatGroup as teacher', async () => {
@@ -187,13 +198,18 @@ describe('ChatGroup GraphQL', () => {
       Level.findOne({ code: 'TEACHER' }).lean(),
     ]);
 
-    const teacher = normalUsers!.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
+    const teacher = jest.normalUsers.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
     if (!teacher) throw 'No teacher is found';
 
     const id = randomItem(books).chatGroup.toString();
-    const res = await testServer(teacher).executeOperation({ query: JOIN_BOOK_CHAT_GROUP, variables: { id } });
+    const res = await apolloTestServer.executeOperation(
+      { query: JOIN_BOOK_CHAT_GROUP, variables: { id } },
+      { contextValue: apolloContext(teacher) },
+    );
 
-    apolloExpect(res, 'data', { joinBookChatGroup: { ...expectedFormat, admins: [], chats: expect.any(Array) } }); // bookChatGroups have NO admins
+    apolloExpect(res, 'data', {
+      joinBookChatGroup: { ...expectedFormat, _id: id, admins: [], chats: expect.any(Array) },
+    }); // bookChatGroups have NO admins, sometimes, not even have chats
   });
 
   test('should fail when JOIN book chatGroup as non-teacher', async () => {
@@ -204,21 +220,25 @@ describe('ChatGroup GraphQL', () => {
       Level.findOne({ code: 'TEACHER' }).lean(),
     ]);
 
-    const nonTeacher = normalUsers!.find(({ schoolHistories }) => !schoolHistories[0]?.level.equals(teacherLevel!._id));
+    const nonTeacher = jest.normalUsers.find(
+      ({ schoolHistories }) => !schoolHistories[0]?.level.equals(teacherLevel!._id),
+    );
     if (!nonTeacher) throw 'No valid non-teacher available for testing';
 
     const id = randomItem(bookChatGroups)._id.toString();
-    const res = await testServer(nonTeacher).executeOperation({ query: JOIN_BOOK_CHAT_GROUP, variables: { id } });
+    const res = await apolloTestServer.executeOperation(
+      { query: JOIN_BOOK_CHAT_GROUP, variables: { id } },
+      { contextValue: apolloContext(nonTeacher) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
   });
 
-  test('should pass when post two message toAdmin', async () => {
+  test('should pass when post two messages toAdmin', async () => {
     expect.assertions(2);
 
     // create a new user without any admin-message
-    const user = genUser(tenantId!);
+    const user = genUser(jest.tenantId);
     const [{ adminIds }] = await Promise.all([User.findSystemAccountIds(), user.save()]);
-    const userServer = testServer(user);
 
     const expectedFormatEx = {
       ...expectedFormat,
@@ -234,22 +254,22 @@ describe('ChatGroup GraphQL', () => {
       logoUrl: null,
     };
 
-    const res1 = await userServer.executeOperation({
-      query: TO_ADMIN_CHAT_GROUP,
-      variables: { content: FAKE },
-    });
+    const res1 = await apolloTestServer.executeOperation(
+      { query: TO_ADMIN_CHAT_GROUP, variables: { content: FAKE } },
+      { contextValue: apolloContext(user) },
+    );
 
     apolloExpect(res1, 'data', {
       toAdminChatGroup: {
         ...expectedFormatEx,
-        // chats: [{ ...expectedChatFormat, members: [expectedMember(user._id, [], true)] }],
+        chats: [{ ...expectedChatFormat, members: [expectedMember(user._id, [], true)] }],
       },
     });
 
-    const res2 = await userServer.executeOperation({
-      query: TO_ADMIN_CHAT_GROUP,
-      variables: { content: FAKE2 },
-    });
+    const res2 = await apolloTestServer.executeOperation(
+      { query: TO_ADMIN_CHAT_GROUP, variables: { content: FAKE2 } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res2, 'data', {
       toAdminChatGroup: {
         ...expectedFormatEx,
@@ -261,17 +281,16 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // clean up
-    await user.deleteOne();
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should pass when post two message toAlex', async () => {
     expect.assertions(2);
 
     // create a brand new user without previous messages with Alex
-    const user = genUser(tenantId!);
+    const user = genUser(jest.tenantId);
     const [{ alexId }] = await Promise.all([User.findSystemAccountIds(), user.save()]);
     const userId = user._id.toString();
-    const userServer = testServer(user);
 
     const expectedFormatEx = {
       ...expectedFormat,
@@ -285,10 +304,10 @@ describe('ChatGroup GraphQL', () => {
       logoUrl: null,
     };
 
-    const res1 = await userServer.executeOperation({
-      query: TO_ALEX_CHAT_GROUP,
-      variables: { content: FAKE },
-    });
+    const res1 = await apolloTestServer.executeOperation(
+      { query: TO_ALEX_CHAT_GROUP, variables: { content: FAKE } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res1, 'data', {
       toAlexChatGroup: {
         ...expectedFormatEx,
@@ -296,10 +315,10 @@ describe('ChatGroup GraphQL', () => {
       },
     });
 
-    const res2 = await userServer.executeOperation({
-      query: TO_ALEX_CHAT_GROUP,
-      variables: { content: FAKE2 },
-    });
+    const res2 = await apolloTestServer.executeOperation(
+      { query: TO_ALEX_CHAT_GROUP, variables: { content: FAKE2 } },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res2, 'data', {
       toAlexChatGroup: {
         ...expectedFormatEx,
@@ -311,16 +330,15 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // clean up
-    await user.deleteOne();
+    await User.deleteOne({ _id: user._id });
   });
 
   const messageToTenantAdmins = async (to: 'admins' | 'counselors' | 'supports') => {
     expect.assertions(2);
 
-    const user = genUser(tenantId!);
-    const [tenant] = await Promise.all([Tenant.findByTenantId(tenantId!), user.save()]);
+    const user = genUser(jest.tenantId);
+    const [tenant] = await Promise.all([Tenant.findByTenantId(jest.tenantId), user.save()]);
     const userId = user._id.toString();
-    const userServer = testServer(user);
 
     const [query, users] =
       to === 'admins'
@@ -332,21 +350,21 @@ describe('ChatGroup GraphQL', () => {
     const expectedFormatEx = {
       ...expectedFormat,
       flags: [`TENANT_${to.toUpperCase()}`],
-      tenant: tenantId,
+      tenant: jest.tenantId,
       title: null,
       description: null,
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
       admins: [],
       users: [userId, ...users],
-      key: `TENANT#${tenantId}-USER#${userId} (${to})`,
+      key: `TENANT#${jest.tenantId}-USER#${userId} (${to})`,
       url: null,
       logoUrl: null,
     };
 
-    const res1 = await userServer.executeOperation({
-      query,
-      variables: { tenantId: tenantId!, content: FAKE },
-    });
+    const res1 = await apolloTestServer.executeOperation(
+      { query, variables: { tenantId: jest.tenantId, content: FAKE } },
+      { contextValue: apolloContext(user) },
+    );
     const expectedRes1 = {
       ...expectedFormatEx,
       chats: [{ ...expectedChatFormat, members: [expectedMember(userId, [], true)] }],
@@ -361,10 +379,10 @@ describe('ChatGroup GraphQL', () => {
         : { toTenantSupportsChatGroup: expectedRes1 },
     );
 
-    const res2 = await userServer.executeOperation({
-      query,
-      variables: { tenantId: tenantId!, content: FAKE2 },
-    });
+    const res2 = await apolloTestServer.executeOperation(
+      { query, variables: { tenantId: jest.tenantId, content: FAKE2 } },
+      { contextValue: apolloContext(user) },
+    );
     const expectedRes2 = {
       ...expectedFormatEx,
       chats: [
@@ -383,7 +401,7 @@ describe('ChatGroup GraphQL', () => {
     );
 
     // clean up
-    await user.deleteOne();
+    await User.deleteOne({ _id: user._id });
   };
 
   test('should pass when post two message toTenantAdmin', async () => messageToTenantAdmins('admins'));
@@ -394,33 +412,39 @@ describe('ChatGroup GraphQL', () => {
     expect.assertions(1);
 
     // create a new user (without identifiedAt)
-    const user = genUser(tenantId!);
+    const user = genUser(jest.tenantId);
     await user.save();
 
-    const user0Id = normalUser!._id.toString();
-    const res = await testServer(user).executeOperation({
-      query: ADD_CHAT_GROUP,
-      variables: { tenantId: tenantId!, userIds: [user0Id], membership: CHAT_GROUP.MEMBERSHIP.CLOSED },
-    });
+    const user0Id = jest.normalUser._id.toString();
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: ADD_CHAT_GROUP,
+        variables: { tenantId: jest.tenantId, userIds: [user0Id], membership: CHAT_GROUP.MEMBERSHIP.CLOSED },
+      },
+      { contextValue: apolloContext(user) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // clean-up
-    await user.deleteOne();
+    await User.deleteOne({ _id: user._id });
   });
 
   test('should pass when attaching chat from another chatGroup', async () => {
     expect.assertions(1);
 
-    const { chatGroup } = genChatGroup(tenantId!, normalUser!._id); // create a destination chatGroup
-    const { chatGroup: source, chat, content } = genChatGroup(tenantId!, normalUser!._id); // create source (another) chatGroup
+    const { chatGroup } = genChatGroup(jest.tenantId, jest.normalUser._id); // create a destination chatGroup
+    const { chatGroup: source, chat, content } = genChatGroup(jest.tenantId, jest.normalUser._id); // create source (another) chatGroup
     chatGroup.chats = []; // drop & ignore chats
     await Promise.all([chatGroup.save(), source.save(), chat.save(), content.save()]);
     //! Note: at the point, chatGroup.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
 
-    const res = await normalServer!.executeOperation({
-      query: ATTACH_CHAT_GROUP_TO_CHAT_GROUP,
-      variables: { id: chatGroup._id.toString(), chatId: chat._id.toString(), sourceId: source._id.toString() },
-    });
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: ATTACH_CHAT_GROUP_TO_CHAT_GROUP,
+        variables: { id: chatGroup._id.toString(), chatId: chat._id.toString(), sourceId: source._id.toString() },
+      },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'data', {
       attachChatGroupChatToChatGroup: {
         ...expectedFormat,
@@ -435,15 +459,18 @@ describe('ChatGroup GraphQL', () => {
   test('should pass when sharing question to chatGroup (as student)', async () => {
     expect.assertions(1);
 
-    const { chatGroup } = genChatGroup(tenantId!, normalUser!._id);
-    const { question, content } = genQuestion(tenantId!, normalUser!._id, { student: normalUser!._id });
+    const { chatGroup } = genChatGroup(jest.tenantId, jest.normalUser._id);
+    const { question, content } = genQuestion(jest.tenantId, jest.normalUser._id, { student: jest.normalUser._id });
     await Promise.all([chatGroup.save(), question.save(), content.save()]);
     //! Note: at the point, chatGroup.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
 
-    const res = await normalServer!.executeOperation({
-      query: SHARE_QUESTION_TO_CHAT_GROUP,
-      variables: { id: chatGroup._id.toString(), sourceId: question._id.toString() },
-    });
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: SHARE_QUESTION_TO_CHAT_GROUP,
+        variables: { id: chatGroup._id.toString(), sourceId: question._id.toString() },
+      },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'data', {
       shareQuestionToChatGroup: {
         ...expectedFormat,
@@ -458,15 +485,18 @@ describe('ChatGroup GraphQL', () => {
   test('should pass when sharing question to chatGroup (as tutor)', async () => {
     expect.assertions(1);
 
-    const { chatGroup } = genChatGroup(tenantId!, normalUser!._id);
-    const { question, content } = genQuestion(tenantId!, normalUser!._id, { tutor: normalUser!._id });
+    const { chatGroup } = genChatGroup(jest.tenantId, jest.normalUser._id);
+    const { question, content } = genQuestion(jest.tenantId, jest.normalUser._id, { tutor: jest.normalUser._id });
     await Promise.all([chatGroup.save(), question.save(), content.save()]);
     //! Note: at the point, chatGroup.chats have one value, BUT "the chat" is NOT saved, therefore, it will disappear AFTER populating
 
-    const res = await normalServer!.executeOperation({
-      query: SHARE_QUESTION_TO_CHAT_GROUP,
-      variables: { id: chatGroup._id.toString(), sourceId: question._id.toString() },
-    });
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: SHARE_QUESTION_TO_CHAT_GROUP,
+        variables: { id: chatGroup._id.toString(), sourceId: question._id.toString() },
+      },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'data', {
       shareQuestionToChatGroup: {
         ...expectedFormat,
@@ -481,11 +511,10 @@ describe('ChatGroup GraphQL', () => {
   test('should pass the full suite', async () => {
     expect.assertions(21);
 
-    const [, , , user2, , join] = normalUsers!;
-    const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = normalUsers!.map(u => u._id.toString());
-    const ownerServer = normalServer!;
+    const [owner, , , user2, , join] = jest.normalUsers;
+    const [ownerId, user0Id, user1Id, user2Id, user3Id, joinId] = jest.normalUsers.map(u => u._id.toString());
 
-    [url, url2] = await Promise.all([jestPutObject(normalUsers![0]._id), jestPutObject(normalUsers![0]._id)]);
+    const [url, url2] = await Promise.all([jestPutObject(owner._id), jestPutObject(owner._id)]);
 
     const create = {
       membership: CHAT_GROUP.MEMBERSHIP.CLOSED,
@@ -495,27 +524,29 @@ describe('ChatGroup GraphQL', () => {
     };
 
     // (owner) add ChatGroup
-    const createdRes = await ownerServer.executeOperation({
-      query: ADD_CHAT_GROUP,
-      variables: { tenantId: tenantId!, userIds: [user0Id], ...create },
-    });
+    const createdRes = await apolloTestServer.executeOperation<{ addChatGroup: ChatGroupDocumentEx }>(
+      { query: ADD_CHAT_GROUP, variables: { tenantId: jest.tenantId, userIds: [user0Id], ...create } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(createdRes, 'data', {
       addChatGroup: {
         ...expectedFormat,
         ...create,
-        tenant: tenantId!,
+        tenant: jest.tenantId,
         admins: [ownerId],
         users: [ownerId, user0Id].sort(),
         chats: [],
       },
     });
-    const newId: string = createdRes.data!.addChatGroup._id;
+
+    const newId =
+      createdRes.body.kind === 'single' ? createdRes.body.singleResult.data!.addChatGroup._id.toString() : null;
 
     // (owner) update users
-    const updateUsersRes = await ownerServer.executeOperation({
-      query: UPDATE_CHAT_GROUP_USERS,
-      variables: { id: newId, userIds: [user1Id, user2Id] },
-    });
+    const updateUsersRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_CHAT_GROUP_USERS, variables: { id: newId, userIds: [user1Id, user2Id] } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(updateUsersRes, 'data', {
       updateChatGroupUsers: {
         ...expectedFormat,
@@ -526,48 +557,41 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // (owner) promote 1 user to admin
-    const addAdminsRes = await ownerServer.executeOperation({
-      query: UPDATE_CHAT_GROUP_ADMINS,
-      variables: { id: newId, userIds: [user1Id] },
-    });
+    const addAdminsRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_CHAT_GROUP_ADMINS, variables: { id: newId, userIds: [user1Id] } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(addAdminsRes, 'data', {
       updateChatGroupAdmins: { ...expectedFormat, admins: [ownerId, user1Id].sort(), chats: [] },
     });
 
     // (joinUser) should fail when joining CLOSED membership
-    const joinServer = testServer(join);
-    const joinFailRes = await joinServer.executeOperation({ query: JOIN_CHAT_GROUP, variables: { id: newId } });
+    const joinFailRes = await apolloTestServer.executeOperation(
+      { query: JOIN_CHAT_GROUP, variables: { id: newId } },
+      { contextValue: apolloContext(join) },
+    );
     apolloExpect(joinFailRes, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
 
     // (user2) for CLOSED-MEMBERSHIP, should fail when regular user (user2) tries to addUsers
-    const user2Server = testServer(user2);
-    const addUsersFailRes = await user2Server.executeOperation({
-      query: UPDATE_CHAT_GROUP_USERS,
-      variables: { id: newId, userIds: [user3Id] },
-    });
+    const addUsersFailRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_CHAT_GROUP_USERS, variables: { id: newId, userIds: [user3Id] } },
+      { contextValue: apolloContext(user2) },
+    );
     apolloExpect(addUsersFailRes, 'error', `MSG_CODE#${MSG_ENUM.UNAUTHORIZED_OPERATION}`);
 
     // (owner) change to NORMAL-MEMBERSHIP & remove logoUrl
-    const updatedRes = await ownerServer.executeOperation({
-      query: UPDATE_CHAT_GROUP,
-      variables: { id: newId, title: FAKE2, description: FAKE2, membership: CHAT_GROUP.MEMBERSHIP.NORMAL, logoUrl: '' },
-    });
-    apolloExpect(updatedRes, 'data', {
-      updateChatGroup: {
-        ...expectedFormat,
-        title: FAKE2,
-        description: FAKE2,
-        membership: CHAT_GROUP.MEMBERSHIP.NORMAL,
-        logoUrl: null, // logoUrl is removed
-        chats: [],
-      },
-    });
+    const update = { title: FAKE2, description: FAKE2, membership: CHAT_GROUP.MEMBERSHIP.NORMAL };
+    const updatedRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_CHAT_GROUP, variables: { id: newId, ...update, logoUrl: '' } },
+      { contextValue: apolloContext(owner) },
+    );
+    apolloExpect(updatedRes, 'data', { updateChatGroup: { ...expectedFormat, ...update, logoUrl: null, chats: [] } }); // logoUrl is removed
 
     // (user2) for NORMAL-MEMBERSHIP, any existing user could add new users
-    const addUsers2Res = await user2Server.executeOperation({
-      query: UPDATE_CHAT_GROUP_USERS,
-      variables: { id: newId, userIds: [ownerId, user0Id, user1Id, user3Id] },
-    });
+    const addUsers2Res = await apolloTestServer.executeOperation(
+      { query: UPDATE_CHAT_GROUP_USERS, variables: { id: newId, userIds: [ownerId, user0Id, user1Id, user3Id] } },
+      { contextValue: apolloContext(user2) },
+    );
     apolloExpect(addUsers2Res, 'data', {
       updateChatGroupUsers: {
         ...expectedFormat,
@@ -577,20 +601,26 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // (joinUser) should fail when joining non PUBLIC membership
-    const joinFail2Res = await joinServer.executeOperation({ query: JOIN_CHAT_GROUP, variables: { id: newId } });
+    const joinFail2Res = await apolloTestServer.executeOperation(
+      { query: JOIN_CHAT_GROUP, variables: { id: newId } },
+      { contextValue: apolloContext(join) },
+    );
     apolloExpect(joinFail2Res, 'error', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
 
     // (owner) change to PUBLIC-MEMBERSHIP & add logoUrl back
-    const updated2Res = await ownerServer.executeOperation({
-      query: UPDATE_CHAT_GROUP,
-      variables: { id: newId, membership: CHAT_GROUP.MEMBERSHIP.PUBLIC, logoUrl: url2 },
-    });
+    const updated2Res = await apolloTestServer.executeOperation(
+      { query: UPDATE_CHAT_GROUP, variables: { id: newId, membership: CHAT_GROUP.MEMBERSHIP.PUBLIC, logoUrl: url2 } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(updated2Res, 'data', {
       updateChatGroup: { ...expectedFormat, membership: CHAT_GROUP.MEMBERSHIP.PUBLIC, logoUrl: url2, chats: [] },
     });
 
     // (joinUser) should pass when joining a PUBLIC-MEMBERSHIP
-    const joinRes = await joinServer.executeOperation({ query: JOIN_CHAT_GROUP, variables: { id: newId } });
+    const joinRes = await apolloTestServer.executeOperation(
+      { query: JOIN_CHAT_GROUP, variables: { id: newId } },
+      { contextValue: apolloContext(join) },
+    );
     apolloExpect(joinRes, 'data', {
       joinChatGroup: {
         ...expectedFormat,
@@ -600,40 +630,51 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // (joinUser) should pass when leaving chatGroup
-    const leaveRes = await joinServer.executeOperation({ query: LEAVE_CHAT_GROUP, variables: { id: newId } });
+    const leaveRes = await apolloTestServer.executeOperation(
+      { query: LEAVE_CHAT_GROUP, variables: { id: newId } },
+      { contextValue: apolloContext(join) },
+    );
     apolloExpect(leaveRes, 'data', { leaveChatGroup: { code: MSG_ENUM.COMPLETED } });
 
     // (owner) addContentWithNewChat
-    const addContentWithNewChatRes = await ownerServer.executeOperation({
-      query: ADD_CHAT_GROUP_CONTENT_WITH_NEW_CHAT,
-      variables: { id: newId, content: FAKE },
-    });
+    const addContentWithNewChatRes = await apolloTestServer.executeOperation<{
+      addChatGroupContentWithNewChat: ChatGroupDocumentEx;
+    }>(
+      { query: ADD_CHAT_GROUP_CONTENT_WITH_NEW_CHAT, variables: { id: newId, content: FAKE } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(addContentWithNewChatRes, 'data', {
       addChatGroupContentWithNewChat: {
         ...expectedFormat,
         chats: [{ ...expectedChatFormat, contents: [expectedIdFormat], members: [expectedMember(ownerId, [], true)] }],
       },
     });
-    const chatId = addContentWithNewChatRes.data!.addChatGroupContentWithNewChat.chats[0]._id.toString();
+    const chatId =
+      addContentWithNewChatRes.body.kind === 'single'
+        ? addContentWithNewChatRes.body.singleResult.data!.addChatGroupContentWithNewChat.chats[0]._id.toString()
+        : null;
 
     // (user2) addContent (append to first chat)
-    const addContentRes = await user2Server.executeOperation({
-      query: ADD_CHAT_GROUP_CONTENT,
-      variables: { id: newId, chatId, content: FAKE },
-    });
+    const addContentRes = await apolloTestServer.executeOperation<{ addChatGroupContent: ChatGroupDocumentEx }>(
+      { query: ADD_CHAT_GROUP_CONTENT, variables: { id: newId, chatId, content: FAKE } },
+      { contextValue: apolloContext(user2) },
+    );
     apolloExpect(addContentRes, 'data', {
       addChatGroupContent: {
         ...expectedFormat,
         chats: [{ ...expectedChatFormat, contents: [expectedIdFormat, expectedIdFormat] }],
       },
     });
-    const contentIds = addContentRes.data?.addChatGroupContent.chats[0].contents;
+    const contentIds =
+      addContentRes.body.kind === 'single'
+        ? addContentRes.body.singleResult.data!.addChatGroupContent.chats[0].contents
+        : null;
 
     // (user2) addContentWithNewChat
-    const addContentWithNewChatRes2 = await user2Server.executeOperation({
-      query: ADD_CHAT_GROUP_CONTENT_WITH_NEW_CHAT,
-      variables: { id: newId, content: FAKE },
-    });
+    const addContentWithNewChatRes2 = await apolloTestServer.executeOperation(
+      { query: ADD_CHAT_GROUP_CONTENT_WITH_NEW_CHAT, variables: { id: newId, content: FAKE } },
+      { contextValue: apolloContext(user2) },
+    );
     apolloExpect(addContentWithNewChatRes2, 'data', {
       addChatGroupContentWithNewChat: {
         ...expectedFormat,
@@ -645,10 +686,10 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // (owner) recall first content of first chat (his owner content)
-    const recallContentRes = await ownerServer.executeOperation({
-      query: RECALL_CHAT_GROUP_CONTENT,
-      variables: { id: newId, chatId, contentId: contentIds[0] },
-    });
+    const recallContentRes = await apolloTestServer.executeOperation(
+      { query: RECALL_CHAT_GROUP_CONTENT, variables: { id: newId, chatId, contentId: contentIds![0] } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(recallContentRes, 'data', {
       recallChatGroupContent: {
         ...expectedFormat,
@@ -657,13 +698,13 @@ describe('ChatGroup GraphQL', () => {
           { ...expectedChatFormat, contents: [expectedIdFormat], members: [expectedMember(user2Id, [], true)] },
         ],
       },
-    });
+    }); // unfortunately recall() only update chatGroup.updatedAt
 
     // (owner) recall second content of first chat (user2's content)
-    const blockContentRes = await ownerServer.executeOperation({
-      query: BLOCK_CHAT_GROUP_CONTENT,
-      variables: { id: newId, chatId, contentId: contentIds[1] },
-    });
+    const blockContentRes = await apolloTestServer.executeOperation(
+      { query: BLOCK_CHAT_GROUP_CONTENT, variables: { id: newId, chatId, contentId: contentIds![1] } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(blockContentRes, 'data', {
       blockChatGroupContent: {
         ...expectedFormat,
@@ -672,14 +713,14 @@ describe('ChatGroup GraphQL', () => {
           { ...expectedChatFormat, contents: [expectedIdFormat], members: [expectedMember(user2Id, [], true)] },
         ],
       },
-    });
+    }); // unfortunately block() only update chatGroup.updatedAt
 
     // (owner) set chat flag
     const flag = CHAT.MEMBER.FLAG.IMPORTANT;
-    const setChatFlagRes = await ownerServer.executeOperation({
-      query: SET_CHAT_GROUP_CHAT_FLAG,
-      variables: { id: newId, chatId, ownerId, flag },
-    });
+    const setChatFlagRes = await apolloTestServer.executeOperation(
+      { query: SET_CHAT_GROUP_CHAT_FLAG, variables: { id: newId, chatId, ownerId, flag } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(setChatFlagRes, 'data', {
       setChatGroupChatFlag: {
         ...expectedFormat,
@@ -695,10 +736,10 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // (owner) clear chat flag
-    const clearChatFlagRes = await ownerServer.executeOperation({
-      query: CLEAR_CHAT_GROUP_CHAT_FLAG,
-      variables: { id: newId, chatId, flag },
-    });
+    const clearChatFlagRes = await apolloTestServer.executeOperation(
+      { query: CLEAR_CHAT_GROUP_CHAT_FLAG, variables: { id: newId, chatId, flag } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(clearChatFlagRes, 'data', {
       clearChatGroupChatFlag: {
         ...expectedFormat,
@@ -714,10 +755,10 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // (user2) update chat lastViewedAt
-    const updateLatViewedAtRes = await user2Server.executeOperation({
-      query: UPDATE_CHAT_GROUP_CHAT_LAST_VIEWED_AT,
-      variables: { id: newId, chatId },
-    });
+    const updateLatViewedAtRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_CHAT_GROUP_CHAT_LAST_VIEWED_AT, variables: { id: newId, chatId } },
+      { contextValue: apolloContext(user2) },
+    );
     apolloExpect(updateLatViewedAtRes, 'data', {
       updateChatGroupChatLastViewedAt: {
         ...expectedFormat,
@@ -733,10 +774,10 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // (owner) set chat title
-    const updateChatTitleRes = await ownerServer.executeOperation({
-      query: UPDATE_CHAT_GROUP_CHAT_TITLE,
-      variables: { id: newId, chatId, title: FAKE },
-    });
+    const updateChatTitleRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_CHAT_GROUP_CHAT_TITLE, variables: { id: newId, chatId, title: FAKE } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(updateChatTitleRes, 'data', {
       updateChatGroupChatTitle: {
         ...expectedFormat,
@@ -745,15 +786,18 @@ describe('ChatGroup GraphQL', () => {
     });
 
     // (owner) unset chat title
-    const updateChatTitleRes2 = await ownerServer.executeOperation({
-      query: UPDATE_CHAT_GROUP_CHAT_TITLE,
-      variables: { id: newId, chatId },
-    });
+    const updateChatTitleRes2 = await apolloTestServer.executeOperation(
+      { query: UPDATE_CHAT_GROUP_CHAT_TITLE, variables: { id: newId, chatId } },
+      { contextValue: apolloContext(owner) },
+    );
     apolloExpect(updateChatTitleRes2, 'data', {
       updateChatGroupChatTitle: {
         ...expectedFormat,
         chats: [{ ...expectedChatFormat, title: null }, expectedChatFormat],
       },
     });
+
+    // clean up
+    await Promise.all([jestRemoveObject(url), jestRemoveObject(url2)]);
   });
 });

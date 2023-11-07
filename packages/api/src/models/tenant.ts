@@ -46,7 +46,7 @@ const tenantSchema = new Schema(
     satelliteUrl: String,
 
     flaggedWords: [String],
-    authServices: [String],
+    authServices: [String], // oAuth2-like [`${clientId}#${clientSecret}#{redirect}#{select}#${friendKey}`]
 
     satelliteIp: String, // most recent IP
     satelliteVersion: String,
@@ -58,6 +58,15 @@ const tenantSchema = new Schema(
         startedAt: { type: Date, required: true },
         completedAt: Date,
         result: String,
+      },
+    ],
+
+    stashes: [
+      {
+        _id: { type: Schema.Types.ObjectId, required: true },
+        title: { type: String, required: true },
+        secret: { type: String, required: true },
+        url: { type: String, required: true },
       },
     ],
 
@@ -115,12 +124,12 @@ const filter = (readyTo?: ReadyTo): FilterQuery<TenantDocument> => ({
   ...(readyTo === 'queue' && {
     apiKey: { $exists: true },
     satelliteUrl: { $exists: true },
-    satelliteStatus: { $in: [TENANT.SATELLITE_STATUS.INITIALIZING, TENANT.SATELLITE_STATUS.INIT_SUCCESS] },
+    satelliteStatus: { $in: [TENANT.SATELLITE_STATUS.INITIALIZING, TENANT.SATELLITE_STATUS.READY] },
   }),
   ...(readyTo === 'sync' && {
     apiKey: { $exists: true },
     satelliteUrl: { $exists: true },
-    satelliteStatus: TENANT.SATELLITE_STATUS.INIT_SUCCESS,
+    satelliteStatus: TENANT.SATELLITE_STATUS.READY,
   }),
 });
 

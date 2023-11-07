@@ -33,11 +33,7 @@ const route = 'users';
 
 // Top level of this test suite:
 describe('User API Routes', () => {
-  let adminUser: UserDocument | null;
-  let normalUser: UserDocument | null;
-  let rootUser: UserDocument | null;
-  let tenantAdmin: UserDocument | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedFormat = {
     _id: expectedIdFormat,
@@ -57,14 +53,9 @@ describe('User API Routes', () => {
   };
 
   beforeAll(async () => {
-    ({ adminUser, normalUser, rootUser, tenantAdmin, tenantId } = await jestSetup([
-      'admin',
-      'normal',
-      'root',
-      'tenantAdmin',
-    ]));
+    jest = await jestSetup();
+    if (!jest.tenant.school) throw 'Tenant must be a school tenant in order to run user.test';
   });
-
   afterAll(jestTeardown);
 
   const createUser = async (tenantId: string | null) => {
@@ -74,7 +65,7 @@ describe('User API Routes', () => {
   };
 
   test('should pass when getMany & getById (by ROOT)', async () =>
-    getMany(route, { 'Jest-User': rootUser!._id }, expectedFormat, {
+    getMany(route, { 'Jest-User': jest.rootUser._id }, expectedFormat, {
       testGetById: true,
       testInvalidId: true,
       testNonExistingId: true,
@@ -83,8 +74,8 @@ describe('User API Routes', () => {
   test('should pass when getMany & getById (by TenantAdmin)', async () =>
     getMany(
       route,
-      { 'Jest-User': tenantAdmin!._id },
-      { ...expectedFormat, tenants: expect.arrayContaining([tenantId!]) },
+      { 'Jest-User': jest.tenantAdmin._id },
+      { ...expectedFormat, tenants: expect.arrayContaining([jest.tenantId]) },
       { testGetById: true, testInvalidId: true, testNonExistingId: true },
     ));
 
@@ -119,10 +110,10 @@ describe('User API Routes', () => {
   test('should fail when normalUser try to create user', async () => {
     const { emails, name } = genUser(null);
 
-    await createUpdateDelete(route, { 'Jest-User': normalUser!._id }, [
+    await createUpdateDelete(route, { 'Jest-User': jest.normalUser._id }, [
       {
         action: 'create',
-        data: { tenantId: tenantId, email: emails[0], name },
+        data: { tenantId: jest.tenantId, email: emails[0], name },
         expectedResponse: {
           statusCode: 403,
           data: { type: 'plain', statusCode: 403, errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }] },
@@ -134,10 +125,10 @@ describe('User API Routes', () => {
   test('should fail when admin try to create user', async () => {
     const { emails, name } = genUser(null);
 
-    await createUpdateDelete(route, { 'Jest-User': adminUser!._id }, [
+    await createUpdateDelete(route, { 'Jest-User': jest.adminUser._id }, [
       {
         action: 'create',
-        data: { tenantId: tenantId, email: emails[0], name },
+        data: { tenantId: jest.tenantId, email: emails[0], name },
         expectedResponse: {
           statusCode: 403,
           data: { type: 'plain', statusCode: 403, errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }] },
@@ -149,10 +140,10 @@ describe('User API Routes', () => {
   test('should fail when root try to create user', async () => {
     const { emails, name } = genUser(null);
 
-    await createUpdateDelete(route, { 'Jest-User': rootUser!._id }, [
+    await createUpdateDelete(route, { 'Jest-User': jest.rootUser._id }, [
       {
         action: 'create',
-        data: { tenantId: tenantId, email: emails[0], name },
+        data: { tenantId: jest.tenantId, email: emails[0], name },
         expectedResponse: {
           statusCode: 403,
           data: { type: 'plain', statusCode: 403, errors: [{ code: MSG_ENUM.UNAUTHORIZED_OPERATION }] },
@@ -163,19 +154,19 @@ describe('User API Routes', () => {
 
   test('should pass when school tenantAdmin creates user', async () => {
     const { emails, name } = genUser(null);
-    const create = { tenantId, email: emails[0]!, name, ...(prob(0.5) && { studentId: FAKE }) };
+    const create = { tenantId: jest.tenantId, email: emails[0]!, name, ...(prob(0.5) && { studentId: FAKE }) };
 
-    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
+    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': jest.tenantAdmin._id }, [
       {
         action: 'create',
         data: create,
         expectedMinFormat: {
           ...expectedFormat,
           flags: [USER.FLAG.REQUIRE_PASSWORD_CHANGE],
-          tenants: [tenantId!],
+          tenants: [jest.tenantId],
           name,
           emails: [emails[0]!.toUpperCase()], // upper-case for unverified email
-          ...(create.studentId && { studentIds: [`${tenantId}#${FAKE}`] }),
+          ...(create.studentId && { studentIds: [`${jest.tenantId}#${FAKE}`] }),
         }, // email is unverified
       },
     ]);
@@ -187,10 +178,10 @@ describe('User API Routes', () => {
   test('should fail when school tenantAdmin creates an existing user (who NOT in tenant)', async () => {
     const { user } = await createUser(null); // create a new user (without tenants)
 
-    await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
+    await createUpdateDelete<UserDocument>(route, { 'Jest-User': jest.tenantAdmin._id }, [
       {
         action: 'create',
-        data: { tenantId: tenantId, email: user.emails[0], name: FAKE },
+        data: { tenantId: jest.tenantId, email: user.emails[0], name: FAKE },
         expectedResponse: {
           statusCode: 400,
           data: { type: 'plain', statusCode: 400, errors: [{ code: MSG_ENUM.AUTH_EMAIL_ALREADY_REGISTERED }] },
@@ -203,10 +194,10 @@ describe('User API Routes', () => {
   });
 
   test('should pass when school tenantAdmin creates an existing user (who already in tenant)', async () => {
-    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': tenantAdmin!._id }, [
+    const user = await createUpdateDelete<UserDocument>(route, { 'Jest-User': jest.tenantAdmin._id }, [
       {
         action: 'create',
-        data: { tenantId: tenantId, email: normalUser!.emails[0], name: 'whatever' },
+        data: { tenantId: jest.tenantId, email: jest.normalUser.emails[0], name: 'whatever' },
         expectedMinFormat: expectedFormat,
       },
     ]);
@@ -218,13 +209,13 @@ describe('User API Routes', () => {
   test('should pass when change password (as root)', async () => {
     expect.assertions(4);
 
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
     const password = User.genValidPassword();
 
     // CHANGE_USER_PASSWORD (by ROOT)
     await createUpdateDelete(
       route,
-      { 'Jest-User': tenantAdmin!._id },
+      { 'Jest-User': jest.tenantAdmin._id },
       [
         {
           action: 'changePassword',
@@ -244,13 +235,13 @@ describe('User API Routes', () => {
   test('should pass when change password (as root & tenantAdmin)', async () => {
     expect.assertions(4);
 
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
     const password = User.genValidPassword();
 
     // CHANGE_USER_PASSWORD (by tenantAdmin)
     await createUpdateDelete(
       route,
-      { 'Jest-User': tenantAdmin!._id },
+      { 'Jest-User': jest.tenantAdmin._id },
       [
         {
           action: 'changePassword',
@@ -268,17 +259,17 @@ describe('User API Routes', () => {
   });
 
   test('should pass when add & remove feature', async () => {
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     const feature = randomItem(Object.keys(USER.FEATURE));
     await createUpdateDelete<UserDocument>(
       route,
-      { 'Jest-User': rootUser!._id },
+      { 'Jest-User': jest.rootUser._id },
       [
         { action: 'addFeature', data: { feature }, expectedMinFormat: { ...expectedFormat, features: [feature] } },
         { action: 'removeFeature', data: { feature }, expectedMinFormat: { ...expectedFormat, features: [] } },
         {
-          headers: { 'Jest-User': tenantAdmin!._id },
+          headers: { 'Jest-User': jest.tenantAdmin._id },
           action: 'addFeature',
           data: { feature },
           expectedResponse: {
@@ -287,7 +278,7 @@ describe('User API Routes', () => {
           },
         },
         {
-          headers: { 'Jest-User': tenantAdmin!._id },
+          headers: { 'Jest-User': jest.tenantAdmin._id },
           action: 'removeFeature',
           data: { feature },
           expectedResponse: {
@@ -304,26 +295,26 @@ describe('User API Routes', () => {
   });
 
   test('should pass when add remark', async () => {
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     await createUpdateDelete<UserDocument>(
       route,
-      { 'Jest-User': rootUser!._id },
+      { 'Jest-User': jest.rootUser._id },
       [
         {
           action: 'addRemark',
           data: { remark: FAKE },
-          expectedMinFormat: { ...expectedFormat, ...expectedRemark(rootUser!._id, FAKE) },
+          expectedMinFormat: { ...expectedFormat, ...expectedRemark(jest.rootUser._id, FAKE) },
         },
         {
-          headers: { 'Jest-User': tenantAdmin!._id },
+          headers: { 'Jest-User': jest.tenantAdmin._id },
           action: 'addRemark',
           data: { remark: FAKE2 },
           expectedMinFormat: {
             ...expectedFormat,
             remarks: [
-              { t: expectedDateFormat(), u: rootUser!._id.toString(), m: FAKE }, // added by root
-              { t: expectedDateFormat(), u: tenantAdmin!._id.toString(), m: FAKE2 }, // added by tenantAdmin
+              { t: expectedDateFormat(), u: jest.rootUser._id.toString(), m: FAKE }, // added by root
+              { t: expectedDateFormat(), u: jest.tenantAdmin._id.toString(), m: FAKE2 }, // added by tenantAdmin
             ],
           },
         },
@@ -336,17 +327,17 @@ describe('User API Routes', () => {
   });
 
   test('should pass when set & clear flag', async () => {
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     const flag = USER.FLAG.DEMO;
     await createUpdateDelete<UserDocument>(
       route,
-      { 'Jest-User': rootUser!._id },
+      { 'Jest-User': jest.rootUser._id },
       [
         { action: 'setFlag', data: { flag }, expectedMinFormat: { ...expectedFormat, flags: [flag] } },
         { action: 'clearFlag', data: { flag }, expectedMinFormat: { ...expectedFormat, flags: [] } },
         {
-          headers: { 'Jest-User': tenantAdmin!._id },
+          headers: { 'Jest-User': jest.tenantAdmin._id },
           action: 'setFlag',
           data: { flag },
           expectedResponse: {
@@ -355,7 +346,7 @@ describe('User API Routes', () => {
           },
         },
         {
-          headers: { 'Jest-User': tenantAdmin!._id },
+          headers: { 'Jest-User': jest.tenantAdmin._id },
           action: 'clearFlag',
           data: { flag },
           expectedResponse: {
@@ -372,9 +363,9 @@ describe('User API Routes', () => {
   });
 
   test('should pass when add schoolHistory', async () => {
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
-    const tenant = await Tenant.findById(tenantId!).lean();
+    const tenant = await Tenant.findById(jest.tenantId).lean();
     const school = await School.findById(tenant!.school).lean();
     const schoolId = school!._id.toString();
 
@@ -383,7 +374,7 @@ describe('User API Routes', () => {
 
     await createUpdateDelete<UserDocument>(
       route,
-      { 'Jest-User': tenantAdmin!._id },
+      { 'Jest-User': jest.tenantAdmin._id },
       [
         {
           action: 'addSchoolHistory',
@@ -407,7 +398,7 @@ describe('User API Routes', () => {
           },
         },
         {
-          headers: { 'Jest-User': rootUser!._id },
+          headers: { 'Jest-User': jest.rootUser._id },
           action: 'addSchoolHistory',
           data: history,
           expectedResponse: {
@@ -424,11 +415,11 @@ describe('User API Routes', () => {
   });
 
   test('should pass when suspend user', async () => {
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     await createUpdateDelete<UserDocument>(
       route,
-      { 'Jest-User': rootUser!._id },
+      { 'Jest-User': jest.rootUser._id },
       [
         {
           action: 'suspend',
@@ -436,7 +427,7 @@ describe('User API Routes', () => {
           expectedMinFormat: { ...expectedFormat, suspendUtil: expectedDateFormat() },
         },
         {
-          headers: { 'Jest-User': tenantAdmin!._id },
+          headers: { 'Jest-User': jest.tenantAdmin._id },
           action: 'suspend',
           data: {},
           expectedResponse: {
@@ -453,11 +444,11 @@ describe('User API Routes', () => {
   });
 
   test('should pass when updateIdentifiedAt', async () => {
-    const { id } = await createUser(tenantId);
+    const { id } = await createUser(jest.tenantId);
 
     await createUpdateDelete<UserDocument>(
       route,
-      { 'Jest-User': rootUser!._id },
+      { 'Jest-User': jest.rootUser._id },
       [
         {
           action: 'updateIdentifiedAt',
@@ -465,7 +456,7 @@ describe('User API Routes', () => {
           expectedMinFormat: { ...expectedFormat, identifiedAt: expectedDateFormat() },
         },
         {
-          headers: { 'Jest-User': tenantAdmin!._id },
+          headers: { 'Jest-User': jest.tenantAdmin._id },
           action: 'updateIdentifiedAt',
           data: {},
           expectedResponse: {

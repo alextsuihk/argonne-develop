@@ -7,14 +7,12 @@
  *
  */
 
-import { LOCALE } from '@argonne/common';
 import Redis from 'ioredis';
 
 import configLoader from './config/config-loader';
 import { isTestMode } from './utils/environment';
 import log from './utils/log';
 
-const { MSG_ENUM } = LOCALE;
 const { config, DEFAULTS } = configLoader;
 
 const redis = new Redis(config.server.redis.url);
@@ -27,19 +25,10 @@ redis.on('connect', () => {
   redis.flushdb(); // in case of stale cache
 });
 
-const waitForReady = async () => {
-  if (redis.status !== 'ready') await new Promise(resolve => setTimeout(resolve, 50));
-  if (redis.status !== 'ready') await new Promise(resolve => setTimeout(resolve, 100));
-  if (redis.status !== 'ready') await new Promise(resolve => setTimeout(resolve, 200));
-  if (redis.status !== 'ready') throw { statusCode: 500, code: MSG_ENUM.REDIS_NOT_READY };
-};
-
 /**
  * delete a specific key
  */
 const deleteKey = async (key: string, prefix = DEFAULTS.REDIS.PREFIX): Promise<boolean | null> => {
-  await waitForReady();
-
   try {
     await redis.del(prefix + key);
     return true;
@@ -54,8 +43,6 @@ const deleteKey = async (key: string, prefix = DEFAULTS.REDIS.PREFIX): Promise<b
  *
  */
 const flushDb = async (): Promise<boolean | null> => {
-  await waitForReady();
-
   try {
     await redis.flushdb();
     return true;
@@ -69,8 +56,6 @@ const flushDb = async (): Promise<boolean | null> => {
  * get content from a specific key
  */
 const get = async <T>(key: string, prefix = DEFAULTS.REDIS.PREFIX): Promise<T | null | 'nullX'> => {
-  await waitForReady();
-
   try {
     const value = await redis.get(prefix + key);
     return value ? (JSON.parse(value) as T) : null;
@@ -93,8 +78,6 @@ const set = async <T>(
   expiry = DEFAULTS.REDIS.EXPIRES.DEFAULT,
   prefix = DEFAULTS.REDIS.PREFIX,
 ): Promise<T> => {
-  await waitForReady();
-
   try {
     await redis.set(prefix + key, JSON.stringify(value), 'EX', expiry);
     return value;

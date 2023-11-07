@@ -59,6 +59,7 @@ const {
   idSchema,
   oAuth2IdSchema,
   oAuth2Schema,
+  stashSchema,
   tokenSchema,
   userApiKeySchema,
   userAvailabilitySchema,
@@ -67,7 +68,6 @@ const {
   userPaymentMethodsSchema,
   userProfileSchema,
   userPushSubscriptionSchema,
-  userStashSchema,
 } = yupSchema;
 
 const { config } = configLoader;
@@ -87,7 +87,7 @@ const hideApiKeysToken = (apiKeys: UserDocument['apiKeys'], showId?: Types.Objec
  */
 export const isEmailAvailable = async (req: Request, args: unknown): Promise<boolean> => {
   const { email } = await emailSchema.validate(args);
-  const user = await User.findOne({ emails: { $in: [email, email.toUpperCase()] }, ...activeCond }, '-id').lean();
+  const user = await User.exists({ emails: { $in: [email, email.toUpperCase()] }, ...activeCond }).lean();
   return !user;
 };
 
@@ -274,7 +274,8 @@ export const update = async (
     return common({ $push: { pushSubscriptions: inputFields } }, inputFields);
     //
   } else if (action === 'addStash') {
-    const inputFields = await userStashSchema.validate(args);
+    const inputFields = await stashSchema.validate(args);
+    await storage.validateObject(inputFields.url, userId);
     return common({ $push: { stashes: { _id: mongoId(), ...inputFields } } }, inputFields);
     //
   } else if (action === 'oAuth2Link') {
@@ -344,6 +345,7 @@ export const update = async (
     const { id } = await idSchema.validate(args);
     const originalStash = original.stashes.find(s => s._id.equals(id));
     if (!originalStash) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
+    await storage.removeObject(originalStash.url);
     return common({ $pull: { stashes: { _id: id } } }, { original: originalStash });
     //
   } else if (action === 'updateAvailability') {
@@ -461,13 +463,18 @@ export const verifyEmail = async (req: Request, args: unknown): Promise<StatusRe
   const update: UpdateQuery<UserDocument> = { emails: [...user.emails, email.toLowerCase()] }; // finally append verified email
 
   await Promise.all([
-    User.updateOne({ _id: user._id }, update),
+    User.updateOne({ _id: user._id }, { $addToSet: { emails: email.toLowerCase() } }), // add back verified email
     DatabaseEvent.log(user._id, `/auth/${user._id}`, 'verify', { email }),
     notifySync(
       user.tenants[0] || null,
       { userIds: [user._id], event: 'AUTH-RENEW-TOKEN' },
       {
-        bulkWrite: { users: [{ updateOne: { filter: { _id: user._id }, update } }] satisfies BulkWrite<UserDocument> },
+        bulkWrite: {
+          users: [
+            { updateOne: { filter: { _id: user._id }, update: { $pull: { emails: email.toUpperCase() } } } }, // remove unverified
+            { updateOne: { filter: { _id: user._id }, update: { $addToSet: { emails: email.toLowerCase() } } } }, // add back verified
+          ] satisfies BulkWrite<UserDocument>,
+        },
       },
     ),
   ]);

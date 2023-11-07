@@ -7,22 +7,21 @@ import { LOCALE } from '@argonne/common';
 import { addDays } from 'date-fns';
 
 import {
-  type ConvertObjectIdToString,
+  FAKE,
   expectedDateFormat,
   expectedIdFormat,
   expectedMember,
-  FAKE,
   jestSetup,
   jestTeardown,
   prob,
   randomItem,
   shuffle,
+  type ConvertObjectIdToString,
 } from '../../jest';
 import Classroom from '../../models/classroom';
 import type { QuestionDocument } from '../../models/question';
 import Question from '../../models/question';
 import Subject from '../../models/subject';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 type QuestionDocumentEx = Omit<QuestionDocument, 'bids' | 'contentIdx' | 'members'> & {
@@ -40,9 +39,7 @@ const route = 'questions';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let normalUser: UserDocument | null;
-  let normalUsers: UserDocument[] | null;
-  let tenantId: string | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single district format
   const expectedMinFormat = {
@@ -71,13 +68,11 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     contentsToken: expect.any(String),
   };
 
-  beforeAll(async () => {
-    ({ normalUser, normalUsers, tenantId } = await jestSetup(['normal']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should pass when getMany & getById (as student)', async () => {
-    const questions = await Question.find({ tenant: tenantId!, deletedAt: { $exists: false } }).lean();
+    const questions = await Question.find({ tenant: jest.tenantId, deletedAt: { $exists: false } }).lean();
     const question = randomItem(questions);
 
     await getMany(route, { 'Jest-User': question!.student }, expectedMinFormat, {
@@ -89,7 +84,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should pass when getMany & getById (as bidder)', async () => {
     const questions = await Question.find({
-      tenant: tenantId!,
+      tenant: jest.tenantId,
       bidders: { $ne: [] },
       deletedAt: { $exists: false },
     }).lean();
@@ -105,7 +100,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
   test('should pass when getMany & getById (as tutor)', async () => {
     const questions = await Question.find({
-      tenant: tenantId!,
+      tenant: jest.tenantId,
       tutor: { $exists: true },
       deletedAt: { $exists: false },
     }).lean();
@@ -120,10 +115,10 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   });
 
   test('should fail when GET all (as guest)', async () => getUnauthenticated(route, {}));
-  test('should fail when GET one (as guest)', async () => getUnauthenticated(`${route}/${tenantId}`, {})); // tenantId is an valid ID
+  test('should fail when GET one (as guest)', async () => getUnauthenticated(`${route}/${jest.tenantId}`, {})); // for sure, tenantId is not any question's _id
 
   test('should pass when student creates and removes a question', async () => {
-    const userIds = normalUsers!
+    const userIds = jest.normalUsers
       .slice(-2)
       .map(u => u._id.toString())
       .sort();
@@ -135,17 +130,17 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       lang: randomItem(Object.keys(QUESTION.LANG)),
     };
 
-    await createUpdateDelete<QuestionDocumentEx>(route, { 'Jest-User': normalUser!._id }, [
+    await createUpdateDelete<QuestionDocumentEx>(route, { 'Jest-User': jest.normalUser._id }, [
       {
         action: 'create',
-        data: { ...create, tenantId, userIds, deadline: addDays(Date.now(), 3), content: FAKE },
+        data: { ...create, tenantId: jest.tenantId, userIds, deadline: addDays(Date.now(), 3), content: FAKE },
         expectedMinFormat: {
           ...expectedMinFormat,
           ...create,
-          tenant: tenantId!,
+          tenant: jest.tenantId,
           bidders: userIds,
           bids: [],
-          members: [expectedMember(normalUser!._id.toString(), [])],
+          members: [expectedMember(jest.normalUser._id.toString(), [])],
           contents: [expect.any(String)],
         },
       },
@@ -154,7 +149,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   });
 
   test('should pass when student creates and auto-assigns to a single tutor, but not allow to remove', async () => {
-    const tutorId = normalUsers!.at(-1)!._id.toString(); // pick the last user
+    const tutorId = jest.normalUsers.at(-1)!._id.toString(); // pick the last user
 
     const subject = await Subject.findOne({ deletedAt: { $exists: false } }).lean();
     const create = {
@@ -165,19 +160,25 @@ describe(`${route.toUpperCase()} API Routes`, () => {
 
     await createUpdateDelete<QuestionDocumentEx>(
       route,
-      { 'Jest-User': normalUser!._id },
+      { 'Jest-User': jest.normalUser._id },
       [
         {
           action: 'create',
-          data: { ...create, tenantId, userIds: [tutorId], deadline: addDays(Date.now(), 3), content: FAKE },
+          data: {
+            ...create,
+            tenantId: jest.tenantId,
+            userIds: [tutorId],
+            deadline: addDays(Date.now(), 3),
+            content: FAKE,
+          },
           expectedMinFormat: {
             ...expectedMinFormat,
             ...create,
-            tenant: tenantId!,
+            tenant: jest.tenantId,
             tutor: tutorId,
             bidders: [],
             bids: [],
-            members: [expectedMember(normalUser!._id, [])],
+            members: [expectedMember(jest.normalUser._id, [])],
             contents: [expect.any(String)],
           },
         },
@@ -199,14 +200,14 @@ describe(`${route.toUpperCase()} API Routes`, () => {
   test('should pass the full suite', async () => {
     const flag = QUESTION.MEMBER.FLAG.IMPORTANT;
 
-    const classrooms = await Classroom.find({ tenant: tenantId! }).lean();
+    const classrooms = await Classroom.find({ tenant: jest.tenantId }).lean();
     const classroom = classrooms
       .sort(shuffle)
-      .find(({ students }) => students.find(student => normalUsers!.some(u => u._id.equals(student))));
-    const studentId = normalUsers!.find(user => classroom?.students.some(s => s.equals(user._id)))?._id.toString();
+      .find(({ students }) => students.find(student => jest.normalUsers.some(u => u._id.equals(student))));
+    const studentId = jest.normalUsers.find(user => classroom?.students.some(s => s.equals(user._id)))?._id.toString();
     if (!classroom || !studentId) throw `no valid classroom (${classroom?._id}) or student ${studentId} for testing`;
 
-    const [newBidderId, ...bidderIds] = normalUsers!
+    const [newBidderId, ...bidderIds] = jest.normalUsers
       .filter(user => !user._id.equals(studentId))
       .slice(-3)
       .map(u => u._id.toString())
@@ -227,7 +228,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
       punctuality: prob(0.5) ? 4000 : 4500,
     };
 
-    const cloningUserIds = normalUsers!
+    const cloningUserIds = jest.normalUsers
       .filter(user => !user._id.equals(studentId))
       .slice(10, 13)
       .map(u => u._id.toString())
@@ -236,11 +237,17 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     await createUpdateDelete<QuestionDocumentEx>(route, { 'Jest-User': studentId }, [
       {
         action: 'create',
-        data: { ...create, tenantId, userIds: bidderIds, deadline: addDays(Date.now(), 3), content: FAKE },
+        data: {
+          ...create,
+          tenantId: jest.tenantId,
+          userIds: bidderIds,
+          deadline: addDays(Date.now(), 3),
+          content: FAKE,
+        },
         expectedMinFormat: {
           ...expectedMinFormat,
           ...create,
-          tenant: tenantId!,
+          tenant: jest.tenantId,
           bidders: bidderIds,
           bids: [],
           members: [expectedMember(studentId, [])],

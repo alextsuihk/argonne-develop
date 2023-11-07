@@ -3,11 +3,9 @@
  *
  */
 
-import { gql } from 'apollo-server-core';
-
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-export const USER_FIELDS = gql`
+export const USER_FIELDS = `#graphql
   ${LOCALE}
   ${REMARK}
   fragment UserFields on User {
@@ -51,7 +49,7 @@ export const USER_FIELDS = gql`
   }
 `;
 
-export const GET_USER = gql`
+export const GET_USER = `#graphql
   ${USER_FIELDS}
   query GetUser($id: ID!) {
     user(id: $id) {
@@ -60,7 +58,7 @@ export const GET_USER = gql`
   }
 `;
 
-export const GET_USERS = gql`
+export const GET_USERS = `#graphql
   ${USER_FIELDS}
   query GetUsers($query: QueryInput) {
     users(query: $query) {
@@ -69,7 +67,7 @@ export const GET_USERS = gql`
   }
 `;
 
-export const ADD_USER = gql`
+export const ADD_USER = `#graphql
   ${USER_FIELDS}
   mutation AddUser($tenantId: String, $email: String!, $name: String!, $studentId: String) {
     addUser(tenantId: $tenantId, email: $email, name: $name, studentId: $studentId) {
@@ -78,7 +76,7 @@ export const ADD_USER = gql`
   }
 `;
 
-export const ADD_USER_FEATURE = gql`
+export const ADD_USER_FEATURE = `#graphql
   ${USER_FIELDS}
   mutation AddUserFeature($id: ID!, $feature: String!) {
     addUserFeature(id: $id, feature: $feature) {
@@ -87,7 +85,7 @@ export const ADD_USER_FEATURE = gql`
   }
 `;
 
-export const ADD_USER_REMARK = gql`
+export const ADD_USER_REMARK = `#graphql
   ${USER_FIELDS}
   mutation AddUserRemark($id: ID!, $remark: String!) {
     addUserRemark(id: $id, remark: $remark) {
@@ -96,7 +94,7 @@ export const ADD_USER_REMARK = gql`
   }
 `;
 
-export const ADD_USER_SCHOOL_HISTORY = gql`
+export const ADD_USER_SCHOOL_HISTORY = `#graphql
   ${USER_FIELDS}
   mutation AddUserSchoolHistory($id: ID!, $year: String!, $level: String!, $schoolClass: String) {
     addUserSchoolHistory(id: $id, year: $year, level: $level, schoolClass: $schoolClass) {
@@ -105,7 +103,7 @@ export const ADD_USER_SCHOOL_HISTORY = gql`
   }
 `;
 
-export const CHANGE_USER_PASSWORD = gql`
+export const CHANGE_USER_PASSWORD = `#graphql
   ${STATUS_RESPONSE}
   mutation ChangeUserPassword($id: ID!, $password: String!) {
     changeUserPassword(id: $id, password: $password) {
@@ -114,7 +112,7 @@ export const CHANGE_USER_PASSWORD = gql`
   }
 `;
 
-export const CLEAR_USER_FLAG = gql`
+export const CLEAR_USER_FLAG = `#graphql
   ${USER_FIELDS}
   mutation ClearUserFlag($id: ID!, $flag: String!) {
     clearUserFlag(id: $id, flag: $flag) {
@@ -123,7 +121,7 @@ export const CLEAR_USER_FLAG = gql`
   }
 `;
 
-export const REMOVE_USER_FEATURE = gql`
+export const REMOVE_USER_FEATURE = `#graphql
   ${USER_FIELDS}
   mutation RemoveUserFeature($id: ID!, $feature: String!) {
     removeUserFeature(id: $id, feature: $feature) {
@@ -132,7 +130,7 @@ export const REMOVE_USER_FEATURE = gql`
   }
 `;
 
-export const SET_USER_FLAG = gql`
+export const SET_USER_FLAG = `#graphql
   ${USER_FIELDS}
   mutation SetUserFlag($id: ID!, $flag: String!) {
     setUserFlag(id: $id, flag: $flag) {
@@ -141,7 +139,7 @@ export const SET_USER_FLAG = gql`
   }
 `;
 
-export const SUSPEND_USER = gql`
+export const SUSPEND_USER = `#graphql
   ${USER_FIELDS}
   mutation SuspendUser($id: ID!) {
     suspendUser(id: $id) {
@@ -149,7 +147,7 @@ export const SUSPEND_USER = gql`
     }
   }
 `;
-export const UPDATE_USER_IDENTIFIED_AT = gql`
+export const UPDATE_USER_IDENTIFIED_AT = `#graphql
   ${USER_FIELDS}
   mutation UpdateUserIdentifiedAt($id: ID!) {
     updateUserIdentifiedAt(id: $id) {

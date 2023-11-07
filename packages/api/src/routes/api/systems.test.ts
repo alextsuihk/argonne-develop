@@ -14,12 +14,13 @@ import { jestSetup, jestTeardown, mongoId } from '../../jest';
 import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import token, { API_KEY_TOKEN_PREFIX } from '../../utils/token';
+import { sleep } from '../../utils/helper';
 
 const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('System API Routes', () => {
-  let normalUser: UserDocument | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedMemoryUsage = {
     rss: expect.any(Number),
@@ -70,9 +71,7 @@ describe('System API Routes', () => {
     webpush: expect.anything(),
   };
 
-  beforeAll(async () => {
-    ({ normalUser } = await jestSetup(['normal']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should report when health check', async () => {
@@ -97,10 +96,10 @@ describe('System API Routes', () => {
     expect.assertions(3);
 
     const scope = 'systems:r';
-    const apiKey = await token.signStrings([API_KEY_TOKEN_PREFIX, normalUser!._id, scope], 5);
+    const apiKey = await token.signStrings([API_KEY_TOKEN_PREFIX, jest.normalUser._id, scope], 5);
     const _id = mongoId();
     await User.updateOne(
-      { _id: normalUser!._id },
+      { _id: jest.normalUser._id },
       { $push: { apiKeys: { _id, token: apiKey, expireAt: addSeconds(new Date(), 5), scope } } },
     );
 
@@ -110,7 +109,7 @@ describe('System API Routes', () => {
     expect(res.status).toBe(200);
 
     // clean up
-    await User.updateOne({ _id: normalUser!._id }, { $pull: { apiKeys: { _id } } });
+    await User.updateOne({ _id: jest.normalUser._id }, { $pull: { apiKeys: { _id } } });
   });
 
   test('should respond with serverInfo', async () => {
@@ -121,6 +120,7 @@ describe('System API Routes', () => {
       data: {
         mode: expect.toBeOneOf(['HUB', 'SATELLITE']),
         primaryTenantId: expect.toBeOneOf([null, expect.any(String)]),
+        status: expect.any(String), // logically, should never be null (but could be programmatically)
         minio: expect.any(String),
         timestamp: expect.any(Number),
         version: expect.any(String),
@@ -145,8 +145,8 @@ describe('System API Routes', () => {
   test('should fail when Get Status with expired API Key', async () => {
     expect.assertions(3);
 
-    const apiKey = await token.signStrings([API_KEY_TOKEN_PREFIX, normalUser!._id, 'systems:r'], '50ms');
-    await new Promise(resolve => setTimeout(resolve, 100)); // wait until API JWT expires
+    const apiKey = await token.signStrings([API_KEY_TOKEN_PREFIX, jest.normalUser._id, 'systems:r'], '50ms');
+    await sleep(100); // wait until API JWT expires
 
     const res = await request(app).get(`/api/systems/status`).set({ 'x-api-key': apiKey });
     expect(res.body).toEqual({ errors: [{ code: MSG_ENUM.TOKEN_EXPIRED }], statusCode: 400, type: 'plain' });

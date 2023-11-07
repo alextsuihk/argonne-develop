@@ -37,7 +37,7 @@ export type BaseDocument = InferSchemaType<typeof baseSchema>;
 export const bidDefinition = {
   _id: false, // use user for id
   bidder: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  price: Number,
+  bounty: Number,
   contents: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
 };
 

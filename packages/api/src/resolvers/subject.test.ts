@@ -8,15 +8,16 @@ import 'jest-extended';
 import { LOCALE } from '@argonne/common';
 
 import {
+  FAKE,
+  FAKE2_LOCALE,
+  FAKE_LOCALE,
+  apolloContext,
   apolloExpect,
-  ApolloServer,
+  apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
-  FAKE,
-  FAKE_LOCALE,
-  FAKE2_LOCALE,
   jestSetup,
   jestTeardown,
   prob,
@@ -24,8 +25,7 @@ import {
   randomItems,
 } from '../jest';
 import Level from '../models/level';
-import Subject from '../models/subject';
-import type { UserDocument } from '../models/user';
+import Subject, { SubjectDocument } from '../models/subject';
 import {
   ADD_SUBJECT,
   ADD_SUBJECT_REMARK,
@@ -39,10 +39,7 @@ const { MSG_ENUM } = LOCALE;
 
 // Top subject of this test suite:
 describe('Subject GraphQL', () => {
-  let adminServer: ApolloServer | null;
-  let adminUser: UserDocument | null;
-  let guestServer: ApolloServer | null;
-  let normalServer: ApolloServer | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedNormalFormat = {
     _id: expectedIdFormat,
@@ -60,27 +57,26 @@ describe('Subject GraphQL', () => {
     remarks: expect.any(Array), // could be empty array without any remarks
   };
 
-  beforeAll(async () => {
-    ({ adminServer, adminUser, guestServer, normalServer } = await jestSetup(['admin', 'guest', 'normal'], {
-      apollo: true,
-    }));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test('should response an array of data when GET all', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({ query: GET_SUBJECTS });
+    const res = await apolloTestServer.executeOperation({ query: GET_SUBJECTS }, { contextValue: apolloContext(null) });
     apolloExpect(res, 'data', { subjects: expect.arrayContaining([expectedNormalFormat]) });
   });
 
   test('should response an array of data when GET all with arguments', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({
-      query: GET_SUBJECTS,
-      variables: { updatedAfter: '2000-01-01', updatedBefore: '2100-12-31', skipDeleted: true },
-    });
+    const res = await apolloTestServer.executeOperation(
+      {
+        query: GET_SUBJECTS,
+        variables: { updatedAfter: '2000-01-01', updatedBefore: '2100-12-31', skipDeleted: true },
+      },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'data', { subjects: expect.arrayContaining([expectedNormalFormat]) });
   });
 
@@ -90,37 +86,43 @@ describe('Subject GraphQL', () => {
     const subjects = await Subject.find({ deletedAt: { $exists: false } }).lean();
     const id = randomItem(subjects)._id.toString();
 
-    const res = await guestServer!.executeOperation({ query: GET_SUBJECT, variables: { id } });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_SUBJECT, variables: { id } },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'data', { subject: expectedNormalFormat });
   });
 
   test('should fail when GET non-existing document without ID argument', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({ query: GET_SUBJECT });
+    const res = await apolloTestServer.executeOperation({ query: GET_SUBJECT }, { contextValue: apolloContext(null) });
     apolloExpect(res, 'error', 'Variable "$id" of required type "ID!" was not provided.');
   });
 
   test('should fail when GET non-existing document without valid Mongo ID argument', async () => {
     expect.assertions(1);
-    const res = await guestServer!.executeOperation({ query: GET_SUBJECT, variables: { id: 'invalid-mongoID' } });
-    apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.INVALID_ID}`);
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_SUBJECT, variables: { id: 'invalid-mongoID' } },
+      { contextValue: apolloContext(null) },
+    );
+    apolloExpect(res, 'errorContaining', `MSG_CODE#${MSG_ENUM.USER_INPUT_ERROR}`);
   });
 
   test('should fail when mutating without ADMIN role', async () => {
     expect.assertions(2);
 
     // add a document
-    const res = await normalServer!.executeOperation({
-      query: ADD_SUBJECT,
-      variables: { subject: { name: FAKE_LOCALE, levels: [FAKE] } },
-    });
+    const res = await apolloTestServer.executeOperation(
+      { query: ADD_SUBJECT, variables: { subject: { name: FAKE_LOCALE, levels: [FAKE] } } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ADMIN}`);
 
     // add remark
-    const res2 = await normalServer!.executeOperation({
-      query: ADD_SUBJECT_REMARK,
-      variables: { id: FAKE, remark: FAKE },
-    });
+    const res2 = await apolloTestServer.executeOperation(
+      { query: ADD_SUBJECT_REMARK, variables: { id: FAKE, remark: FAKE } },
+      { contextValue: apolloContext(jest.normalUser) },
+    );
     apolloExpect(res2, 'error', `MSG_CODE#${MSG_ENUM.AUTH_REQUIRE_ROLE_ADMIN}`);
   });
 
@@ -132,32 +134,36 @@ describe('Subject GraphQL', () => {
 
     // add a document
     const create = { name: FAKE_LOCALE, levels: randomItems(levelIds, 3).sort() };
-    const createdRes = await adminServer!.executeOperation({ query: ADD_SUBJECT, variables: { subject: create } });
+    const createdRes = await apolloTestServer.executeOperation<{ addSubject: SubjectDocument }>(
+      { query: ADD_SUBJECT, variables: { subject: create } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(createdRes, 'data', { addSubject: { ...expectedAdminFormat, ...create } });
-    const newId: string = createdRes.data!.addSubject._id;
+    const newId =
+      createdRes.body.kind === 'single' ? createdRes.body.singleResult.data!.addSubject._id.toString() : null;
 
     // add remark
-    const addRemarkRes = await adminServer!.executeOperation({
-      query: ADD_SUBJECT_REMARK,
-      variables: { id: newId, remark: FAKE },
-    });
+    const addRemarkRes = await apolloTestServer.executeOperation(
+      { query: ADD_SUBJECT_REMARK, variables: { id: newId, remark: FAKE } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(addRemarkRes, 'data', {
-      addSubjectRemark: { ...expectedAdminFormat, ...expectedRemark(adminUser!._id, FAKE, true) },
+      addSubjectRemark: { ...expectedAdminFormat, ...expectedRemark(jest.adminUser._id, FAKE, true) },
     });
 
     // update newly created document
     const update = { name: FAKE2_LOCALE, levels: randomItems(levelIds, 3).sort() };
-    const updatedRes = await adminServer!.executeOperation({
-      query: UPDATE_SUBJECT,
-      variables: { id: newId, subject: update },
-    });
+    const updatedRes = await apolloTestServer.executeOperation(
+      { query: UPDATE_SUBJECT, variables: { id: newId, subject: update } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(updatedRes, 'data', { updateSubject: { ...expectedAdminFormat, ...update } });
 
     // delete newly created document
-    const removedRes = await adminServer!.executeOperation({
-      query: REMOVE_SUBJECT,
-      variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) },
-    });
+    const removedRes = await apolloTestServer.executeOperation(
+      { query: REMOVE_SUBJECT, variables: { id: newId, ...(prob(0.5) && { remark: FAKE }) } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(removedRes, 'data', { removeSubject: { code: MSG_ENUM.COMPLETED } });
   });
 
@@ -165,17 +171,17 @@ describe('Subject GraphQL', () => {
     expect.assertions(2);
 
     // add without name
-    const res1 = await adminServer!.executeOperation({
-      query: ADD_SUBJECT,
-      variables: { subject: { levels: [FAKE, FAKE] } },
-    });
+    const res1 = await apolloTestServer.executeOperation(
+      { query: ADD_SUBJECT, variables: { subject: { levels: [FAKE, FAKE] } } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res1, 'errorContaining', 'Field "name" of required type "LocaleInput!" was not provided.');
 
     // add without level
-    const res2 = await adminServer!.executeOperation({
-      query: ADD_SUBJECT,
-      variables: { subject: { name: FAKE_LOCALE } },
-    });
+    const res2 = await apolloTestServer.executeOperation(
+      { query: ADD_SUBJECT, variables: { subject: { name: FAKE_LOCALE } } },
+      { contextValue: apolloContext(jest.adminUser) },
+    );
     apolloExpect(res2, 'errorContaining', 'Field "levels" of required type "[String!]!" was not provided.');
   });
 });

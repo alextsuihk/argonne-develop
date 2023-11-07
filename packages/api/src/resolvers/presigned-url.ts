@@ -3,7 +3,7 @@
  *
  */
 
-import type { Ctx } from '../apollo';
+import type { ApolloContext } from '../server';
 import presignedUrlController from '../controllers/presigned-url';
 import { tryCatch } from './root';
 
@@ -13,6 +13,6 @@ const { create } = presignedUrlController;
 
 export default {
   Mutation: {
-    addPresignedUrl: async (_: unk, args: unk, { req }: Ctx) => tryCatch(() => create(req, args)),
+    addPresignedUrl: async (_: unk, args: unk, { req }: ApolloContext) => tryCatch(() => create(req, args)),
   },
 };

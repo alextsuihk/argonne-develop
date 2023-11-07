@@ -9,7 +9,8 @@ import { LOCALE } from '@argonne/common';
 
 import {
   apolloExpect,
-  ApolloServer,
+  apolloContext,
+  apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
@@ -22,8 +23,6 @@ import {
   prob,
   randomItem,
 } from '../jest';
-import District from '../models/district';
-import type { UserDocument } from '../models/user';
 import {
   ADD_ASSIGNMENT,
   GET_ASSIGNMENT,
@@ -37,10 +36,7 @@ const { MSG_ENUM } = LOCALE;
 
 // Top level of this test suite:
 describe('District GraphQL', () => {
-  let adminServer: ApolloServer | null;
-  let adminUser: UserDocument | null;
-  let guestServer: ApolloServer | null;
-  let normalServer: ApolloServer | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   const expectedFormat = {
     _id: expectedIdFormat,
@@ -76,17 +72,16 @@ describe('District GraphQL', () => {
     contentsToken: expect.any(String),
   };
 
-  beforeAll(async () => {
-    ({ adminServer, adminUser, guestServer, normalServer } = await jestSetup(['admin', 'guest', 'normal'], {
-      apollo: true,
-    }));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test.skip('should response an array of data when GET all', async () => {
     expect.assertions(1);
 
-    const res = await guestServer!.executeOperation({ query: GET_DISTRICTS });
+    const res = await apolloTestServer.executeOperation(
+      { query: GET_DISTRICTS },
+      { contextValue: apolloContext(null) },
+    );
     apolloExpect(res, 'data', { districts: expect.arrayContaining([expectedNormalFormat]) });
   });
 
