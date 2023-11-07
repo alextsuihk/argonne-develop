@@ -43,7 +43,7 @@ const seed = async (): Promise<string> => {
     if (typography.content?.zhHK) typography.content!.zhCN = convert.tw2cn(typography.content.zhHK);
   });
 
-  await Typography.insertMany<Partial<TypographyDocument>>(typographies, { rawResult: true });
+  await Typography.insertMany<Partial<TypographyDocument>>(typographies, { includeResultMetadata: true });
   return `(${chalk.green(typographies.length)} created)`;
 };
 

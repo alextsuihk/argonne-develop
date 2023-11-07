@@ -803,7 +803,7 @@ const shareHomework = async (req: Request, args: unknown): Promise<ClassroomDocu
   const contentUpdate: UpdateQuery<ContentDocument> = { $addToSet: { parents: `/chats/${chat._id}` } };
   const [classroom] = await Promise.all([
     Classroom.findByIdAndUpdate(id, update, { fields: adminSelect, new: true }).populate<Populate>(populate).lean(),
-    Content.insertMany(newContents, { rawResult: true }),
+    Content.insertMany(newContents, { includeResultMetadata: true }),
     Content.updateMany({ _id: { $in: homework.contents } }, contentUpdate),
     notifySync(
       tenant._id,

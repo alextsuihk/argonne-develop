@@ -107,7 +107,7 @@ const seed = async (): Promise<string> => {
     addTenantToUsers([alexId], tenant._id),
     minioClient.putObject(publicBucket, logoFilename, logoImage),
     minioClient.putObject(publicBucket, htmlFilename, html),
-    Tenant.insertMany(tenant, { rawResult: true }),
+    Tenant.insertMany(tenant, { includeResultMetadata: true }),
   ]);
 
   return `(${chalk.green('Stem tenant')} created)`;

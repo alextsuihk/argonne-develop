@@ -562,15 +562,15 @@ const sync: RequestHandler = async (req, res, next) => {
             return Object.keys(insertedIds).length ? { ok: true } : { insertedIds, document };
           } else if ('replaceOne' in bulkWrite) {
             const { filter, replacement } = bulkWrite.replaceOne;
-            const { ok } = await model.findOneAndReplace(filter, replacement, { rawResult: true });
+            const { ok } = await model.findOneAndReplace(filter, replacement, { includeResultMetadata: true });
             return ok ? { ok: true } : bulkWrite.replaceOne;
           } else if ('updateMany' in bulkWrite) {
             const { filter, update, upsert } = bulkWrite.updateMany;
-            const { acknowledged } = await model.updateMany(filter, update, { rawResult: true, upsert });
+            const { acknowledged } = await model.updateMany(filter, update, { includeResultMetadata: true, upsert });
             return acknowledged ? { ok: true } : bulkWrite.updateMany;
           } else if ('updateOne' in bulkWrite) {
             const { filter, update, upsert } = bulkWrite.updateOne;
-            const { acknowledged } = await model.updateMany(filter, update, { rawResult: true, upsert });
+            const { acknowledged } = await model.updateMany(filter, update, { includeResultMetadata: true, upsert });
             return acknowledged ? { ok: true } : bulkWrite.updateOne;
           } else {
             return { reason: 'unknown action' };

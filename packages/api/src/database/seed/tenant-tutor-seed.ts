@@ -39,7 +39,7 @@ const seed = async (): Promise<string> => {
   await Promise.all([
     addTenantToUsers([alexId], tenant._id),
     minioClient.putObject(publicBucket, logoFilename, logoImage),
-    Tenant.insertMany(tenant, { rawResult: true }),
+    Tenant.insertMany(tenant, { includeResultMetadata: true }),
   ]);
 
   return `(${chalk.green('Tutor tenant')} created)`;

@@ -55,8 +55,8 @@ const fake = async (count = 10): Promise<string> => {
     );
 
   await Promise.all([
-    Publisher.insertMany<Partial<PublisherDocument>>(publishers, { rawResult: true }),
-    User.insertMany<Partial<UserDocument>>(publisherAdmins, { rawResult: true }),
+    Publisher.insertMany<Partial<PublisherDocument>>(publishers, { includeResultMetadata: true }),
+    User.insertMany<Partial<UserDocument>>(publisherAdmins, { includeResultMetadata: true }),
     minioClient.putObject(publicBucket, publisherLogoFilename, publisherLogoImage),
   ]);
 

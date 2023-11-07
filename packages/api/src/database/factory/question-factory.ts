@@ -189,8 +189,8 @@ const fake = async (
     );
 
   await Promise.all([
-    Content.insertMany<Partial<ContentDocument>>(contents, { rawResult: true }),
-    Question.insertMany<Partial<QuestionDocument>>(questions, { rawResult: true }),
+    Content.insertMany<Partial<ContentDocument>>(contents, { includeResultMetadata: true }),
+    Question.insertMany<Partial<QuestionDocument>>(questions, { includeResultMetadata: true }),
   ]);
   return `(${chalk.green(questions.length)} questions [for ${tenants.length} tenant(s)] (with ${
     contents.length

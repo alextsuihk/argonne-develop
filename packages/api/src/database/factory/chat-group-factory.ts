@@ -123,9 +123,11 @@ const fake = async (codes: string[], chatGroupCount = 5, chatMax = 5, contentMax
     .flat();
 
   await Promise.all([
-    ChatGroup.insertMany<Partial<ChatGroupDocument>>([...adminMessages, ...chatGroups], { rawResult: true }),
-    Chat.insertMany<Partial<ChatDocument>>(chats, { rawResult: true }),
-    Content.insertMany<Partial<ContentDocument>>(contents, { rawResult: true }),
+    ChatGroup.insertMany<Partial<ChatGroupDocument>>([...adminMessages, ...chatGroups], {
+      includeResultMetadata: true,
+    }),
+    Chat.insertMany<Partial<ChatDocument>>(chats, { includeResultMetadata: true }),
+    Content.insertMany<Partial<ContentDocument>>(contents, { includeResultMetadata: true }),
   ]);
 
   const adminMsg = `${chalk.green(adminMessages.length)} adminMessages`;

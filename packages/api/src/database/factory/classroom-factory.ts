@@ -235,11 +235,11 @@ const fake = async (codes: string[], chatMax = 3, contentMax = 5, assignmentCoun
     .flat();
 
   await Promise.all([
-    Classroom.insertMany<Partial<ClassroomDocument>>(classrooms, { rawResult: true }),
-    Assignment.insertMany<Partial<AssignmentDocument>>(assignments, { rawResult: true }),
-    Chat.insertMany<Partial<ChatDocument>>(chats, { rawResult: true }),
-    Content.insertMany<Partial<ContentDocument>>(contents, { rawResult: true }),
-    Homework.insertMany<Partial<HomeworkDocument>>(homeworks, { rawResult: true }),
+    Classroom.insertMany<Partial<ClassroomDocument>>(classrooms, { includeResultMetadata: true }),
+    Assignment.insertMany<Partial<AssignmentDocument>>(assignments, { includeResultMetadata: true }),
+    Chat.insertMany<Partial<ChatDocument>>(chats, { includeResultMetadata: true }),
+    Content.insertMany<Partial<ContentDocument>>(contents, { includeResultMetadata: true }),
+    Homework.insertMany<Partial<HomeworkDocument>>(homeworks, { includeResultMetadata: true }),
   ]);
 
   const msg = `${chalk.green(classrooms.length)} classrooms for ${chalk.green(schoolCourses.length)} school(s) created`;

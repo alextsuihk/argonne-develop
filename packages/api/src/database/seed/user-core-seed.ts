@@ -88,7 +88,7 @@ const seed = async (): Promise<string> => {
       new User<Partial<UserDocument>>({ password: user.password ?? User.genValidPassword(), tenants: [], ...user }),
   );
 
-  await User.insertMany<Partial<UserDocument>>(newUsers, { rawResult: true }); // must use create() to execute pre-save hook for password-hashing
+  await User.insertMany<Partial<UserDocument>>(newUsers, { includeResultMetadata: true }); // must use create() to execute pre-save hook for password-hashing
   return `(${chalk.green(users.length)} created) [${chalk.bgCyan('adminPassword: ', adminPassword)}]`;
 };
 

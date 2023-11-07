@@ -676,7 +676,7 @@ const addAssignment = async (req: Request, args: unknown): Promise<BookDocumentE
     Book.findOneAndUpdate({ _id: id, deletedAt: { $exists: false } }, update, { fields: adminSelect, new: true })
       .populate<Populate>(populate)
       .lean(),
-    Content.insertMany([content, ...examples], { rawResult: true }),
+    Content.insertMany([content, ...examples], { includeResultMetadata: true }),
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${id}`),
     DatabaseEvent.log(userId, `/books/${id}`, 'addAssignment', { args, bookAssignmentId, contributionId }),
     syncToAllSatellites({

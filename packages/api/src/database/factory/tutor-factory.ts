@@ -91,7 +91,7 @@ const fake = async (codes: string[], ratio = 0.2): Promise<string> => {
     });
   });
 
-  await Tutor.insertMany<Partial<TutorDocument>>(tutors, { rawResult: true });
+  await Tutor.insertMany<Partial<TutorDocument>>(tutors, { includeResultMetadata: true });
   return `(${chalk.green(tutors.length)} tutors created)`;
 };
 

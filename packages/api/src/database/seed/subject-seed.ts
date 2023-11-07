@@ -175,7 +175,7 @@ const seed = async (): Promise<string> => {
     if (subject.name?.zhHK && !subject.name?.zhCN) subject.name!.zhCN = convert.tw2cn(subject.name.zhHK);
   });
 
-  await Subject.insertMany<Partial<SubjectDocument>>(subjects, { rawResult: true });
+  await Subject.insertMany<Partial<SubjectDocument>>(subjects, { includeResultMetadata: true });
   return `(${chalk.green(subjects.length)} created)`;
 };
 

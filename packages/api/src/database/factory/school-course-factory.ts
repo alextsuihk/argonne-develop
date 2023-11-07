@@ -95,7 +95,7 @@ const fake = async (codes: string[], revCount = 2): Promise<string> => {
     ])
     .flat();
 
-  await SchoolCourse.insertMany<Partial<SchoolCourseDocument>>(schoolCourses, { rawResult: true });
+  await SchoolCourse.insertMany<Partial<SchoolCourseDocument>>(schoolCourses, { includeResultMetadata: true });
   return `(${chalk.green(schoolCourses.length)} schoolCourses created for ${chalk.green(tenants.length)} tenants)`;
 };
 

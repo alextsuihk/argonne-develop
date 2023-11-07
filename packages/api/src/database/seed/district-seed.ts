@@ -55,7 +55,7 @@ const districts = regionDistricts
   .flat();
 
 const seed = async (): Promise<string> => {
-  await District.insertMany<Partial<DistrictDocument>>(districts, { rawResult: true });
+  await District.insertMany<Partial<DistrictDocument>>(districts, { includeResultMetadata: true });
   return `(${chalk.green(districts.length)} created)`;
 };
 

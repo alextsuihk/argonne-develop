@@ -271,7 +271,7 @@ const seed = async (): Promise<string> => {
     if (publisher.name?.zhHK && !publisher.name?.zhCN) publisher.name!.zhCN = convert.tw2cn(publisher.name.zhHK);
   });
 
-  await Publisher.insertMany<Partial<PublisherDocument>>(publishers, { rawResult: true });
+  await Publisher.insertMany<Partial<PublisherDocument>>(publishers, { includeResultMetadata: true });
   return `(${chalk.green(publishers.length)} created)`;
 };
 

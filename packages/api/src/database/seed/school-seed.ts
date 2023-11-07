@@ -50,7 +50,7 @@ const seed = async (): Promise<string> => {
       }),
   );
 
-  await School.insertMany<Partial<SchoolDocument>>(schools, { rawResult: true });
+  await School.insertMany<Partial<SchoolDocument>>(schools, { includeResultMetadata: true });
 
   const intl = internationalSchools.length;
   const pri = primarySchools.length;

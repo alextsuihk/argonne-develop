@@ -144,11 +144,11 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
   }
 
   await Promise.all([
-    Book.insertMany<Partial<BookDocument>>(books, { rawResult: true }),
-    BookAssignment.insertMany<Partial<BookAssignmentDocument>>(bookAssignments, { rawResult: true }),
-    ChatGroup.insertMany<Partial<ChatGroupDocument>>(chatGroups, { rawResult: true }),
-    Contribution.insertMany<Partial<ContributionDocument>>(contributions, { rawResult: true }),
-    Content.insertMany<Partial<ContentDocument>>(contents, { rawResult: true }),
+    Book.insertMany<Partial<BookDocument>>(books, { includeResultMetadata: true }),
+    BookAssignment.insertMany<Partial<BookAssignmentDocument>>(bookAssignments, { includeResultMetadata: true }),
+    ChatGroup.insertMany<Partial<ChatGroupDocument>>(chatGroups, { includeResultMetadata: true }),
+    Contribution.insertMany<Partial<ContributionDocument>>(contributions, { includeResultMetadata: true }),
+    Content.insertMany<Partial<ContentDocument>>(contents, { includeResultMetadata: true }),
   ]);
   return `(${chalk.green(books.length)} books with ${chalk.green(bookAssignments.length)} bookAssignments created)`;
 };

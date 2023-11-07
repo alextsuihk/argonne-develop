@@ -124,9 +124,9 @@ const create = async (req: Request, args: unknown): Promise<AssignmentDocumentEx
   const classroomUpdate: UpdateQuery<ClassroomDocument> = { $addToSet: { assignments: _id } };
   const [transformed] = await Promise.all([
     transform(userId, assignment.toObject()), // manually populate homeworks
-    Assignment.insertMany(assignment, { rawResult: true }),
+    Assignment.insertMany(assignment, { includeResultMetadata: true }),
     Classroom.updateOne(classroom, classroomUpdate),
-    Homework.insertMany(createdHomeworks, { rawResult: true }),
+    Homework.insertMany(createdHomeworks, { includeResultMetadata: true }),
     DatabaseEvent.log(userId, `/assignments/${_id}`, 'CREATE', args),
     notifySync(
       classroom.tenant,

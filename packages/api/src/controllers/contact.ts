@@ -25,9 +25,9 @@ import common from './common';
 type ContactWithAvatarUrl = {
   _id: Types.ObjectId; // this is userId
   flags: string[];
-  avatarUrl?: string;
+  avatarUrl?: string | null;
   name: string;
-  identifiedAt?: Date;
+  identifiedAt?: Date | null;
   availability: string;
   tenants: string[];
   updatedAt: Date;

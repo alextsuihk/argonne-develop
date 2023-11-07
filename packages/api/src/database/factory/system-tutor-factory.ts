@@ -157,8 +157,8 @@ const fake = async (code = 'TUTOR'): Promise<string> => {
   const tutors = tuples.map(({ tutor }) => tutor);
 
   await Promise.all([
-    User.insertMany<Partial<UserDocument>>(users, { rawResult: true }),
-    Tutor.insertMany<Partial<TutorDocument>>(tutors, { rawResult: true }),
+    User.insertMany<Partial<UserDocument>>(users, { includeResultMetadata: true }),
+    Tutor.insertMany<Partial<TutorDocument>>(tutors, { includeResultMetadata: true }),
     User.updateMany({ _id: alexId }, { $addToSet: { staffs: { $each: users.map(u => u._id) } } }), // add staffs[] to rootUsers[]
   ]);
   return `(${chalk.green(systemTutors.length)} systemTutors) created)`;

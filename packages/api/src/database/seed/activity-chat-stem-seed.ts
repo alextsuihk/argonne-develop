@@ -139,19 +139,19 @@ const seed = async (): Promise<string> => {
   await Promise.all([
     Activity.insertMany<Partial<ActivityDocument>>(
       activities.map(a => ({ ...a, tenant: stemTenant._id, owners: [alexId] })),
-      { rawResult: true },
+      { includeResultMetadata: true },
     ),
     ChatGroup.insertMany<Partial<ChatGroupDocument>>(
       groups.map(group => group.chatGroup),
-      { rawResult: true },
+      { includeResultMetadata: true },
     ),
     Chat.insertMany<Partial<ChatDocument>>(
       groups.map(group => group.chat),
-      { rawResult: true },
+      { includeResultMetadata: true },
     ),
     Content.insertMany<Partial<ContentDocument>>(
       groups.map(group => group.content),
-      { rawResult: true },
+      { includeResultMetadata: true },
     ),
   ]);
   return `(${chalk.green(activities.length)} activities - ${chalk.green(groups.length)} chatGroups created)`;

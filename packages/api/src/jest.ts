@@ -466,7 +466,7 @@ export const jestPutObject = async (
         url: `/${bucketName}/${objectName}`,
         expireAt: addSeconds(Date.now(), DEFAULTS.STORAGE.PRESIGNED_URL_PUT_EXPIRY + 5),
       },
-      { rawResult: true },
+      { includeResultMetadata: true },
     ),
   ]);
 

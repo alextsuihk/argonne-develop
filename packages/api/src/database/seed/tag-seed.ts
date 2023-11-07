@@ -85,7 +85,7 @@ const seed = async (): Promise<string> => {
     },
   ];
 
-  await Tag.insertMany<Partial<TagDocument>>(tags, { rawResult: true });
+  await Tag.insertMany<Partial<TagDocument>>(tags, { includeResultMetadata: true });
   return `(${chalk.green(tags.length)} created)`;
 };
 

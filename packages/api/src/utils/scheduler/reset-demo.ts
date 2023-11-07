@@ -191,7 +191,7 @@ export const resetDemo = async (): Promise<void> => {
     school.save(),
     newTenant.save(),
 
-    Classroom.insertMany(classrooms, { rawResult: true }),
+    Classroom.insertMany(classrooms, { includeResultMetadata: true }),
     log('info', `demo is reset, tenantId: ${newTenant._id}, schoolId: ${school._id}`),
   ]);
 };

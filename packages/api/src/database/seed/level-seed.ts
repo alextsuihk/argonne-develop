@@ -62,7 +62,7 @@ const seed = async (): Promise<string> => {
     return level;
   });
 
-  await Level.insertMany<Partial<LevelDocument>>(levels, { rawResult: true });
+  await Level.insertMany<Partial<LevelDocument>>(levels, { includeResultMetadata: true });
   return `(${chalk.green(levels.length)} created)`;
 };
 
