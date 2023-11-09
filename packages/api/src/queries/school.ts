@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-const SCHOOL_FIELDS = `#graphql
+const SCHOOL_FIELDS = gql`
   ${LOCALE}
   ${REMARK}
   fragment SchoolFields on School {
@@ -45,7 +47,7 @@ const SCHOOL_FIELDS = `#graphql
   }
 `;
 
-export const ADD_SCHOOL = `#graphql
+export const ADD_SCHOOL = gql`
   ${SCHOOL_FIELDS}
   mutation AddSchool($school: SchoolInput!) {
     addSchool(school: $school) {
@@ -54,7 +56,7 @@ export const ADD_SCHOOL = `#graphql
   }
 `;
 
-export const ADD_SCHOOL_REMARK = `#graphql
+export const ADD_SCHOOL_REMARK = gql`
   ${SCHOOL_FIELDS}
   mutation AddSchoolRemark($id: ID!, $remark: String!) {
     addSchoolRemark(id: $id, remark: $remark) {
@@ -63,7 +65,7 @@ export const ADD_SCHOOL_REMARK = `#graphql
   }
 `;
 
-export const GET_SCHOOL = `#graphql
+export const GET_SCHOOL = gql`
   ${SCHOOL_FIELDS}
   query GetSchool($id: ID!) {
     school(id: $id) {
@@ -72,7 +74,7 @@ export const GET_SCHOOL = `#graphql
   }
 `;
 
-export const GET_SCHOOLS = `#graphql
+export const GET_SCHOOLS = gql`
   ${SCHOOL_FIELDS}
   query GetSchools($query: QueryInput) {
     schools(query: $query) {
@@ -81,7 +83,7 @@ export const GET_SCHOOLS = `#graphql
   }
 `;
 
-export const REMOVE_SCHOOL = `#graphql
+export const REMOVE_SCHOOL = gql`
   ${STATUS_RESPONSE}
   mutation RemoveSchool($id: ID!, $remark: String) {
     removeSchool(id: $id, remark: $remark) {
@@ -90,7 +92,7 @@ export const REMOVE_SCHOOL = `#graphql
   }
 `;
 
-export const UPDATE_SCHOOL = `#graphql
+export const UPDATE_SCHOOL = gql`
   ${SCHOOL_FIELDS}
   mutation UpdateSchool($id: ID!, $school: SchoolInput!) {
     updateSchool(id: $id, school: $school) {

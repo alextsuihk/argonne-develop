@@ -15,7 +15,6 @@ import {
   jestTeardown,
 } from '../../jest';
 import type { DistrictDocument } from '../../models/district';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { createUpdateDelete, getMany } = commonTest;

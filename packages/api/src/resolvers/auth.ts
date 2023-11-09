@@ -3,9 +3,9 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import authController from '../controllers/auth';
 import { authServiceToken } from '../controllers/auth-service';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

@@ -2,7 +2,9 @@
  * apollo typeDef: Role
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     role(id: ID!): [String!]!
   }

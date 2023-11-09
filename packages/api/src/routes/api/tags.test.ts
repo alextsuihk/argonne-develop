@@ -19,7 +19,6 @@ import {
   jestTeardown,
 } from '../../jest';
 import type { TagDocument } from '../../models/tag';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { MSG_ENUM } = LOCALE;

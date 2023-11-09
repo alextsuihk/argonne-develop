@@ -7,24 +7,23 @@
 import { LOCALE } from '@argonne/common';
 import type { Types, UpdateQuery } from 'mongoose';
 
-import configLoader from '../config/config-loader';
 import type { AssignmentDocument } from '../models/assignment';
 import Assignment from '../models/assignment';
 import { BookAssignment } from '../models/book';
 import Classroom from '../models/classroom';
 import type { HomeworkDocument } from '../models/homework';
 import Homework from '../models/homework';
-import type { Task } from '../models/job';
+import type { JobDocument } from '../models/job';
 import type { BulkWrite } from '../utils/notify-sync';
 import { notifySync } from '../utils/notify-sync';
 
 const { ASSIGNMENT_HOMEWORK } = LOCALE.DB_ENUM;
 
-const grade = async (task: Task): Promise<string> => {
-  if (task.type !== 'grade' || configLoader.config.mode === 'SATELLITE') return 'IMPOSSIBLE';
+export default async (args: JobDocument['grade']): Promise<string> => {
+  if (!args || !args.tenantId || !args.assignmentId) return 'Internal Format Error';
 
-  const assignment = await Assignment.findByIdAndUpdate(task.assignmentId, { updatedAt: new Date() }).lean(); // touch updatedAt to trigger re-fetch
-  if (!assignment) throw `Assignment ${task.assignmentId} not found`;
+  const assignment = await Assignment.findByIdAndUpdate(args.assignmentId, { updatedAt: new Date() }).lean(); // touch updatedAt to trigger re-fetch
+  if (!assignment) throw `Assignment ${args.assignmentId} not found`;
   if (assignment.bookAssignments.length) return 'Auto Grade presently ONLY supports bookAssignments';
 
   const [bookAssignments, classroom, homeworks] = await Promise.all([
@@ -69,7 +68,7 @@ const grade = async (task: Task): Promise<string> => {
       {
         bulkWrite: {
           assignments: [
-            { updateOne: { filter: { _id: task.assignmentId }, update: { updatedAt: new Date() } } },
+            { updateOne: { filter: { _id: args.assignmentId }, update: { updatedAt: new Date() } } },
           ] satisfies BulkWrite<AssignmentDocument>,
 
           homeworks: homeworkFilterUpdates.map(({ _id, update }) => ({
@@ -82,5 +81,3 @@ const grade = async (task: Task): Promise<string> => {
 
   return `homework total: ${homeworks.length}, correct: ${gradedCorrect}, wrong: ${gradedWrong}`;
 };
-
-export default grade;

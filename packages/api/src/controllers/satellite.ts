@@ -305,7 +305,7 @@ const seedRequest: RequestHandler = async (req, res, next) => {
       createTokens(tenantSystem, { expiresIn: DEFAULTS.SATELLITE.SEED_EXPIRES_IN, ip, ua }), // generate accessToken
       minioClient.putObject(publicBucket, filename, stringifiedData),
       DatabaseEvent.log(null, `/tenants/${tenantId}`, '(re)init satellite', { ip, ua, filename, size }),
-      queueJob({ type: 'removeObject', url: `/${publicBucket}/${filename}`, startAfter }), // schedule to remove the seed JSON file
+      queueJob({ task: 'removeObject', url: `/${publicBucket}/${filename}`, startAfter }), // schedule to remove the seed JSON file
       Tenant.updateOne(
         { _id: tenant._id },
         {

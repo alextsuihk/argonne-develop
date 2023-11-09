@@ -8,6 +8,7 @@ import configLoader from '../../config/config-loader';
 import Question, { QuestionDocument } from '../../models/question';
 import type { TutorDocument } from '../../models/tutor';
 import Tutor from '../../models/tutor';
+import { sleep } from '../helper';
 
 const { DEFAULTS } = configLoader;
 
@@ -58,6 +59,6 @@ export const updateTutorRanking = async () => {
     });
 
     await Tutor.updateOne({ _id: tutor._id }, { rankings });
-    await new Promise<void>(resolve => setTimeout(resolve, 500));
+    await sleep(50);
   }
 };

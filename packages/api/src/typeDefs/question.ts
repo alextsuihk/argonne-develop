@@ -2,7 +2,9 @@
  * apollo typeDef: Question
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     question(id: ID!): Question
     questions(query: QueryInput): [Question!]!

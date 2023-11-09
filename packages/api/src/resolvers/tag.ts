@@ -3,8 +3,8 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import tagController from '../controllers/tag';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

@@ -16,7 +16,6 @@ import {
   jestTeardown,
 } from '../../jest';
 import type { DistrictDocument } from '../../models/district';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { createUpdateDelete, getMany } = commonTest;
@@ -25,7 +24,7 @@ const route = 'assignments';
 
 // Top level of this test suite:
 describe(`${route.toUpperCase()} API Routes`, () => {
-  let adminUser: UserDocument | null;
+  let jest: Awaited<ReturnType<typeof jestSetup>>;
 
   // expected MINIMUM single district format
   const expectedMinFormat = {
@@ -37,9 +36,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     updatedAt: expectedDateFormat(),
   };
 
-  beforeAll(async () => {
-    ({ adminUser } = await jestSetup(['admin']));
-  });
+  beforeAll(async () => (jest = await jestSetup()));
   afterAll(jestTeardown);
 
   test.skip('should pass when getMany & getById', async () =>

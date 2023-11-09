@@ -1,5 +1,6 @@
-export default `#graphql
+import gql from 'graphql-tag';
 
+export default gql`
   directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ENUM_VALUE
 
   enum CacheControlScope {
@@ -86,7 +87,6 @@ export default `#graphql
     secret: String!
     url: String!
   }
-
 
   # standard successful response, code is HTTP status
   type StatusResponse {

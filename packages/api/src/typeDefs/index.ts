@@ -14,6 +14,7 @@ import contentTypes from './content';
 import contributionTypes from './contribution';
 import districtTypes from './district';
 import homeworkTypes from './homework';
+import jobTypes from './job';
 import levelTypes from './level';
 import passwordTypes from './password';
 import presignedUrlTypes from './presigned-url';
@@ -47,6 +48,7 @@ export default [
   contributionTypes,
   districtTypes,
   homeworkTypes,
+  jobTypes,
   levelTypes,
   passwordTypes,
   presignedUrlTypes,

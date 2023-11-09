@@ -2,7 +2,9 @@
  * apollo typeDef: Contact
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     contact(id: ID!): Contact
     contacts: [Contact!]!

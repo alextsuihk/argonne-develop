@@ -7,9 +7,10 @@
 import { LOCALE } from '@argonne/common';
 
 import configLoader from '../config/config-loader';
+import authController from '../controllers/auth';
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
@@ -21,7 +22,6 @@ import {
 } from '../jest';
 import type { TokenDocument } from '../models/token';
 import Token from '../models/token';
-import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   DEREGISTER,
@@ -35,7 +35,6 @@ import {
   REGISTER,
   RENEW_TOKEN,
 } from '../queries/auth';
-import authController from '../controllers/auth';
 
 type AuthSuccessfulResponse = Awaited<ReturnType<typeof authController.register>>;
 

@@ -4,7 +4,9 @@
 
 // TODO: PlaceHolder... https://dev.to/alvarojsnish/graphql-mongodb-the-easy-way-ngc
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     authServiceToken(client: String!): AuthService
     isEmailAvailable(email: String!): Boolean!

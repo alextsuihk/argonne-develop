@@ -3,8 +3,8 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import tenantBindingController from '../controllers/tenant-binding';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

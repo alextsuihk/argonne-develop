@@ -2,8 +2,8 @@
  * Resolver: Homework
  */
 
-import type { ApolloContext } from '../server';
 import homeworkController from '../controllers/homework';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

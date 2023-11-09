@@ -5,9 +5,10 @@
 
 import { LOCALE } from '@argonne/common';
 
+import classroomController from '../controllers/classroom';
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedChatFormatApollo as expectedChatFormat,
   expectedDateFormat,
@@ -30,7 +31,6 @@ import Classroom from '../models/classroom';
 import Content from '../models/content';
 import Level from '../models/level';
 import Tenant from '../models/tenant';
-import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_CLASSROOM,
@@ -56,7 +56,6 @@ import {
   UPDATE_CLASSROOM_TEACHERS,
 } from '../queries/classroom';
 import { randomItem, schoolYear } from '../utils/helper';
-import classroomController from '../controllers/classroom';
 
 type ClassroomDocumentEx = Awaited<ReturnType<typeof classroomController.addContent>>;
 

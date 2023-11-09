@@ -7,8 +7,8 @@ import { LOCALE } from '@argonne/common';
 import { addDays } from 'date-fns';
 
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
@@ -24,7 +24,6 @@ import {
 import Classroom from '../models/classroom';
 import Question, { QuestionDocument } from '../models/question';
 import Subject from '../models/subject';
-import type { UserDocument } from '../models/user';
 import {
   ADD_QUESTION,
   ADD_QUESTION_BID_CONTENT,

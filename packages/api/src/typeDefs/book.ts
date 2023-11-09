@@ -3,7 +3,9 @@
  *
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     book(id: ID!): Book @cacheControl(maxAge: 3600)
     books(query: QueryInput): [Book!]! @cacheControl(maxAge: 3600)

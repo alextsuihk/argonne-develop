@@ -2,7 +2,9 @@
  * apollo typeDef: Tenant
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     tenants(query: QueryInput): [Tenant!]! @cacheControl(maxAge: 3600)
   }

@@ -8,7 +8,7 @@
 import { LOCALE, yupSchema } from '@argonne/common';
 import type { Request, RequestHandler } from 'express';
 import type { UpdateQuery } from 'mongoose';
-import mongoose, { mongo } from 'mongoose';
+import mongoose from 'mongoose';
 
 import DatabaseEvent from '../models/event/database';
 import School from '../models/school';
@@ -98,7 +98,7 @@ const addRemark = async (req: Request, args: unknown): Promise<TenantDocument> =
  * Add Stash
  */
 const addStash = async (req: Request, args: unknown): Promise<TenantDocument> => {
-  const { userId, userLocale, userRoles } = auth(req);
+  const { userId } = auth(req);
 
   const { id, secret, title, url } = await idSchema.concat(stashSchema).validate(args);
   const [original] = await Promise.all([Tenant.findByTenantId(id, userId), storage.validateObject(url, userId)]); // only tenantAdmin could addStash
@@ -285,7 +285,7 @@ const removeById: RequestHandler<{ id: string }> = async (req, res, next) => {
  * Remove Stash
  */
 const removeStash = async (req: Request, args: unknown): Promise<TenantDocument> => {
-  const { userId, userLocale, userRoles } = auth(req);
+  const { userId } = auth(req);
 
   const { id, subId } = await idSchema.concat(subIdSchema).validate(args);
   const original = await Tenant.findByTenantId(id, userId); // only tenantAdmin could removeStash

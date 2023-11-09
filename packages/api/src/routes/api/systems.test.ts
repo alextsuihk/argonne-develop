@@ -11,10 +11,9 @@ import request from 'supertest';
 
 import app from '../../app';
 import { jestSetup, jestTeardown, mongoId } from '../../jest';
-import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
-import token, { API_KEY_TOKEN_PREFIX } from '../../utils/token';
 import { sleep } from '../../utils/helper';
+import token, { API_KEY_TOKEN_PREFIX } from '../../utils/token';
 
 const { MSG_ENUM } = LOCALE;
 

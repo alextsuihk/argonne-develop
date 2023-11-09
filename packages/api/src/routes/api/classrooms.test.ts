@@ -5,8 +5,8 @@
 
 import { LOCALE } from '@argonne/common';
 
-import type { ClassroomDocumentEx } from '../../controllers/classroom';
 import {
+  type ConvertObjectIdToString,
   expectedChatFormat,
   expectedIdFormat,
   expectedMember,
@@ -23,14 +23,21 @@ import {
   prob,
 } from '../../jest';
 import Book from '../../models/book';
+import type { ChatDocument } from '../../models/chat';
+import type { ClassroomDocument } from '../../models/classroom';
 import Classroom from '../../models/classroom';
 import Content from '../../models/content';
 import Level from '../../models/level';
 import Tenant from '../../models/tenant';
-import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import { randomItem, schoolYear } from '../../utils/helper';
 import commonTest from './rest-api-test';
+
+type ClassroomDocumentEx = Omit<ClassroomDocument, 'chats'> & {
+  chats: (ConvertObjectIdToString<Omit<ChatDocument, 'members'>> & {
+    members: ConvertObjectIdToString<ChatDocument['members'][0]>[];
+  })[];
+};
 
 const { CHAT } = LOCALE.DB_ENUM;
 const { createUpdateDelete, getMany, getUnauthenticated } = commonTest;
@@ -368,7 +375,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
 
     const classroomId = classroom!._id.toString();
-    const chatId = classroom!.chats[0]._id.toString();
+    const chatId = classroom!.chats[0]._id!.toString();
 
     const classroom2 = await createUpdateDelete<ClassroomDocumentEx>(
       route,

@@ -29,7 +29,6 @@ import {
 } from '../../jest';
 import School from '../../models/school';
 import { TenantDocument } from '../../models/tenant';
-import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 

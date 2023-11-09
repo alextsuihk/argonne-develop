@@ -17,7 +17,7 @@ import contactRoutes from './api/contacts';
 import contentRoutes from './api/contents';
 import districtRoutes from './api/districts';
 import homeworkRoutes from './api/homeworks';
-// import jobRoutes from './api/jobs'; // TODO:
+import jobRoutes from './api/jobs';
 import levelRoutes from './api/levels';
 import logRoutes from './api/logs';
 import passwordRoutes from './api/password';
@@ -63,7 +63,7 @@ export default (app: Application): void => {
       app.use('/api/contacts', contactRoutes);
       app.use('/api/contents', contentRoutes);
       app.use('/api/homeworks', homeworkRoutes);
-      // app.use('/api/jobs', jobRoutes); //TODO
+      app.use('/api/jobs', jobRoutes);
       app.use('/api/password', passwordRoutes);
       app.use('/api/presigned-urls', presignedUrlRoutes);
       app.use('/api/questions', questionRoutes);

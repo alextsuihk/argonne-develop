@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-const LEVEL_FIELDS = `#graphql
+const LEVEL_FIELDS = gql`
   ${LOCALE}
   ${REMARK}
   fragment LevelFields on Level {
@@ -26,7 +28,7 @@ const LEVEL_FIELDS = `#graphql
   }
 `;
 
-export const ADD_LEVEL = `#graphql
+export const ADD_LEVEL = gql`
   ${LEVEL_FIELDS}
   mutation AddLevel($level: LevelInput!) {
     addLevel(level: $level) {
@@ -35,7 +37,7 @@ export const ADD_LEVEL = `#graphql
   }
 `;
 
-export const ADD_LEVEL_REMARK = `#graphql
+export const ADD_LEVEL_REMARK = gql`
   ${LEVEL_FIELDS}
   mutation AddLevelRemark($id: ID!, $remark: String!) {
     addLevelRemark(id: $id, remark: $remark) {
@@ -44,7 +46,7 @@ export const ADD_LEVEL_REMARK = `#graphql
   }
 `;
 
-export const GET_LEVEL = `#graphql
+export const GET_LEVEL = gql`
   ${LEVEL_FIELDS}
   query GetLevel($id: ID!) {
     level(id: $id) {
@@ -53,7 +55,7 @@ export const GET_LEVEL = `#graphql
   }
 `;
 
-export const GET_LEVELS = `#graphql
+export const GET_LEVELS = gql`
   ${LEVEL_FIELDS}
   query GetLevels($query: QueryInput) {
     levels(query: $query) {
@@ -62,7 +64,7 @@ export const GET_LEVELS = `#graphql
   }
 `;
 
-export const REMOVE_LEVEL = `#graphql
+export const REMOVE_LEVEL = gql`
   ${STATUS_RESPONSE}
   mutation RemoveLevel($id: ID!, $remark: String) {
     removeLevel(id: $id, remark: $remark) {
@@ -71,7 +73,7 @@ export const REMOVE_LEVEL = `#graphql
   }
 `;
 
-export const UPDATE_LEVEL = `#graphql
+export const UPDATE_LEVEL = gql`
   ${LEVEL_FIELDS}
   mutation UpdateLevel($id: ID!, $level: LevelInput!) {
     updateLevel(id: $id, level: $level) {

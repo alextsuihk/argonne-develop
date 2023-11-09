@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-const TYPOGRAPHY_FIELDS = `#graphql
+const TYPOGRAPHY_FIELDS = gql`
   ${LOCALE}
   ${REMARK}
   fragment TypographyFields on Typography {
@@ -38,7 +40,7 @@ const TYPOGRAPHY_FIELDS = `#graphql
   }
 `;
 
-export const ADD_CUSTOM_TYPOGRAPHY = `#graphql
+export const ADD_CUSTOM_TYPOGRAPHY = gql`
   ${TYPOGRAPHY_FIELDS}
   mutation AddCustomTypography($id: ID!, $tenantId: String!, $custom: TypographyCustomInput!) {
     addCustomTypography(id: $id, tenantId: $tenantId, custom: $custom) {
@@ -47,7 +49,7 @@ export const ADD_CUSTOM_TYPOGRAPHY = `#graphql
   }
 `;
 
-export const ADD_TYPOGRAPHY = `#graphql
+export const ADD_TYPOGRAPHY = gql`
   ${TYPOGRAPHY_FIELDS}
   mutation AddTypography($typography: TypographyInput!) {
     addTypography(typography: $typography) {
@@ -56,7 +58,7 @@ export const ADD_TYPOGRAPHY = `#graphql
   }
 `;
 
-export const ADD_TYPOGRAPHY_REMARK = `#graphql
+export const ADD_TYPOGRAPHY_REMARK = gql`
   ${TYPOGRAPHY_FIELDS}
   mutation AddTypographyRemark($id: ID!, $remark: String!) {
     addTypographyRemark(id: $id, remark: $remark) {
@@ -65,7 +67,7 @@ export const ADD_TYPOGRAPHY_REMARK = `#graphql
   }
 `;
 
-export const GET_TYPOGRAPHY = `#graphql
+export const GET_TYPOGRAPHY = gql`
   ${TYPOGRAPHY_FIELDS}
   query GetTypography($id: ID!) {
     typography(id: $id) {
@@ -74,7 +76,7 @@ export const GET_TYPOGRAPHY = `#graphql
   }
 `;
 
-export const GET_TYPOGRAPHIES = `#graphql
+export const GET_TYPOGRAPHIES = gql`
   ${TYPOGRAPHY_FIELDS}
   query GetTypographies($query: QueryInput) {
     typographies(query: $query) {
@@ -83,7 +85,7 @@ export const GET_TYPOGRAPHIES = `#graphql
   }
 `;
 
-export const REMOVE_CUSTOM_TYPOGRAPHY = `#graphql
+export const REMOVE_CUSTOM_TYPOGRAPHY = gql`
   ${TYPOGRAPHY_FIELDS}
   mutation RemoveCustomTypography($id: ID!, $tenantId: String!) {
     removeCustomTypography(id: $id, tenantId: $tenantId) {
@@ -92,7 +94,7 @@ export const REMOVE_CUSTOM_TYPOGRAPHY = `#graphql
   }
 `;
 
-export const REMOVE_TYPOGRAPHY = `#graphql
+export const REMOVE_TYPOGRAPHY = gql`
   ${STATUS_RESPONSE}
   mutation RemoveTypography($id: ID!, $remark: String) {
     removeTypography(id: $id, remark: $remark) {
@@ -101,7 +103,7 @@ export const REMOVE_TYPOGRAPHY = `#graphql
   }
 `;
 
-export const UPDATE_TYPOGRAPHY = `#graphql
+export const UPDATE_TYPOGRAPHY = gql`
   ${TYPOGRAPHY_FIELDS}
   mutation UpdateTypography($id: ID!, $typography: TypographyInput!) {
     updateTypography(id: $id, typography: $typography) {

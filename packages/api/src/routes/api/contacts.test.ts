@@ -8,7 +8,6 @@ import request from 'supertest';
 
 import app from '../../app';
 import { expectedDateFormat, expectedIdFormat, FAKE, jestSetup, jestTeardown, prob, shuffle } from '../../jest';
-import type { UserDocument } from '../../models/user';
 import User, { activeCond } from '../../models/user';
 import commonTest from './rest-api-test';
 

@@ -2,7 +2,9 @@
  * apollo typeDef: Tutor-Inverse-Ranking
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     tutorInverseRanking(id: ID!): TutorInverseRanking
     tutorInverseRankings: [TutorInverseRanking!]!

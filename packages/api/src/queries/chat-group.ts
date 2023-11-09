@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { CHAT, STATUS_RESPONSE } from './common';
 
-const CHAT_GROUP_FIELDS = `#graphql
+const CHAT_GROUP_FIELDS = gql`
   ${CHAT}
   fragment ChatGroupFields on ChatGroup {
     _id
@@ -30,7 +32,7 @@ const CHAT_GROUP_FIELDS = `#graphql
   }
 `;
 
-export const ADD_CHAT_GROUP = `#graphql
+export const ADD_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation AddChatGroup(
     $tenantId: String!
@@ -53,7 +55,7 @@ export const ADD_CHAT_GROUP = `#graphql
   }
 `;
 
-export const ADD_CHAT_GROUP_CONTENT = `#graphql
+export const ADD_CHAT_GROUP_CONTENT = gql`
   ${CHAT_GROUP_FIELDS}
   mutation AddChatGroupContent($id: ID!, $chatId: String!, $content: String!, $visibleAfter: DateInput) {
     addChatGroupContent(id: $id, chatId: $chatId, content: $content, visibleAfter: $visibleAfter) {
@@ -62,7 +64,7 @@ export const ADD_CHAT_GROUP_CONTENT = `#graphql
   }
 `;
 
-export const ADD_CHAT_GROUP_CONTENT_WITH_NEW_CHAT = `#graphql
+export const ADD_CHAT_GROUP_CONTENT_WITH_NEW_CHAT = gql`
   ${CHAT_GROUP_FIELDS}
   mutation AddChatGroupContentWithNewChat($id: ID!, $content: String!, $visibleAfter: DateInput) {
     addChatGroupContentWithNewChat(id: $id, content: $content, visibleAfter: $visibleAfter) {
@@ -71,7 +73,7 @@ export const ADD_CHAT_GROUP_CONTENT_WITH_NEW_CHAT = `#graphql
   }
 `;
 
-export const ATTACH_CHAT_GROUP_TO_CHAT_GROUP = `#graphql
+export const ATTACH_CHAT_GROUP_TO_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation AttachChatGroupChatToChatGroup($id: ID!, $chatId: String!, $sourceId: String!) {
     attachChatGroupChatToChatGroup(id: $id, chatId: $chatId, sourceId: $sourceId) {
@@ -80,7 +82,7 @@ export const ATTACH_CHAT_GROUP_TO_CHAT_GROUP = `#graphql
   }
 `;
 
-export const BLOCK_CHAT_GROUP_CONTENT = `#graphql
+export const BLOCK_CHAT_GROUP_CONTENT = gql`
   ${CHAT_GROUP_FIELDS}
   mutation BlockChatGroupContent($id: ID!, $chatId: String!, $contentId: String!, $remark: String) {
     blockChatGroupContent(id: $id, chatId: $chatId, contentId: $contentId, remark: $remark) {
@@ -89,7 +91,7 @@ export const BLOCK_CHAT_GROUP_CONTENT = `#graphql
   }
 `;
 
-export const CLEAR_CHAT_GROUP_CHAT_FLAG = `#graphql
+export const CLEAR_CHAT_GROUP_CHAT_FLAG = gql`
   ${CHAT_GROUP_FIELDS}
   mutation ClearChatGroupChatFlag($id: ID!, $chatId: String!, $flag: String!) {
     clearChatGroupChatFlag(id: $id, chatId: $chatId, flag: $flag) {
@@ -98,7 +100,7 @@ export const CLEAR_CHAT_GROUP_CHAT_FLAG = `#graphql
   }
 `;
 
-export const GET_CHAT_GROUP = `#graphql
+export const GET_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   query GetChatGroup($id: ID!) {
     chatGroup(id: $id) {
@@ -107,7 +109,7 @@ export const GET_CHAT_GROUP = `#graphql
   }
 `;
 
-export const GET_CHAT_GROUPS = `#graphql
+export const GET_CHAT_GROUPS = gql`
   ${CHAT_GROUP_FIELDS}
   query GetChatGroups($query: QueryInput) {
     chatGroups(query: $query) {
@@ -116,7 +118,7 @@ export const GET_CHAT_GROUPS = `#graphql
   }
 `;
 
-export const JOIN_BOOK_CHAT_GROUP = `#graphql
+export const JOIN_BOOK_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation JoinBookChatGroup($id: ID!) {
     joinBookChatGroup(id: $id) {
@@ -125,7 +127,7 @@ export const JOIN_BOOK_CHAT_GROUP = `#graphql
   }
 `;
 
-export const JOIN_CHAT_GROUP = `#graphql
+export const JOIN_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation JoinChatGroup($id: ID!) {
     joinChatGroup(id: $id) {
@@ -134,7 +136,7 @@ export const JOIN_CHAT_GROUP = `#graphql
   }
 `;
 
-export const LEAVE_CHAT_GROUP = `#graphql
+export const LEAVE_CHAT_GROUP = gql`
   ${STATUS_RESPONSE}
   mutation LeaveChatGroup($id: ID!) {
     leaveChatGroup(id: $id) {
@@ -143,7 +145,7 @@ export const LEAVE_CHAT_GROUP = `#graphql
   }
 `;
 
-export const RECALL_CHAT_GROUP_CONTENT = `#graphql
+export const RECALL_CHAT_GROUP_CONTENT = gql`
   ${CHAT_GROUP_FIELDS}
   mutation RecallChatGroupContent($id: ID!, $chatId: String!, $contentId: String!) {
     recallChatGroupContent(id: $id, chatId: $chatId, contentId: $contentId) {
@@ -152,7 +154,7 @@ export const RECALL_CHAT_GROUP_CONTENT = `#graphql
   }
 `;
 
-export const SET_CHAT_GROUP_CHAT_FLAG = `#graphql
+export const SET_CHAT_GROUP_CHAT_FLAG = gql`
   ${CHAT_GROUP_FIELDS}
   mutation SetChatGroupChatFlag($id: ID!, $chatId: String!, $flag: String!) {
     setChatGroupChatFlag(id: $id, chatId: $chatId, flag: $flag) {
@@ -161,7 +163,7 @@ export const SET_CHAT_GROUP_CHAT_FLAG = `#graphql
   }
 `;
 
-export const SHARE_QUESTION_TO_CHAT_GROUP = `#graphql
+export const SHARE_QUESTION_TO_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation ShareQuestionToChatGroup($id: ID!, $sourceId: String!) {
     shareQuestionToChatGroup(id: $id, sourceId: $sourceId) {
@@ -170,7 +172,7 @@ export const SHARE_QUESTION_TO_CHAT_GROUP = `#graphql
   }
 `;
 
-export const TO_ADMIN_CHAT_GROUP = `#graphql
+export const TO_ADMIN_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation ToAdminChatGroup($content: String!) {
     toAdminChatGroup(content: $content) {
@@ -179,7 +181,7 @@ export const TO_ADMIN_CHAT_GROUP = `#graphql
   }
 `;
 
-export const TO_ALEX_CHAT_GROUP = `#graphql
+export const TO_ALEX_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation ToAlexChatGroup($content: String!) {
     toAlexChatGroup(content: $content) {
@@ -188,7 +190,7 @@ export const TO_ALEX_CHAT_GROUP = `#graphql
   }
 `;
 
-export const TO_TENANT_ADMINS_CHAT_GROUP = `#graphql
+export const TO_TENANT_ADMINS_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation ToTenantAdminsChatGroup($tenantId: String!, $content: String!) {
     toTenantAdminsChatGroup(tenantId: $tenantId, content: $content) {
@@ -197,7 +199,7 @@ export const TO_TENANT_ADMINS_CHAT_GROUP = `#graphql
   }
 `;
 
-export const TO_TENANT_COUNSELORS_CHAT_GROUP = `#graphql
+export const TO_TENANT_COUNSELORS_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation ToTenantCounselorsChatGroup($tenantId: String!, $content: String!) {
     toTenantCounselorsChatGroup(tenantId: $tenantId, content: $content) {
@@ -206,7 +208,7 @@ export const TO_TENANT_COUNSELORS_CHAT_GROUP = `#graphql
   }
 `;
 
-export const TO_TENANT_SUPPORTS_CHAT_GROUP = `#graphql
+export const TO_TENANT_SUPPORTS_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation ToTenantSupportsChatGroup($tenantId: String!, $content: String!) {
     toTenantSupportsChatGroup(tenantId: $tenantId, content: $content) {
@@ -215,7 +217,7 @@ export const TO_TENANT_SUPPORTS_CHAT_GROUP = `#graphql
   }
 `;
 
-export const UPDATE_CHAT_GROUP = `#graphql
+export const UPDATE_CHAT_GROUP = gql`
   ${CHAT_GROUP_FIELDS}
   mutation UpdateChatGroup($id: ID!, $title: String, $description: String, $membership: String!, $logoUrl: String) {
     updateChatGroup(id: $id, title: $title, description: $description, membership: $membership, logoUrl: $logoUrl) {
@@ -224,7 +226,7 @@ export const UPDATE_CHAT_GROUP = `#graphql
   }
 `;
 
-export const UPDATE_CHAT_GROUP_ADMINS = `#graphql
+export const UPDATE_CHAT_GROUP_ADMINS = gql`
   ${CHAT_GROUP_FIELDS}
   mutation UpdateChatGroupAdmins($id: ID!, $userIds: [String!]!) {
     updateChatGroupAdmins(id: $id, userIds: $userIds) {
@@ -233,7 +235,7 @@ export const UPDATE_CHAT_GROUP_ADMINS = `#graphql
   }
 `;
 
-export const UPDATE_CHAT_GROUP_CHAT_LAST_VIEWED_AT = `#graphql
+export const UPDATE_CHAT_GROUP_CHAT_LAST_VIEWED_AT = gql`
   ${CHAT_GROUP_FIELDS}
   mutation UpdateChatGroupChatLastViewedAt($id: ID!, $chatId: String!, $timestamp: DateInput) {
     updateChatGroupChatLastViewedAt(id: $id, chatId: $chatId, timestamp: $timestamp) {
@@ -242,7 +244,7 @@ export const UPDATE_CHAT_GROUP_CHAT_LAST_VIEWED_AT = `#graphql
   }
 `;
 
-export const UPDATE_CHAT_GROUP_CHAT_TITLE = `#graphql
+export const UPDATE_CHAT_GROUP_CHAT_TITLE = gql`
   ${CHAT_GROUP_FIELDS}
   mutation UpdateChatGroupChatTitle($id: ID!, $chatId: String!, $title: String) {
     updateChatGroupChatTitle(id: $id, chatId: $chatId, title: $title) {
@@ -251,7 +253,7 @@ export const UPDATE_CHAT_GROUP_CHAT_TITLE = `#graphql
   }
 `;
 
-export const UPDATE_CHAT_GROUP_USERS = `#graphql
+export const UPDATE_CHAT_GROUP_USERS = gql`
   ${CHAT_GROUP_FIELDS}
   mutation UpdateChatGroupUsers($id: ID!, $userIds: [String!]!) {
     updateChatGroupUsers(id: $id, userIds: $userIds) {

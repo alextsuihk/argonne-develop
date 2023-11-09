@@ -50,6 +50,7 @@
     "nodemailer": "^6.9.7",
     "sharp": "^0.32.6",
     "socket.io": "4.7.2",
+    "socket.io-adapter": "^2.5.2",
     "socket.io-client": "^4.7.2",
     "supertest": "^6.3.3",
     "twilio": "^4.19.0",

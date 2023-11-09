@@ -4,13 +4,13 @@
  */
 
 import {
-  FAKE,
-  FAKE2_LOCALE,
-  FAKE_LOCALE,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
+  FAKE,
+  FAKE_LOCALE,
+  FAKE2_LOCALE,
   jestPutObject,
   jestRemoveObject,
   jestSetup,

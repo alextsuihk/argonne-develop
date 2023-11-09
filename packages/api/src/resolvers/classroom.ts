@@ -2,8 +2,8 @@
  * Resolver: Classroom
  */
 
-import type { ApolloContext } from '../server';
 import classroomController from '../controllers/classroom';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

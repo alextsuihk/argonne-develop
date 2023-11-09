@@ -2,7 +2,9 @@
  * apollo typeDef: TenantBind
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     tenantToken(tenantId: String!, expiresIn: Int): TokenWithExpireAt!
   }

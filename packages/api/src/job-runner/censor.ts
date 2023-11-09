@@ -13,7 +13,7 @@ import type { ChatGroupDocument } from '../models/chat-group';
 import ChatGroup from '../models/chat-group';
 import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
-import type { Task } from '../models/job';
+import type { JobDocument } from '../models/job';
 import type { QuestionDocument } from '../models/question';
 import Question from '../models/question';
 import Tenant from '../models/tenant';
@@ -33,10 +33,10 @@ const chatMsg = (link: string, data: string) => ({
   zhHK: `你有一則發文 "${data}" 可能含有不當詞語 [${link}] 。`,
 });
 
-const censor = async (task: Task): Promise<string> => {
-  if (task.type !== 'censor') return 'IMPOSSIBLE';
+export default async (args: JobDocument['censor']): Promise<string> => {
+  if (!args || !args.tenantId || !args.userLocale || !args.parent) return 'Internal Format Error';
 
-  const { tenantId, userLocale, parent, contentId } = task;
+  const { tenantId, userLocale, parent, contentId } = args;
 
   const model = parent.startsWith('/chatGroups/')
     ? 'chatGroups'
@@ -111,5 +111,3 @@ const censor = async (task: Task): Promise<string> => {
 
   return `Violation Words: ${violations.join(',')}`;
 };
-
-export default censor;

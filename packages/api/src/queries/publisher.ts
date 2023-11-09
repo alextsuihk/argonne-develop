@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-const PUBLISHER_FIELDS = `#graphql
+const PUBLISHER_FIELDS = gql`
   ${LOCALE}
   ${REMARK}
   fragment PublisherFields on Publisher {
@@ -28,7 +30,7 @@ const PUBLISHER_FIELDS = `#graphql
   }
 `;
 
-export const ADD_PUBLISHER = `#graphql
+export const ADD_PUBLISHER = gql`
   ${PUBLISHER_FIELDS}
   mutation AddPublisher($publisher: PublisherInput!) {
     addPublisher(publisher: $publisher) {
@@ -37,7 +39,7 @@ export const ADD_PUBLISHER = `#graphql
   }
 `;
 
-export const ADD_PUBLISHER_REMARK = `#graphql
+export const ADD_PUBLISHER_REMARK = gql`
   ${PUBLISHER_FIELDS}
   mutation AddPublisherRemark($id: ID!, $remark: String!) {
     addPublisherRemark(id: $id, remark: $remark) {
@@ -46,7 +48,7 @@ export const ADD_PUBLISHER_REMARK = `#graphql
   }
 `;
 
-export const GET_PUBLISHER = `#graphql
+export const GET_PUBLISHER = gql`
   ${PUBLISHER_FIELDS}
   query GetPublisher($id: ID!) {
     publisher(id: $id) {
@@ -55,7 +57,7 @@ export const GET_PUBLISHER = `#graphql
   }
 `;
 
-export const GET_PUBLISHERS = `#graphql
+export const GET_PUBLISHERS = gql`
   ${PUBLISHER_FIELDS}
   query GetPublishers($query: QueryInput) {
     publishers(query: $query) {
@@ -64,7 +66,7 @@ export const GET_PUBLISHERS = `#graphql
   }
 `;
 
-export const REMOVE_PUBLISHER = `#graphql
+export const REMOVE_PUBLISHER = gql`
   ${STATUS_RESPONSE}
   mutation RemovePublisher($id: ID!, $remark: String) {
     removePublisher(id: $id, remark: $remark) {
@@ -73,7 +75,7 @@ export const REMOVE_PUBLISHER = `#graphql
   }
 `;
 
-export const UPDATE_PUBLISHER = `#graphql
+export const UPDATE_PUBLISHER = gql`
   ${PUBLISHER_FIELDS}
   mutation UpdatePublisher($id: ID!, $publisher: PublisherInput!) {
     updatePublisher(id: $id, publisher: $publisher) {

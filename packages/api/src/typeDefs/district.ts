@@ -2,7 +2,9 @@
  * apollo typeDef: District
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     district(id: ID!): District @cacheControl(maxAge: 3600)
     districts(query: QueryInput): [District!]! @cacheControl(maxAge: 3600)

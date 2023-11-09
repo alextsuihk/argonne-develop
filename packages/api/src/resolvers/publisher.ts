@@ -3,8 +3,8 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import publisherController from '../controllers/publisher';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

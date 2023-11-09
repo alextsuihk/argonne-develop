@@ -8,8 +8,8 @@ import 'jest-extended';
 import { CONTENT_PREFIX, LOCALE } from '@argonne/common';
 
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedBookAssignmentFormat,
   expectedContributionFormat,
@@ -33,7 +33,6 @@ import Level from '../models/level';
 import Publisher from '../models/publisher';
 import School from '../models/school';
 import Subject from '../models/subject';
-import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_BOOK,

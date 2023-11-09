@@ -140,12 +140,13 @@ const getStatus = async (req: Request) => {
         status: JOB.STATUS.COMPLETED,
         title: 'JEST',
         progress: 100,
+        task: 'censor', // any valid enum will work
         startAfter: new Date(),
         startedAt: new Date(),
         completedAt: new Date(),
         result: 'JEST mongoDB test',
       });
-      await Job.findByIdAndDelete(job); // convert to a true promise
+      await job.deleteOne();
       return { state, server: 'up', pool, timeElapsed: Date.now() - startedAt };
     } catch (error) {
       await log('error', '/api/systems/system:checkMongo error', error);

@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-const DISTRICT_FIELDS = `#graphql
+const DISTRICT_FIELDS = gql`
   ${LOCALE}
   ${REMARK}
   fragment DistrictFields on District {
@@ -26,7 +28,7 @@ const DISTRICT_FIELDS = `#graphql
   }
 `;
 
-export const ADD_DISTRICT = `#graphql
+export const ADD_DISTRICT = gql`
   ${DISTRICT_FIELDS}
   mutation AddDistrict($district: DistrictInput!) {
     addDistrict(district: $district) {
@@ -35,7 +37,7 @@ export const ADD_DISTRICT = `#graphql
   }
 `;
 
-export const ADD_DISTRICT_REMARK = `#graphql
+export const ADD_DISTRICT_REMARK = gql`
   ${DISTRICT_FIELDS}
   mutation AddDistrictRemark($id: ID!, $remark: String!) {
     addDistrictRemark(id: $id, remark: $remark) {
@@ -44,7 +46,7 @@ export const ADD_DISTRICT_REMARK = `#graphql
   }
 `;
 
-export const GET_DISTRICT = `#graphql
+export const GET_DISTRICT = gql`
   ${DISTRICT_FIELDS}
   query GetDistrict($id: ID!) {
     district(id: $id) {
@@ -53,7 +55,7 @@ export const GET_DISTRICT = `#graphql
   }
 `;
 
-export const GET_DISTRICTS = `#graphql
+export const GET_DISTRICTS = gql`
   ${DISTRICT_FIELDS}
   query GetDistricts($query: QueryInput) {
     districts(query: $query) {
@@ -62,7 +64,7 @@ export const GET_DISTRICTS = `#graphql
   }
 `;
 
-export const REMOVE_DISTRICT = `#graphql
+export const REMOVE_DISTRICT = gql`
   ${STATUS_RESPONSE}
   mutation RemoveDistrict($id: ID!, $remark: String) {
     removeDistrict(id: $id, remark: $remark) {
@@ -71,7 +73,7 @@ export const REMOVE_DISTRICT = `#graphql
   }
 `;
 
-export const UPDATE_DISTRICT = `#graphql
+export const UPDATE_DISTRICT = gql`
   ${DISTRICT_FIELDS}
   mutation UpdateDistrict($id: ID!, $district: DistrictInput!) {
     updateDistrict(id: $id, district: $district) {

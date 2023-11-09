@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-const TAG_FIELDS = `#graphql
+const TAG_FIELDS = gql`
   ${LOCALE}
   ${REMARK}
   fragment TagFields on Tag {
@@ -26,7 +28,7 @@ const TAG_FIELDS = `#graphql
   }
 `;
 
-export const ADD_TAG = `#graphql
+export const ADD_TAG = gql`
   ${TAG_FIELDS}
   mutation AddTag($tag: TagInput!) {
     addTag(tag: $tag) {
@@ -35,7 +37,7 @@ export const ADD_TAG = `#graphql
   }
 `;
 
-export const ADD_TAG_REMARK = `#graphql
+export const ADD_TAG_REMARK = gql`
   ${TAG_FIELDS}
   mutation AddTagRemark($id: ID!, $remark: String!) {
     addTagRemark(id: $id, remark: $remark) {
@@ -44,7 +46,7 @@ export const ADD_TAG_REMARK = `#graphql
   }
 `;
 
-export const GET_TAG = `#graphql
+export const GET_TAG = gql`
   ${TAG_FIELDS}
   query GetTag($id: ID!) {
     tag(id: $id) {
@@ -53,7 +55,7 @@ export const GET_TAG = `#graphql
   }
 `;
 
-export const GET_TAGS = `#graphql
+export const GET_TAGS = gql`
   ${TAG_FIELDS}
   query GetTags($query: QueryInput) {
     tags(query: $query) {
@@ -62,7 +64,7 @@ export const GET_TAGS = `#graphql
   }
 `;
 
-export const REMOVE_TAG = `#graphql
+export const REMOVE_TAG = gql`
   ${STATUS_RESPONSE}
   mutation RemoveTag($id: ID!, $remark: String) {
     removeTag(id: $id, remark: $remark) {
@@ -71,7 +73,7 @@ export const REMOVE_TAG = `#graphql
   }
 `;
 
-export const UPDATE_TAG = `#graphql
+export const UPDATE_TAG = gql`
   ${TAG_FIELDS}
   mutation UpdateTag($id: ID!, $tag: TagInput!) {
     updateTag(id: $id, tag: $tag) {

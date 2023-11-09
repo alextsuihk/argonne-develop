@@ -9,9 +9,18 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 
 import { isDevMode, isProdMode, isTestMode } from '../utils/environment';
-import { randomString, terminate } from '../utils/helper';
+import { randomString } from '../utils/helper';
 
 type MODE = 'HUB' | 'SATELLITE';
+
+/**
+ * Terminate application
+ */
+const terminate = (message: string): never => {
+  /* eslint-disable-next-line no-console */
+  console.error(message);
+  process.exit(1);
+};
 
 // override when isDevMode & isTestMode
 const envFile = path.join(__dirname, '..', '..', 'dev.env');

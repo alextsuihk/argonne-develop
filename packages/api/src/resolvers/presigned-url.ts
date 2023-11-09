@@ -3,8 +3,8 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import presignedUrlController from '../controllers/presigned-url';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

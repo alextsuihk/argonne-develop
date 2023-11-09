@@ -2,7 +2,9 @@
  * Apollo TypeDef: Content
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     contents(token: String!, ids: [String!], query: QueryInput): Content
   }

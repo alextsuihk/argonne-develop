@@ -8,8 +8,8 @@ import 'jest-extended';
 import { LOCALE } from '@argonne/common';
 
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,

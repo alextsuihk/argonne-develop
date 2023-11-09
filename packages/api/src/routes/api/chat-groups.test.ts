@@ -5,8 +5,8 @@
 
 import { LOCALE } from '@argonne/common';
 
-import type { ChatGroupDocumentEx } from '../../controllers/chat-group';
 import {
+  type ConvertObjectIdToString,
   expectedChatFormat,
   expectedDateFormat,
   expectedIdFormat,
@@ -24,11 +24,19 @@ import {
   randomItem,
 } from '../../jest';
 import Book from '../../models/book';
+import type { ChatDocument } from '../../models/chat';
+import type { ChatGroupDocument } from '../../models/chat-group';
 import ChatGroup from '../../models/chat-group';
 import Level from '../../models/level';
 import Tenant from '../../models/tenant';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
+
+type ChatGroupDocumentEx = Omit<ChatGroupDocument, 'chats'> & {
+  chats: (ConvertObjectIdToString<Omit<ChatDocument, 'members'>> & {
+    members: ConvertObjectIdToString<ChatDocument['members'][0]>[];
+  })[];
+};
 
 const { createUpdateDelete, getById, getMany, getUnauthenticated } = commonTest;
 const { MSG_ENUM } = LOCALE;
@@ -525,7 +533,7 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     );
 
     const chatGroupId = chatGroup!._id.toString();
-    const chatId = chatGroup!.chats[0]!._id.toString();
+    const chatId = chatGroup!.chats[0]!._id!.toString();
 
     const chatGroup2 = await createUpdateDelete<ChatGroupDocumentEx>(
       route,

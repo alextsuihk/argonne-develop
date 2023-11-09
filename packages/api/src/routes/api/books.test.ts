@@ -6,7 +6,6 @@
 
 import { CONTENT_PREFIX } from '@argonne/common';
 
-import type { BookDocumentEx } from '../../controllers/book';
 import {
   expectedBookAssignmentFormat,
   expectedContributionFormat,
@@ -23,13 +22,19 @@ import {
   randomItem,
   randomItems,
 } from '../../jest';
+import type { BookAssignmentDocument, BookDocument } from '../../models/book';
 import Book, { BookAssignment } from '../../models/book';
+import type { ContributionDocument } from '../../models/contribution';
 import Level from '../../models/level';
 import Publisher from '../../models/publisher';
 import School from '../../models/school';
 import Subject from '../../models/subject';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
+
+type BookDocumentEx = Omit<BookDocument, 'assignments' | 'supplements'> & {
+  assignments: (Omit<BookAssignmentDocument, 'contribution'> & { contribution: ContributionDocument })[];
+  supplements: (Omit<BookDocument['supplements'], 'contribution'> & { contribution: ContributionDocument })[];
+};
 
 const { createUpdateDelete, getMany, getById } = commonTest;
 const route = 'books';

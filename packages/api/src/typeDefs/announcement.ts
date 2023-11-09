@@ -2,7 +2,9 @@
  * apollo typeDef: Announcement
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     announcement(id: ID!): Announcement
     announcements(query: QueryInput): [Announcement!]!

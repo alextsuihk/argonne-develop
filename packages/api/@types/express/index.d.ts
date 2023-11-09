@@ -11,7 +11,7 @@ import type { Auth } from '../../src/utils/token';
 
 declare global {
   namespace Express {
-    export interface Request extends Partial<Auth> {
+    interface Request extends Partial<Auth> {
       apiScope?: string;
       ua: string;
       user?: UserDocument;

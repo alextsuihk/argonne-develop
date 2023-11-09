@@ -3,14 +3,16 @@
  *
  */
 
-const PRESIGNED_URL_FIELDS = `#graphql
+import gql from 'graphql-tag';
+
+const PRESIGNED_URL_FIELDS = gql`
   fragment PresignedUrlFields on PresignedUrl {
     url
     expiry
   }
 `;
 
-export const ADD_PRESIGNED_URL = `#graphql
+export const ADD_PRESIGNED_URL = gql`
   ${PRESIGNED_URL_FIELDS}
   mutation AddPresignedUrl($bucketType: String!, $ext: String!) {
     addPresignedUrl(bucketType: $bucketType, ext: $ext) {

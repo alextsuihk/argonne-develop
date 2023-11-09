@@ -14,6 +14,7 @@ import contactResolvers from './contact';
 import contentResolvers from './content';
 import districtResolvers from './district';
 import homeworkResolvers from './homework';
+import jobResolvers from './job';
 import levelResolvers from './level';
 import passwordResolvers from './password';
 import presignedUrlResolvers from './presigned-url';
@@ -46,6 +47,7 @@ export default [
   contentResolvers,
   districtResolvers,
   homeworkResolvers,
+  jobResolvers,
   levelResolvers,
   passwordResolvers,
   presignedUrlResolvers,

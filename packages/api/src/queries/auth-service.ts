@@ -3,7 +3,9 @@
  *
  */
 
-const AUTH_SERVICE_FIELDS = `#graphql
+import gql from 'graphql-tag';
+
+const AUTH_SERVICE_FIELDS = gql`
   fragment AuthServiceFields on AuthService {
     clientId
     token
@@ -12,7 +14,7 @@ const AUTH_SERVICE_FIELDS = `#graphql
   }
 `;
 
-export const AUTH_SERVICE_TOKEN = `#graphql
+export const AUTH_SERVICE_TOKEN = gql`
   ${AUTH_SERVICE_FIELDS}
   query AuthServiceToken($client: String!) {
     authServiceToken(client: $client) {

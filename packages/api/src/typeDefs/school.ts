@@ -2,7 +2,9 @@
  * apollo typeDef: School
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     school(id: ID!): School @cacheControl(maxAge: 3600)
     schools(query: QueryInput): [School!]! @cacheControl(maxAge: 3600)

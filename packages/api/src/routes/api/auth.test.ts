@@ -13,7 +13,6 @@ import app from '../../app';
 import configLoader from '../../config/config-loader';
 import { expectedIdFormat, expectedUserFormat, genUser, jestSetup, jestTeardown, randomString } from '../../jest';
 import Token from '../../models/token';
-import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 
 const { MSG_ENUM } = LOCALE;

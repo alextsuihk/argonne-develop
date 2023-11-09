@@ -110,15 +110,15 @@ const create = async (req: Request, args: unknown): Promise<AssignmentDocumentEx
   });
 
   // for assignment auto-grading, queue task
-  const job =
-    flags.includes(ASSIGNMENT.FLAG.AUTO_GRADE) &&
-    (await queueJob({
-      type: 'grade',
-      owners: classroom.teachers,
-      tenantId: classroom.tenant,
-      assignmentId: _id,
-      startAfter: inputFields.deadline,
-    }));
+  const job = flags.includes(ASSIGNMENT.FLAG.AUTO_GRADE)
+    ? await queueJob({
+        task: 'grade',
+        owners: classroom.teachers,
+        tenantId: classroom.tenant,
+        assignmentId: _id,
+        startAfter: inputFields.deadline,
+      })
+    : null;
   if (job) assignment.job = job._id;
 
   const classroomUpdate: UpdateQuery<ClassroomDocument> = { $addToSet: { assignments: _id } };

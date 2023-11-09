@@ -2,8 +2,8 @@
  * Resolver: Question
  */
 
-import type { ApolloContext } from '../server';
 import questionController from '../controllers/question';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

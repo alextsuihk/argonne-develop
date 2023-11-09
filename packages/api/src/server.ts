@@ -10,7 +10,6 @@
  *      - SINGLE job-runner runs on NON-accessible port, dedicates to dispatch & execute (by internal & external runners)
  */
 
-import type { BaseContext } from '@apollo/server';
 import { ApolloServer } from '@apollo/server';
 import { expressMiddleware } from '@apollo/server/express4';
 import { ApolloServerPluginCacheControl } from '@apollo/server/plugin/cacheControl';
@@ -27,6 +26,7 @@ import resolvers from './resolvers';
 import socketServer from './socket-server';
 import typeDefs from './typeDefs';
 import { isDevMode } from './utils/environment';
+import { sleep } from './utils/helper';
 import log from './utils/log';
 import scheduler from './utils/scheduler';
 
@@ -99,7 +99,7 @@ const gracefulShutdown = async () => {
     redisClient.disconnect();
     jobRunner.stop();
     await Promise.race([
-      new Promise<void>(resolve => setTimeout(resolve, 1000)),
+      sleep(1000),
       Promise.all([
         apolloServer.stop(),
         socketServer.stop(),

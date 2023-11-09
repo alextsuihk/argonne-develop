@@ -3,7 +3,9 @@
  *
  */
 
-const TUTOR_INVERSE_RANKING_FIELDS = `#graphql
+import gql from 'graphql-tag';
+
+const TUTOR_INVERSE_RANKING_FIELDS = gql`
   fragment TutorInverseRankingFields on TutorInverseRanking {
     _id
     correctness
@@ -12,7 +14,7 @@ const TUTOR_INVERSE_RANKING_FIELDS = `#graphql
   }
 `;
 
-export const GET_TUTOR_INVERSE_RANKING = `#graphql
+export const GET_TUTOR_INVERSE_RANKING = gql`
   ${TUTOR_INVERSE_RANKING_FIELDS}
   query GetTutorInverseRanking($id: ID!) {
     tutorInverseRanking(id: $id) {
@@ -21,7 +23,7 @@ export const GET_TUTOR_INVERSE_RANKING = `#graphql
   }
 `;
 
-export const GET_TUTOR_INVERSE_RANKINGS = `#graphql
+export const GET_TUTOR_INVERSE_RANKINGS = gql`
   ${TUTOR_INVERSE_RANKING_FIELDS}
   query GetTutorInverseRankings {
     tutorInverseRankings {

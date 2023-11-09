@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { STATUS_RESPONSE } from './common';
 
-export const CHANGE_PASSWORD = `#graphql
+export const CHANGE_PASSWORD = gql`
   ${STATUS_RESPONSE}
   mutation ChangePassword(
     $currPassword: String!
@@ -24,7 +26,7 @@ export const CHANGE_PASSWORD = `#graphql
   }
 `;
 
-export const RESET_PASSWORD_REQUEST = `#graphql
+export const RESET_PASSWORD_REQUEST = gql`
   ${STATUS_RESPONSE}
   mutation ResetPasswordRequest($email: String!, $coordinates: CoordinatesInput) {
     resetPasswordRequest(email: $email, coordinates: $coordinates) {
@@ -33,7 +35,7 @@ export const RESET_PASSWORD_REQUEST = `#graphql
   }
 `;
 
-export const RESET_PASSWORD_CONFIRM = `#graphql
+export const RESET_PASSWORD_CONFIRM = gql`
   ${STATUS_RESPONSE}
   mutation ResetPasswordConfirm($token: String!, $password: String!, $coordinates: CoordinatesInput) {
     resetPasswordConfirm(token: $token, password: $password, coordinates: $coordinates) {

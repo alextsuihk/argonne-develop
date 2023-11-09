@@ -3,8 +3,8 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import tenantController from '../controllers/tenant';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

@@ -8,8 +8,8 @@ import configLoader from '../../config/config-loader';
 import Tenant from '../../models/tenant';
 import User from '../../models/user';
 import { startChatGroup } from '../chat';
-import { sendmail } from './common';
 import { sleep } from '../helper';
+import { sendmail } from './common';
 
 const { enUS } = LOCALE.DB_ENUM.SYSTEM.LOCALE;
 const { config } = configLoader;

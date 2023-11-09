@@ -8,8 +8,8 @@ import 'jest-extended';
 import { LOCALE } from '@argonne/common';
 
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
@@ -25,7 +25,6 @@ import {
 } from '../jest';
 import type { DistrictDocument } from '../models/district';
 import District from '../models/district';
-import type { UserDocument } from '../models/user';
 import {
   ADD_DISTRICT,
   ADD_DISTRICT_REMARK,

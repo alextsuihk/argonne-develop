@@ -3,10 +3,8 @@
  *
  */
 
-// TODO: addBookSchool, removeBookSchool
-
-import type { ApolloContext } from '../server';
 import bookController from '../controllers/book';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

@@ -53,7 +53,7 @@ export type PostExtraAction = 'sendEmailVerification' | 'sendMessengerVerificati
 
 const { MSG_ENUM } = LOCALE;
 const { MESSENGER, SYSTEM, USER } = LOCALE.DB_ENUM;
-const { assertUnreachable, auth, authGetUser } = common;
+const { assertUnreachable, auth, authGetUser, hubModeOnly } = common;
 const {
   emailSchema,
   idSchema,
@@ -279,6 +279,7 @@ export const update = async (
     return common({ $push: { stashes: { _id: mongoId(), ...inputFields } } }, inputFields);
     //
   } else if (action === 'oAuth2Link') {
+    hubModeOnly();
     const { provider, code } = await oAuth2Schema.validate(args);
     if (!Object.keys(USER.OAUTH2.PROVIDER).includes(provider))
       throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
@@ -309,6 +310,7 @@ export const update = async (
     return common(update, { provider, oAuthId });
     //
   } else if (action === 'oAuth2Unlink') {
+    hubModeOnly();
     const { oAuthId } = await oAuth2IdSchema.validate(args);
     if (!original.oAuth2s.includes(oAuthId)) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
     return common({ $pull: { oAuth2s: oAuthId } }, { oAuthId });
@@ -457,10 +459,7 @@ export const verifyEmail = async (req: Request, args: unknown): Promise<StatusRe
     { $pull: { emails: email.toUpperCase() } }, // remove unverified email
     { new: true },
   ).lean();
-
   if (!user) throw { statusCode: 422, code: MSG_ENUM.TOKEN_ERROR };
-
-  const update: UpdateQuery<UserDocument> = { emails: [...user.emails, email.toLowerCase()] }; // finally append verified email
 
   await Promise.all([
     User.updateOne({ _id: user._id }, { $addToSet: { emails: email.toLowerCase() } }), // add back verified email

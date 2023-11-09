@@ -5,7 +5,7 @@
 
 import { LOCALE } from '@argonne/common';
 
-import { apolloExpect, apolloContext, apolloTestServer, jestSetup, jestTeardown } from '../jest';
+import { apolloContext, apolloExpect, apolloTestServer, jestSetup, jestTeardown } from '../jest';
 import { ADD_PRESIGNED_URL } from '../queries/presigned-url';
 
 const { MSG_ENUM } = LOCALE;

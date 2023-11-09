@@ -2,7 +2,9 @@
  * apollo typeDef: Satellite
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     satelliteToken(tenantId: String!): TokenWithExpireAt!
   }

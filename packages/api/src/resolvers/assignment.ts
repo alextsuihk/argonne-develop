@@ -2,8 +2,8 @@
  * Resolver: Assignment
  */
 
-import type { ApolloContext } from '../server';
 import assignmentController from '../controllers/assignment';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

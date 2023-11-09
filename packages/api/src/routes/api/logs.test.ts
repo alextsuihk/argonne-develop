@@ -8,7 +8,6 @@ import request from 'supertest';
 
 import app from '../../app';
 import { FAKE, FAKE_LOCALE, jestSetup, jestTeardown, prob } from '../../jest';
-import type { UserDocument } from '../../models/user';
 
 const { MSG_ENUM } = LOCALE;
 

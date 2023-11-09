@@ -9,8 +9,8 @@ import { addDays } from 'date-fns';
 
 import configLoader from '../config/config-loader';
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedIdFormat,
   expectedUserFormatApollo as expectedUserFormat,

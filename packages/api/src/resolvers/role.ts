@@ -3,8 +3,8 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import roleController from '../controllers/role';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

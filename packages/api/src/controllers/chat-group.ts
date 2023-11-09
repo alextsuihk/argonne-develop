@@ -189,7 +189,7 @@ const addContent = async (req: Request, args: unknown): Promise<ChatGroupDocumen
     otherChatGroupIds.length && ChatGroup.updateMany({ _id: { $in: otherChatGroupIds } }, { updatedAt: new Date() }),
     classroomIds.length && Classroom.updateMany({ _id: { $in: classroomIds } }, { updatedAt: new Date() }),
     Content.insertMany(content),
-    original.tenant && censorContent(original.tenant, userId, userLocale, `/chatGroups/${id}`, content._id),
+    original.tenant && censorContent(original.tenant, userLocale, `/chatGroups/${id}`, content._id),
     notifySync(
       userTenants[0] ? mongoId(userTenants[0]) : null, // satellite priority: chatGroup.tenant -> userPrimaryTenant (in case of adminMessage)
       { userIds: original.users, event: 'CHAT-GROUP' },
@@ -264,7 +264,7 @@ const addContentWithNewChat = async (req: Request, args: unknown): Promise<ChatG
     ChatGroup.findByIdAndUpdate(id, update, { fields: select(), new: true }).populate<Populate>(populate).lean(),
     otherChatGroupIds.length && ChatGroup.updateMany({ _id: { $in: otherChatGroupIds } }, { updatedAt: new Date() }),
     classroomIds.length && Classroom.updateMany({ _id: { $in: classroomIds } }, { updatedAt: new Date() }),
-    original.tenant && censorContent(original.tenant, userId, userLocale, `/chatGroups/${id}`, content._id),
+    original.tenant && censorContent(original.tenant, userLocale, `/chatGroups/${id}`, content._id),
     notifySync(
       userTenants[0] ? mongoId(userTenants[0]) : null, // satellite priority: chatGroup.tenant -> userPrimaryTenant (in case of adminMessage)
       { userIds: original.users, event: 'CHAT-GROUP' },

@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { REMARK, STATUS_RESPONSE } from './common';
 
-export const CONTRIBUTION_FIELDS = `#graphql
+export const CONTRIBUTION_FIELDS = gql`
   ${REMARK}
   fragment ContributionFields on Contribution {
     _id

@@ -26,7 +26,6 @@ import Level from '../../models/level';
 import Subject from '../../models/subject';
 import type { TutorDocument } from '../../models/tutor';
 import Tutor from '../../models/tutor';
-import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
 import commonTest from './rest-api-test';
 
@@ -99,7 +98,6 @@ describe(`${route.toUpperCase()} API Routes`, () => {
     const teacher = jest.normalUsers.find(({ schoolHistories }) => schoolHistories[0]?.level.equals(teacherLevel!._id));
     if (!teacher) throw `No valid teacher for testing`;
 
-    console.log('teacherId', teacher._id);
     await getMany<TutorDocument>(route, { 'Jest-User': teacher._id }, expectedMinFormat, {
       testGetById: true,
       testInvalidId: true,

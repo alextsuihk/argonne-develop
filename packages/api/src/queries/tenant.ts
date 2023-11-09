@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-export const TENANT_FIELDS = `#graphql
+export const TENANT_FIELDS = gql`
   ${LOCALE}
   ${REMARK}
   fragment TenantFields on Tenant {
@@ -51,7 +53,7 @@ export const TENANT_FIELDS = `#graphql
   }
 `;
 
-export const ADD_TENANT = `#graphql
+export const ADD_TENANT = gql`
   ${TENANT_FIELDS}
   mutation AddTenant($tenant: TenantCoreInput!) {
     addTenant(tenant: $tenant) {
@@ -60,7 +62,7 @@ export const ADD_TENANT = `#graphql
   }
 `;
 
-export const ADD_TENANT_REMARK = `#graphql
+export const ADD_TENANT_REMARK = gql`
   ${TENANT_FIELDS}
   mutation AddTenantRemark($id: ID!, $remark: String!) {
     addTenantRemark(id: $id, remark: $remark) {
@@ -69,7 +71,7 @@ export const ADD_TENANT_REMARK = `#graphql
   }
 `;
 
-export const ADD_TENANT_STASH = `#graphql
+export const ADD_TENANT_STASH = gql`
   ${TENANT_FIELDS}
   mutation AddTenantStash($id: ID!, $title: String!, $secret: String!, $url: String!) {
     addTenantStash(id: $id, title: $title, secret: $secret, url: $url) {
@@ -78,7 +80,7 @@ export const ADD_TENANT_STASH = `#graphql
   }
 `;
 
-export const GET_TENANTS = `#graphql
+export const GET_TENANTS = gql`
   ${TENANT_FIELDS}
   query GetTenants($query: QueryInput) {
     tenants(query: $query) {
@@ -87,7 +89,7 @@ export const GET_TENANTS = `#graphql
   }
 `;
 
-export const REMOVE_TENANT = `#graphql
+export const REMOVE_TENANT = gql`
   ${STATUS_RESPONSE}
   mutation RemoveTenant($id: ID!, $remark: String) {
     removeTenant(id: $id, remark: $remark) {
@@ -96,7 +98,7 @@ export const REMOVE_TENANT = `#graphql
   }
 `;
 
-export const REMOVE_TENANT_STASH = `#graphql
+export const REMOVE_TENANT_STASH = gql`
   ${TENANT_FIELDS}
   mutation RemoveTenantStash($id: ID!, $subId: String!) {
     removeTenantStash(id: $id, subId: $subId) {
@@ -105,7 +107,7 @@ export const REMOVE_TENANT_STASH = `#graphql
   }
 `;
 
-export const SEND_TEST_EMAIL = `#graphql
+export const SEND_TEST_EMAIL = gql`
   ${STATUS_RESPONSE}
   mutation SendTestEmail($email: String!) {
     sendTestEmail(email: $email) {
@@ -114,7 +116,7 @@ export const SEND_TEST_EMAIL = `#graphql
   }
 `;
 
-export const UPDATE_TENANT_CORE = `#graphql
+export const UPDATE_TENANT_CORE = gql`
   ${TENANT_FIELDS}
   mutation UpdateTenantCore($id: ID!, $tenant: TenantCoreInput!) {
     updateTenantCore(id: $id, tenant: $tenant) {
@@ -123,7 +125,7 @@ export const UPDATE_TENANT_CORE = `#graphql
   }
 `;
 
-export const UPDATE_TENANT_EXTRA = `#graphql
+export const UPDATE_TENANT_EXTRA = gql`
   ${TENANT_FIELDS}
   mutation UpdateTenantExtra($id: ID!, $tenant: TenantExtraInput!) {
     updateTenantExtra(id: $id, tenant: $tenant) {

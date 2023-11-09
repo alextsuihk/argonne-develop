@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { CHAT, REMARK, STATUS_RESPONSE } from './common';
 
-export const CLASSROOM_FIELDS = `#graphql
+export const CLASSROOM_FIELDS = gql`
   ${CHAT}
   ${REMARK}
   fragment ClassroomFields on Classroom {
@@ -41,7 +43,7 @@ export const CLASSROOM_FIELDS = `#graphql
   }
 `;
 
-export const ADD_CLASSROOM = `#graphql
+export const ADD_CLASSROOM = gql`
   ${CLASSROOM_FIELDS}
   mutation AddClassroom(
     $tenantId: String!
@@ -70,7 +72,7 @@ export const ADD_CLASSROOM = `#graphql
   }
 `;
 
-export const ADD_CLASSROOM_CONTENT = `#graphql
+export const ADD_CLASSROOM_CONTENT = gql`
   ${CLASSROOM_FIELDS}
   mutation AddClassroomContent($id: ID!, $chatId: String!, $content: String!, $visibleAfter: DateInput) {
     addClassroomContent(id: $id, chatId: $chatId, content: $content, visibleAfter: $visibleAfter) {
@@ -79,7 +81,7 @@ export const ADD_CLASSROOM_CONTENT = `#graphql
   }
 `;
 
-export const ADD_CLASSROOM_CONTENT_WITH_NEW_CHAT = `#graphql
+export const ADD_CLASSROOM_CONTENT_WITH_NEW_CHAT = gql`
   ${CLASSROOM_FIELDS}
   mutation AddClassroomContentWithNewChat($id: ID!, $content: String!, $visibleAfter: DateInput) {
     addClassroomContentWithNewChat(id: $id, content: $content, visibleAfter: $visibleAfter) {
@@ -88,7 +90,7 @@ export const ADD_CLASSROOM_CONTENT_WITH_NEW_CHAT = `#graphql
   }
 `;
 
-export const ADD_CLASSROOM_REMARK = `#graphql
+export const ADD_CLASSROOM_REMARK = gql`
   ${CLASSROOM_FIELDS}
   mutation AddClassroomRemark($id: ID!, $remark: String!) {
     addClassroomRemark(id: $id, remark: $remark) {
@@ -97,7 +99,7 @@ export const ADD_CLASSROOM_REMARK = `#graphql
   }
 `;
 
-export const ATTACH_CHAT_GROUP_TO_CLASSROOM = `#graphql
+export const ATTACH_CHAT_GROUP_TO_CLASSROOM = gql`
   ${CLASSROOM_FIELDS}
   mutation AttachChatGroupChatToClassroom($id: ID!, $chatId: String!, $sourceId: String!) {
     attachChatGroupChatToClassroom(id: $id, chatId: $chatId, sourceId: $sourceId) {
@@ -106,7 +108,7 @@ export const ATTACH_CHAT_GROUP_TO_CLASSROOM = `#graphql
   }
 `;
 
-export const ATTACH_CLASSROOM_TO_CLASSROOM = `#graphql
+export const ATTACH_CLASSROOM_TO_CLASSROOM = gql`
   ${CLASSROOM_FIELDS}
   mutation AttachClassroomChatToClassroom($id: ID!, $chatId: String!, $sourceId: String!) {
     attachClassroomChatToClassroom(id: $id, chatId: $chatId, sourceId: $sourceId) {
@@ -115,7 +117,7 @@ export const ATTACH_CLASSROOM_TO_CLASSROOM = `#graphql
   }
 `;
 
-export const BLOCK_CLASSROOM_CONTENT = `#graphql
+export const BLOCK_CLASSROOM_CONTENT = gql`
   ${CLASSROOM_FIELDS}
   mutation BlockClassroomContent($id: ID!, $chatId: String!, $contentId: String!, $remark: String) {
     blockClassroomContent(id: $id, chatId: $chatId, contentId: $contentId, remark: $remark) {
@@ -124,7 +126,7 @@ export const BLOCK_CLASSROOM_CONTENT = `#graphql
   }
 `;
 
-export const CLEAR_CLASSROOM_CHAT_FLAG = `#graphql
+export const CLEAR_CLASSROOM_CHAT_FLAG = gql`
   ${CLASSROOM_FIELDS}
   mutation ClearClassroomChatFlag($id: ID!, $chatId: String!, $flag: String!) {
     clearClassroomChatFlag(id: $id, chatId: $chatId, flag: $flag) {
@@ -133,7 +135,7 @@ export const CLEAR_CLASSROOM_CHAT_FLAG = `#graphql
   }
 `;
 
-export const GET_CLASSROOM = `#graphql
+export const GET_CLASSROOM = gql`
   ${CLASSROOM_FIELDS}
   query GetClassroom($id: ID!) {
     classroom(id: $id) {
@@ -142,7 +144,7 @@ export const GET_CLASSROOM = `#graphql
   }
 `;
 
-export const GET_CLASSROOMS = `#graphql
+export const GET_CLASSROOMS = gql`
   ${CLASSROOM_FIELDS}
   query GetClassrooms($query: QueryInput) {
     classrooms(query: $query) {
@@ -151,7 +153,7 @@ export const GET_CLASSROOMS = `#graphql
   }
 `;
 
-export const RECALL_CLASSROOM_CONTENT = `#graphql
+export const RECALL_CLASSROOM_CONTENT = gql`
   ${CLASSROOM_FIELDS}
   mutation RecallClassroomContent($id: ID!, $chatId: String!, $contentId: String!) {
     recallClassroomContent(id: $id, chatId: $chatId, contentId: $contentId) {
@@ -160,7 +162,7 @@ export const RECALL_CLASSROOM_CONTENT = `#graphql
   }
 `;
 
-export const RECOVER_CLASSROOM = `#graphql
+export const RECOVER_CLASSROOM = gql`
   ${CLASSROOM_FIELDS}
   mutation RecoverClassroom($id: ID!, $remark: String) {
     recoverClassroom(id: $id, remark: $remark) {
@@ -169,7 +171,7 @@ export const RECOVER_CLASSROOM = `#graphql
   }
 `;
 
-export const REMOVE_CLASSROOM = `#graphql
+export const REMOVE_CLASSROOM = gql`
   ${STATUS_RESPONSE}
   mutation RemoveClassroom($id: ID!, $remark: String) {
     removeClassroom(id: $id, remark: $remark) {
@@ -178,7 +180,7 @@ export const REMOVE_CLASSROOM = `#graphql
   }
 `;
 
-export const SET_CLASSROOM_CHAT_FLAG = `#graphql
+export const SET_CLASSROOM_CHAT_FLAG = gql`
   ${CLASSROOM_FIELDS}
   mutation SetClassroomChatFlag($id: ID!, $chatId: String!, $flag: String!) {
     setClassroomChatFlag(id: $id, chatId: $chatId, flag: $flag) {
@@ -187,7 +189,7 @@ export const SET_CLASSROOM_CHAT_FLAG = `#graphql
   }
 `;
 
-export const SHARE_HOMEWORK_TO_CLASSROOM = `#graphql
+export const SHARE_HOMEWORK_TO_CLASSROOM = gql`
   ${CLASSROOM_FIELDS}
   mutation ShareHomeworkToClassroom($id: ID!, $sourceId: String!) {
     shareHomeworkToClassroom(id: $id, sourceId: $sourceId) {
@@ -196,7 +198,7 @@ export const SHARE_HOMEWORK_TO_CLASSROOM = `#graphql
   }
 `;
 
-export const SHARE_QUESTION_TO_CLASSROOM = `#graphql
+export const SHARE_QUESTION_TO_CLASSROOM = gql`
   ${CLASSROOM_FIELDS}
   mutation ShareQuestionToClassroom($id: ID!, $sourceId: String!) {
     shareQuestionToClassroom(id: $id, sourceId: $sourceId) {
@@ -205,7 +207,7 @@ export const SHARE_QUESTION_TO_CLASSROOM = `#graphql
   }
 `;
 
-export const UPDATE_CLASSROOM = `#graphql
+export const UPDATE_CLASSROOM = gql`
   ${CLASSROOM_FIELDS}
   mutation UpdateClassroom($id: ID!, $title: String, $room: String, $schedule: String, $books: [String!]!) {
     updateClassroom(id: $id, title: $title, room: $room, schedule: $schedule, books: $books) {
@@ -214,7 +216,7 @@ export const UPDATE_CLASSROOM = `#graphql
   }
 `;
 
-export const UPDATE_CLASSROOM_CHAT_LAST_VIEWED_AT = `#graphql
+export const UPDATE_CLASSROOM_CHAT_LAST_VIEWED_AT = gql`
   ${CLASSROOM_FIELDS}
   mutation UpdateClassroomChatLastViewedAt($id: ID!, $chatId: String!, $timestamp: DateInput) {
     updateClassroomChatLastViewedAt(id: $id, chatId: $chatId, timestamp: $timestamp) {
@@ -223,7 +225,7 @@ export const UPDATE_CLASSROOM_CHAT_LAST_VIEWED_AT = `#graphql
   }
 `;
 
-export const UPDATE_CLASSROOM_CHAT_TITLE = `#graphql
+export const UPDATE_CLASSROOM_CHAT_TITLE = gql`
   ${CLASSROOM_FIELDS}
   mutation UpdateClassroomChatTitle($id: ID!, $chatId: String!, $title: String) {
     updateClassroomChatTitle(id: $id, chatId: $chatId, title: $title) {
@@ -232,7 +234,7 @@ export const UPDATE_CLASSROOM_CHAT_TITLE = `#graphql
   }
 `;
 
-export const UPDATE_CLASSROOM_STUDENTS = `#graphql
+export const UPDATE_CLASSROOM_STUDENTS = gql`
   ${CLASSROOM_FIELDS}
   mutation UpdateClassroomStudents($id: ID!, $userIds: [String!]!) {
     updateClassroomStudents(id: $id, userIds: $userIds) {
@@ -241,7 +243,7 @@ export const UPDATE_CLASSROOM_STUDENTS = `#graphql
   }
 `;
 
-export const UPDATE_CLASSROOM_TEACHERS = `#graphql
+export const UPDATE_CLASSROOM_TEACHERS = gql`
   ${CLASSROOM_FIELDS}
   mutation UpdateClassroomTeachers($id: ID!, $userIds: [String!]!) {
     updateClassroomTeachers(id: $id, userIds: $userIds) {

@@ -2,7 +2,9 @@
  * Apollo TypeDef: Homework
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     homework(id: ID!): Homework
     homeworks(query: QueryInput): [Homework!]!

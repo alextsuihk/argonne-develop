@@ -3,10 +3,12 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { BOOK_ASSIGNMENT_FIELDS } from './book';
 import { LOCALE, REMARK, STATUS_RESPONSE } from './common';
 
-export const ASSIGNMENT_FIELDS = `#graphql
+export const ASSIGNMENT_FIELDS = gql`
   ${BOOK_ASSIGNMENT_FIELDS}
   ${LOCALE}
   ${REMARK}
@@ -55,7 +57,7 @@ export const ASSIGNMENT_FIELDS = `#graphql
   }
 `;
 
-export const GET_ASSIGNMENT = `#graphql
+export const GET_ASSIGNMENT = gql`
   ${ASSIGNMENT_FIELDS}
   query GetAssignment($id: ID!) {
     user(id: $id) {
@@ -64,7 +66,7 @@ export const GET_ASSIGNMENT = `#graphql
   }
 `;
 
-export const GET_ASSIGNMENTS = `#graphql
+export const GET_ASSIGNMENTS = gql`
   ${ASSIGNMENT_FIELDS}
   query GetAssignments($query: QueryInput) {
     users(query: $query) {
@@ -73,7 +75,7 @@ export const GET_ASSIGNMENTS = `#graphql
   }
 `;
 
-export const ADD_ASSIGNMENT = `#graphql
+export const ADD_ASSIGNMENT = gql`
   ${ASSIGNMENT_FIELDS}
   mutation AddAssignment($assignment: AssignmentInput!) {
     addAssignment(assignment: $assignment) {
@@ -82,7 +84,7 @@ export const ADD_ASSIGNMENT = `#graphql
   }
 `;
 
-export const GRADE_ASSIGNMENT = `#graphql
+export const GRADE_ASSIGNMENT = gql`
   ${ASSIGNMENT_FIELDS}
   mutation GradeAssignment($id: ID!, $homeworkId: String!,  $content: String, score: Int ) {
     gradeAssignment(id: $id, homeworkId: $homeworkId, content: $content, score: $score) {
@@ -91,7 +93,7 @@ export const GRADE_ASSIGNMENT = `#graphql
   }
 `;
 
-export const REMOVE_ASSIGNMENT = `#graphql
+export const REMOVE_ASSIGNMENT = gql`
   ${STATUS_RESPONSE}
   mutation RemoveAssignment($id: ID!, $remark: String) {
     removeAssignment(id: $id, remark: $remark) {
@@ -100,7 +102,7 @@ export const REMOVE_ASSIGNMENT = `#graphql
   }
 `;
 
-export const UPDATE_ASSIGNMENT = `#graphql
+export const UPDATE_ASSIGNMENT = gql`
   ${ASSIGNMENT_FIELDS}
   mutation UpdateAssignment($id: ID!, $deadline: DateInput!) {
     updateAssignment(id: $id, deadline: $deadline) {

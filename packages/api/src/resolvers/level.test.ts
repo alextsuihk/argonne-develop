@@ -8,8 +8,9 @@ import 'jest-extended';
 import { LOCALE } from '@argonne/common';
 
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
+  apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
@@ -21,11 +22,9 @@ import {
   jestTeardown,
   prob,
   randomItem,
-  apolloTestServer,
 } from '../jest';
 import type { LevelDocument } from '../models/level';
 import Level from '../models/level';
-import type { UserDocument } from '../models/user';
 import { ADD_LEVEL, ADD_LEVEL_REMARK, GET_LEVEL, GET_LEVELS, REMOVE_LEVEL, UPDATE_LEVEL } from '../queries/level';
 
 const { MSG_ENUM } = LOCALE;

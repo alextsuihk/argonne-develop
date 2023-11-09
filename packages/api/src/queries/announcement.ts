@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { STATUS_RESPONSE } from './common';
 
-const ANNOUNCEMENT_FIELDS = `#graphql
+const ANNOUNCEMENT_FIELDS = gql`
   fragment AnnouncementFields on Announcement {
     _id
     flags
@@ -20,7 +22,7 @@ const ANNOUNCEMENT_FIELDS = `#graphql
   }
 `;
 
-export const ADD_ANNOUNCEMENT = `#graphql
+export const ADD_ANNOUNCEMENT = gql`
   ${ANNOUNCEMENT_FIELDS}
   mutation AddAnnouncement($announcement: AnnouncementInput!) {
     addAnnouncement(announcement: $announcement) {
@@ -29,7 +31,7 @@ export const ADD_ANNOUNCEMENT = `#graphql
   }
 `;
 
-export const GET_ANNOUNCEMENT = `#graphql
+export const GET_ANNOUNCEMENT = gql`
   ${ANNOUNCEMENT_FIELDS}
   query GetAnnouncement($id: ID!) {
     announcement(id: $id) {
@@ -38,7 +40,7 @@ export const GET_ANNOUNCEMENT = `#graphql
   }
 `;
 
-export const GET_ANNOUNCEMENTS = `#graphql
+export const GET_ANNOUNCEMENTS = gql`
   ${ANNOUNCEMENT_FIELDS}
   query GetAnnouncements($query: QueryInput) {
     announcements(query: $query) {
@@ -47,7 +49,7 @@ export const GET_ANNOUNCEMENTS = `#graphql
   }
 `;
 
-export const REMOVE_ANNOUNCEMENT = `#graphql
+export const REMOVE_ANNOUNCEMENT = gql`
   ${STATUS_RESPONSE}
   mutation RemoveAnnouncement($id: ID!) {
     removeAnnouncement(id: $id) {

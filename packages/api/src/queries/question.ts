@@ -3,9 +3,11 @@
  *
  */
 
+import gql from 'graphql-tag';
+
 import { BID, MEMBER, STATUS_RESPONSE } from './common';
 
-const QUESTION_FIELDS = `#graphql
+const QUESTION_FIELDS = gql`
   ${BID}
   ${MEMBER}
   fragment QuestionFields on Question {
@@ -57,7 +59,7 @@ const QUESTION_FIELDS = `#graphql
   }
 `;
 
-export const ADD_QUESTION = `#graphql
+export const ADD_QUESTION = gql`
   ${QUESTION_FIELDS}
   mutation AddQuestion(
     $tenantId: String!
@@ -98,7 +100,7 @@ export const ADD_QUESTION = `#graphql
   }
 `;
 
-export const ADD_QUESTION_BID_CONTENT = `#graphql
+export const ADD_QUESTION_BID_CONTENT = gql`
   ${QUESTION_FIELDS}
   mutation AddQuestionBidContent($id: ID!, $content: String!, $userId: String!) {
     addQuestionBidContent(id: $id, content: $content, userId: $userId) {
@@ -107,7 +109,7 @@ export const ADD_QUESTION_BID_CONTENT = `#graphql
   }
 `;
 
-export const ADD_QUESTION_BIDDERS = `#graphql
+export const ADD_QUESTION_BIDDERS = gql`
   ${QUESTION_FIELDS}
   mutation AddQuestionBidders($id: ID!, $userIds: [String!]!) {
     addQuestionBidders(id: $id, userIds: $userIds) {
@@ -116,7 +118,7 @@ export const ADD_QUESTION_BIDDERS = `#graphql
   }
 `;
 
-export const ADD_QUESTION_CONTENT = `#graphql
+export const ADD_QUESTION_CONTENT = gql`
   ${QUESTION_FIELDS}
   mutation AddQuestionContent($id: ID!, $content: String!, $visibleAfter: DateInput, $timeSpent: Int, $flag: String) {
     addQuestionContent(id: $id, content: $content, visibleAfter: $visibleAfter, timeSpent: $timeSpent, flag: $flag) {
@@ -125,7 +127,7 @@ export const ADD_QUESTION_CONTENT = `#graphql
   }
 `;
 
-export const ASSIGN_QUESTION_TUTOR = `#graphql
+export const ASSIGN_QUESTION_TUTOR = gql`
   ${QUESTION_FIELDS}
   mutation AssignQuestionTutor($id: ID!, $userId: String!) {
     assignQuestionTutor(id: $id, userId: $userId) {
@@ -134,7 +136,7 @@ export const ASSIGN_QUESTION_TUTOR = `#graphql
   }
 `;
 
-export const CLEAR_QUESTION_FLAG = `#graphql
+export const CLEAR_QUESTION_FLAG = gql`
   ${QUESTION_FIELDS}
   mutation ClearQuestionFlag($id: ID!, $flag: String!) {
     clearQuestionFlag(id: $id, flag: $flag) {
@@ -143,7 +145,7 @@ export const CLEAR_QUESTION_FLAG = `#graphql
   }
 `;
 
-export const CLOSE_QUESTION = `#graphql
+export const CLOSE_QUESTION = gql`
   ${QUESTION_FIELDS}
   mutation CloseQuestion($id: ID!) {
     closeQuestion(id: $id) {
@@ -152,7 +154,7 @@ export const CLOSE_QUESTION = `#graphql
   }
 `;
 
-export const CLONE_QUESTION = `#graphql
+export const CLONE_QUESTION = gql`
   ${QUESTION_FIELDS}
   mutation CloneQuestion($id: ID!, $userIds: [String!]!) {
     cloneQuestion(id: $id, userIds: $userIds) {
@@ -161,7 +163,7 @@ export const CLONE_QUESTION = `#graphql
   }
 `;
 
-export const GET_QUESTION = `#graphql
+export const GET_QUESTION = gql`
   ${QUESTION_FIELDS}
   query GetQuestion($id: ID!) {
     question(id: $id) {
@@ -170,7 +172,7 @@ export const GET_QUESTION = `#graphql
   }
 `;
 
-export const GET_QUESTIONS = `#graphql
+export const GET_QUESTIONS = gql`
   ${QUESTION_FIELDS}
   query GetQuestions($query: QueryInput) {
     questions(query: $query) {
@@ -179,7 +181,7 @@ export const GET_QUESTIONS = `#graphql
   }
 `;
 
-export const REMOVE_QUESTION = `#graphql
+export const REMOVE_QUESTION = gql`
   ${STATUS_RESPONSE}
   mutation RemoveQuestion($id: ID!) {
     removeQuestion(id: $id) {
@@ -188,7 +190,7 @@ export const REMOVE_QUESTION = `#graphql
   }
 `;
 
-export const SET_QUESTION_FLAG = `#graphql
+export const SET_QUESTION_FLAG = gql`
   ${QUESTION_FIELDS}
   mutation SetQuestionFlag($id: ID!, $flag: String!) {
     setQuestionFlag(id: $id, flag: $flag) {
@@ -197,7 +199,7 @@ export const SET_QUESTION_FLAG = `#graphql
   }
 `;
 
-export const UPDATE_QUESTION_LAST_VIEWED_AT = `#graphql
+export const UPDATE_QUESTION_LAST_VIEWED_AT = gql`
   ${QUESTION_FIELDS}
   mutation UpdateQuestionLastViewedAt($id: ID!, $timestamp: DateInput) {
     updateQuestionLastViewedAt(id: $id, timestamp: $timestamp) {
@@ -206,7 +208,7 @@ export const UPDATE_QUESTION_LAST_VIEWED_AT = `#graphql
   }
 `;
 
-export const UPDATE_QUESTION_RANKING = `#graphql
+export const UPDATE_QUESTION_RANKING = gql`
   ${QUESTION_FIELDS}
   mutation UpdateQuestionRanking($id: ID!, $correctness: Int!, $explicitness: Int!, $punctuality: Int!) {
     updateQuestionRanking(id: $id, correctness: $correctness, explicitness: $explicitness, punctuality: $punctuality) {

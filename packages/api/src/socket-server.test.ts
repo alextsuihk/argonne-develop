@@ -6,7 +6,7 @@ import { io } from 'socket.io-client';
 
 import app from './app';
 import configLoader from './config/config-loader';
-import { apolloExpect, apolloContext, apolloTestServer, FAKE, FAKE_LOCALE, jestSetup, jestTeardown } from './jest';
+import { apolloContext, apolloExpect, apolloTestServer, FAKE, FAKE_LOCALE, jestSetup, jestTeardown } from './jest';
 import type { TenantDocument } from './models/tenant';
 import Tenant from './models/tenant';
 import type { UserDocument } from './models/user';
@@ -46,9 +46,7 @@ describe('Basic Test on Socket client connectivity', () => {
 
     let timer: NodeJS.Timeout;
     await Promise.race([
-      new Promise(resolve => {
-        timer = setTimeout(resolve, 200);
-      }), // timeout
+      sleep(200), // timeout
       new Promise<void>(resolve => {
         socket.once('LOOPBACK', (receivedMsg: string) => {
           expect(receivedMsg).toBe(FAKE);
@@ -68,9 +66,7 @@ describe('Basic Test on Socket client connectivity', () => {
     const accessToken = await generateAccessToken(jest.normalUser!);
     let timer: NodeJS.Timeout;
     await Promise.race([
-      new Promise(resolve => {
-        timer = setTimeout(resolve, 200);
-      }), // timeout
+      sleep(200), // timeout
       new Promise<void>(resolve => {
         socket.once('JOIN', (receivedMsg: { token?: string; error?: string; msg?: string }) => {
           expect(receivedMsg).toEqual({ socket: expect.any(String), token: accessToken, msg: 'Welcome !' });
@@ -91,9 +87,7 @@ describe('Basic Test on Socket client connectivity', () => {
 
     let timer: NodeJS.Timeout;
     await Promise.race([
-      new Promise(resolve => {
-        timer = setTimeout(resolve, 200);
-      }), // timeout
+      sleep(200), // timeout
       new Promise<void>(resolve => {
         socket.once('JOIN', (receivedMsg: { token?: string; error?: string; msg?: string }) => {
           expect(receivedMsg).toEqual({
@@ -117,9 +111,7 @@ describe('Basic Test on Socket client connectivity', () => {
 
     let timer: NodeJS.Timeout;
     await Promise.race([
-      new Promise(resolve => {
-        timer = setTimeout(resolve, 200);
-      }), // timeout
+      sleep(200), // timeout
       new Promise<void>(resolve => {
         socket.once('JOIN', (receivedMsg: { error?: string; msg?: string; token?: string }) => {
           expect(receivedMsg).toEqual({ error: 'Invalid ID', token: accessToken });
@@ -132,7 +124,7 @@ describe('Basic Test on Socket client connectivity', () => {
     socket.close();
   });
 
-  test.only('should list two socket clients if two clients has joined', async () => {
+  test('should list two socket clients if two clients has joined', async () => {
     expect.assertions(3 + 1);
 
     const socket1 = io(serverUrl);
@@ -189,9 +181,7 @@ describe('Basic Test on Socket client connectivity', () => {
 
     let timer: NodeJS.Timeout;
     await Promise.race([
-      new Promise(resolve => {
-        timer = setTimeout(resolve, 200);
-      }), // timeout
+      sleep(200), // timeout
       new Promise<void>(resolve => {
         socket.once('JOIN_SATELLITE', (receivedMsg: { token?: string; error?: string; msg?: string }) => {
           expect(receivedMsg).toEqual({ socket: expect.any(String), tenant: tenantId, msg: 'Welcome !' });

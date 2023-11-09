@@ -17,7 +17,6 @@ import {
 } from '../../jest';
 import Level from '../../models/level';
 import type { SubjectDocument } from '../../models/subject';
-import type { UserDocument } from '../../models/user';
 import commonTest from './rest-api-test';
 
 const { createUpdateDelete, getMany } = commonTest;

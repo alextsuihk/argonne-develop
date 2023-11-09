@@ -5,8 +5,7 @@
 import { LOCALE } from '@argonne/common';
 
 import configLoader from '../config/config-loader';
-import { apolloExpect, apolloContext, apolloTestServer, genUser, jestSetup, jestTeardown, randomString } from '../jest';
-import type { UserDocument } from '../models/user';
+import { apolloContext, apolloExpect, apolloTestServer, genUser, jestSetup, jestTeardown, randomString } from '../jest';
 import User from '../models/user';
 import { CHANGE_PASSWORD, RESET_PASSWORD_CONFIRM, RESET_PASSWORD_REQUEST } from '../queries/password';
 import token, { PASSWORD_TOKEN_PREFIX, REFRESH_TOKEN_PREFIX } from '../utils/token';

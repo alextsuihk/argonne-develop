@@ -2,7 +2,9 @@
  * Apollo TypeDef: Password
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Mutation {
     changePassword(
       currPassword: String!

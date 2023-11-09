@@ -6,13 +6,13 @@
 import { LOCALE } from '@argonne/common';
 
 import {
-  FAKE,
-  FAKE2_LOCALE,
-  FAKE_LOCALE,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
+  FAKE,
+  FAKE_LOCALE,
+  FAKE2_LOCALE,
   jestSetup,
   jestTeardown,
 } from '../../jest';

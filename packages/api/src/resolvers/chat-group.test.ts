@@ -5,8 +5,11 @@
 
 import { LOCALE } from '@argonne/common';
 
+import chatGroupController from '../controllers/chat-group';
 import {
+  apolloContext,
   apolloExpect,
+  apolloTestServer,
   expectedChatFormatApollo as expectedChatFormat,
   expectedDateFormat,
   expectedIdFormat,
@@ -22,14 +25,11 @@ import {
   jestTeardown,
   prob,
   randomItem,
-  apolloContext,
-  apolloTestServer,
 } from '../jest';
 import Book from '../models/book';
 import ChatGroup from '../models/chat-group';
 import Level from '../models/level';
 import Tenant from '../models/tenant';
-import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
   ADD_CHAT_GROUP,
@@ -57,7 +57,6 @@ import {
   UPDATE_CHAT_GROUP_CHAT_TITLE,
   UPDATE_CHAT_GROUP_USERS,
 } from '../queries/chat-group';
-import chatGroupController from '../controllers/chat-group';
 
 type ChatGroupDocumentEx = Awaited<ReturnType<typeof chatGroupController.create>>;
 
@@ -144,6 +143,7 @@ describe('ChatGroup GraphQL', () => {
 
     const chatGroups = await ChatGroup.find({ users: jest.normalUser, deletedAt: { $exists: false } }).lean();
     const id = randomItem(chatGroups)._id.toString();
+
     const res = await apolloTestServer.executeOperation(
       { query: GET_CHAT_GROUP, variables: { id } },
       { contextValue: apolloContext(jest.normalUser) },

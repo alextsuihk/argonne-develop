@@ -10,7 +10,6 @@ import path from 'node:path';
 
 import type { GraphQLResponse } from '@apollo/server';
 import { ApolloServer } from '@apollo/server';
-import { startStandaloneServer } from '@apollo/server/standalone';
 import { LOCALE } from '@argonne/common';
 import { addDays, addSeconds } from 'date-fns';
 import type { Types } from 'mongoose';
@@ -34,22 +33,20 @@ import type { PresignedUrlDocument } from './models/presigned-url';
 import PresignedUrl from './models/presigned-url';
 import type { QuestionDocument } from './models/question';
 import Question from './models/question';
-import Tenant, { TenantDocument } from './models/tenant';
+import Tenant from './models/tenant';
 import type { UserDocument } from './models/user';
 import User, { activeCond } from './models/user';
 import { redisClient } from './redis';
 import resolvers from './resolvers';
 import typeDefs from './typeDefs';
-import { latestSchoolHistory, mongoId, randomItem, randomString, schoolYear, shuffle, terminate } from './utils/helper';
+import { latestSchoolHistory, mongoId, randomItem, randomString, schoolYear, shuffle } from './utils/helper';
 import { client as minioClient, privateBucket, publicBucket } from './utils/storage';
-import type { Request, Response } from 'express';
-import type { Auth } from './utils/token';
 
 export { mongoId, prob, randomItem, randomItems, randomString, shuffle } from './utils/helper';
 
 export type ConvertObjectIdToString<T extends object> = {
-  [K in keyof T]: T[K] extends Types.ObjectId | undefined
-    ? string | undefined
+  [K in keyof T]: T[K] extends Types.ObjectId | undefined | null
+    ? string | undefined | null
     : T[K] extends Types.ObjectId[]
     ? string[]
     : T[K] | null;
@@ -96,21 +93,6 @@ export const apolloExpect = (
   } else {
     throw `We don't know how to process (${expected})`;
   }
-
-  const x = {
-    kind: 'single',
-    singleResult: {
-      errors: [
-        {
-          message: 'MSG_CODE#10200#email must be a valid email',
-          locations: [{ line: 8, column: 5 }],
-          path: ['isEmailAvailable'],
-          extensions: { code: '10200' },
-        },
-      ],
-      data: null,
-    },
-  };
 
   return 1;
 };
@@ -512,7 +494,7 @@ export const jestSetup = async (code = 'JEST') => {
   const [normalUser] = normalUsers;
   const [tenantAdmin] = allUsers.filter(user => tenant.admins.some(a => a.equals(user._id))).sort(shuffle);
 
-  if (!adminUser || !rootUser || !normalUser!! || !tenantAdmin)
+  if (!adminUser || !rootUser || !normalUser || !tenantAdmin)
     throw `jestSetup(): no valid admin, root or tenantAdmin user(s)`;
 
   const tenantId = tenant._id.toString();

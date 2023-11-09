@@ -161,7 +161,7 @@ const addBidContent = async (req: Request, args: unknown): Promise<QuestionDocum
       { fields: select(), new: true },
     ).lean(),
     content.save(),
-    censorContent(original.tenant, userId, userLocale, `/questions/${id}`, content._id),
+    censorContent(original.tenant, userLocale, `/questions/${id}`, content._id),
     notifySync(
       original.tenant,
       { userIds: [original.student, ...original.bidders], event: 'QUESTION' },
@@ -279,7 +279,7 @@ const addContent = async (req: Request, args: unknown): Promise<QuestionDocument
     Question.findByIdAndUpdate(id, update, { fields: select(), new: true }).lean(),
     // transform(userId, question),
     content.save(),
-    censorContent(original.tenant, userId, userLocale, `/questions/${id}`, content._id),
+    censorContent(original.tenant, userLocale, `/questions/${id}`, content._id),
     notifySync(
       original.tenant,
       { userIds, event: 'QUESTION' },
@@ -600,7 +600,7 @@ const create = async (req: Request, args: unknown): Promise<QuestionDocumentEx> 
     homework && Homework.findByIdAndUpdate(homework, { $push: { questions: _id } }).lean(),
     question.save(),
     content.save(),
-    censorContent(question.tenant, userId, userLocale, `/questions/${_id}`, content._id),
+    censorContent(question.tenant, userLocale, `/questions/${_id}`, content._id),
     notifySync(
       question.tenant,
       { userIds: [userId, ...userIds], event: 'QUESTION' },

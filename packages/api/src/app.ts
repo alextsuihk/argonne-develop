@@ -8,11 +8,10 @@
  * ! Please read the README.md for details
  */
 
-import { LOCALE } from '@argonne/common';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -24,8 +23,6 @@ import { decodeHeader } from './middleware/auth';
 import routes from './routes';
 import { isDevMode, isProdMode } from './utils/environment';
 
-const { MSG_ENUM } = LOCALE;
-
 // instantiate Express
 const app = express();
 
@@ -34,12 +31,11 @@ app.use(helmet({ crossOriginEmbedderPolicy: !isDevMode, contentSecurityPolicy: !
 
 app.use(express.json());
 app.use(cors({ credentials: true, origin: ['http://localhost:5173'] })); // for development mode
-// app.use(compression()); //! TODO:
+app.use(compression() as RequestHandler); //! Hack: to make typescript happy
 app.set('trust proxy', isProdMode); // to populate req.ip & req.ips (even behind nginx reverse proxy)
 
 // decode authentication or apiKey header (jwt)
-// app.use(cookieParser()); // TODO:
-console.log('app.ts re-enable compression() & cookieParse()');
+app.use(cookieParser() as RequestHandler); //! Hack: to make typescript happy
 app.use(decodeHeader);
 
 if (isDevMode) app.use(morgan('dev')); // enable Morgan logger

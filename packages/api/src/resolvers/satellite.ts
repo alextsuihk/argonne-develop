@@ -3,8 +3,8 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import satelliteController from '../controllers/satellite';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

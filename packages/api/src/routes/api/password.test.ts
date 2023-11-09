@@ -16,7 +16,6 @@ const { DEFAULTS } = configLoader;
 
 // Top level of this test suite:
 describe('Password API Routes', () => {
-  let accessToken: string;
   let refreshToken: string;
 
   const user = genUser(null);

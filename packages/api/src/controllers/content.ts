@@ -9,10 +9,12 @@ import type { Types } from 'mongoose';
 
 import type { ContentDocument } from '../models/content';
 import Content from '../models/content';
-import type { CensorTask } from '../models/job';
+import type { JobDocument } from '../models/job';
 import { queueJob } from '../models/job';
 import token from '../utils/token';
 import common from './common';
+
+type CensorTask = NonNullable<JobDocument['censor']>;
 
 const { MSG_ENUM } = LOCALE;
 
@@ -26,12 +28,11 @@ const PUBLIC = 'PUBLIC';
  * Queue Task for censoring content
  */
 export const censorContent = async (
-  tenantId: CensorTask['tenantId'],
-  userId: CensorTask['userId'],
-  userLocale: CensorTask['userLocale'],
-  parent: CensorTask['parent'],
-  contentId: CensorTask['contentId'],
-) => queueJob({ type: 'censor', tenantId, userId, userLocale, parent, contentId });
+  tenantId: NonNullable<CensorTask['tenantId']>,
+  userLocale: NonNullable<CensorTask['userLocale']>,
+  parent: NonNullable<CensorTask['parent']>,
+  contentId: NonNullable<CensorTask['contentId']>,
+) => queueJob({ task: 'censor', tenantId, userLocale, parent, contentId });
 
 const findCommon = async (req: Request, args: unknown) => {
   const { ids, query, token: tok } = await querySchema.concat(optionalIdsSchema).concat(tokenSchema).validate(args);

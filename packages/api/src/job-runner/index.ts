@@ -75,25 +75,24 @@ const execute = async (jobId?: string): Promise<void> => {
 
   console.log(`DEBUG>>>>> Job-Runner, jobID: "${job?._id}", (${new Date()})`);
 
+  // update JobDocument, & notifyAndSync
+  const updateNotifySync = async (job: JobDocument, update: UpdateQuery<JobDocument>) => {
+    // ony need to sync "grade" & "report" tasks
+    const tenantId = job.task === 'grade' ? job.grade?.tenantId : job.task === 'report' ? job.report?.tenantId : null;
+
+    await Promise.all([
+      Job.updateOne({ _id: job._id }, update),
+      config.mode === 'HUB' &&
+        notifySync(tenantId || null, job.owners.length ? { userIds: job.owners, event: 'JOB' } : null, {
+          bulkWrite: { jobs: [{ updateOne: { filter: { _id: job._id }, update } }] satisfies BulkWrite<JobDocument> },
+        }),
+    ]);
+  };
+
   while (job) {
-    const { _id, attempt, task, owners } = job;
-
-    // update JobDocument, & notifyAndSync
-    const updateNotifySync = async (update: UpdateQuery<JobDocument>) => {
-      await Promise.all([
-        Job.updateOne({ _id }, update),
-
-        config.mode === 'HUB' &&
-          'tenantId' in task &&
-          notifySync(task.tenantId || null, owners.length ? { userIds: owners, event: 'JOB' } : null, {
-            bulkWrite: { jobs: [{ updateOne: { filter: { _id }, update } }] satisfies BulkWrite<JobDocument> },
-          }),
-      ]);
-    };
-
     // grading & reporting ONLY support (execute) in hub-mode
-    if (['grade', 'report'].includes(task.type) && config.mode === 'SATELLITE') {
-      await Job.updateOne({ _id }, { status: JOB.STATUS.IGNORE }); // marked "ignore" and skip execution
+    if (['grade', 'report'].includes(job.task) && config.mode === 'SATELLITE') {
+      await Job.updateOne({ _id: job._id }, { status: JOB.STATUS.IGNORE }); // marked "ignore" and skip execution
     } else {
       let timerId: NodeJS.Timeout | undefined;
       try {
@@ -101,19 +100,19 @@ const execute = async (jobId?: string): Promise<void> => {
           new Promise<never>((_, reject) => {
             timerId = setTimeout(reject, DEFAULTS.JOB_RUNNER.JOB.TIMEOUT, TIMEOUT_ERR);
           }),
-          task.type === 'censor'
-            ? censor(task)
-            : task.type === 'grade'
-            ? grade(task)
-            : task.type === 'report'
-            ? report(task)
-            : task.type === 'removeObject'
-            ? (await storage.removeObject(task.url)) || `fail to removeObject(${task.url})`
-            : 'unknown task.type',
+          job.task === 'censor' && job.censor
+            ? censor(job.censor)
+            : job.task === 'grade' && configLoader.config.mode === 'HUB' && job.grade
+            ? grade(job.grade)
+            : job.task === 'report' && configLoader.config.mode === 'HUB' && job.report
+            ? report(job.report)
+            : job.task === 'removeObject' && job.removeObject?.url
+            ? (await storage.removeObject(job.removeObject.url)) || `fail to removeObject(${job.removeObject.url})`
+            : 'unable to process',
         ]);
         clearTimeout(timerId); // (just good practice), ok to let it expires later
 
-        await updateNotifySync({
+        await updateNotifySync(job, {
           status: JOB.STATUS.COMPLETED,
           progress: 100,
           completedAt: new Date(),
@@ -123,12 +122,14 @@ const execute = async (jobId?: string): Promise<void> => {
         console.log(`jobRunner try-catch error() =>> ${error}`);
 
         clearTimeout(timerId); // (just good practice), in case error is thrown by censor(), grade(), etc
+        const { _id, task, attempt } = job;
         await Promise.all([
           error === TIMEOUT_ERR
-            ? log('warn', `jobId: ${_id} timeout (${task.type})`, { _id, attempt, error })
-            : log('error', `jobId: ${_id} error (${task.type})`, { _id, attempt, error }),
+            ? log('warn', `jobId: ${_id} timeout (${task})`, { _id: _id, attempt, error })
+            : log('error', `jobId: ${_id} error (${task})`, { _id: _id, attempt, error }),
 
           updateNotifySync(
+            job,
             error == TIMEOUT_ERR
               ? attempt >= DEFAULTS.JOB_RUNNER.JOB.MAX_ATTEMPTS
                 ? { status: JOB.STATUS.TIMEOUT, completedAt: new Date() }

@@ -8,10 +8,6 @@ import 'jest-extended';
 import { LOCALE } from '@argonne/common';
 
 import {
-  FAKE,
-  FAKE2_LOCALE,
-  FAKE_ID,
-  FAKE_LOCALE,
   apolloContext,
   apolloExpect,
   apolloTestServer,
@@ -19,6 +15,10 @@ import {
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
+  FAKE,
+  FAKE_ID,
+  FAKE_LOCALE,
+  FAKE2_LOCALE,
   jestPutObject,
   jestRemoveObject,
   jestSetup,

@@ -10,8 +10,8 @@ import request from 'supertest';
 
 import app from '../app';
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedDateFormat,
   jestSetup,
@@ -19,7 +19,6 @@ import {
   randomString,
 } from '../jest';
 import Tenant from '../models/tenant';
-import type { UserDocument } from '../models/user';
 import { AUTH_SERVICE_TOKEN } from '../queries/auth-service';
 import { dataDecipher } from '../utils/cipher';
 

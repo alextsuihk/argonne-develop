@@ -3,7 +3,9 @@
  * Commonly used graphql fragments
  */
 
-export const BID = `#graphql
+import gql from 'graphql-tag';
+
+export const BID = gql`
   fragment BidFields on Bid {
     bidder
     bounty
@@ -11,7 +13,7 @@ export const BID = `#graphql
   }
 `;
 
-export const LOCALE = `#graphql
+export const LOCALE = gql`
   fragment LocaleFields on Locale {
     enUS
     zhCN
@@ -19,7 +21,7 @@ export const LOCALE = `#graphql
   }
 `;
 
-export const REMARK = `#graphql
+export const REMARK = gql`
   fragment RemarkFields on Remark {
     u
     t
@@ -27,13 +29,13 @@ export const REMARK = `#graphql
   }
 `;
 
-export const STATUS_RESPONSE = `#graphql
+export const STATUS_RESPONSE = gql`
   fragment StatusResponse on StatusResponse {
     code
   }
 `;
 
-export const MEMBER = `#graphql
+export const MEMBER = gql`
   fragment MemberFields on Member {
     user
     flags
@@ -41,7 +43,7 @@ export const MEMBER = `#graphql
   }
 `;
 
-export const CHAT = `#graphql
+export const CHAT = gql`
   ${MEMBER}
   fragment ChatFields on Chat {
     _id

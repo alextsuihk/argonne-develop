@@ -7,7 +7,7 @@
 
 import { LOCALE, yupSchema } from '@argonne/common';
 import bcrypt from 'bcryptjs';
-import type { CookieOptions, Request, RequestHandler, Response } from 'express';
+import type { Request, RequestHandler, Response } from 'express';
 import type { UpdateQuery } from 'mongoose';
 import ms from 'ms';
 

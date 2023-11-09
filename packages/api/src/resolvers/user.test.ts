@@ -7,8 +7,8 @@
 import { LOCALE } from '@argonne/common';
 
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
@@ -24,7 +24,6 @@ import {
   randomItem,
 } from '../jest';
 import School from '../models/school';
-import type { TenantDocument } from '../models/tenant';
 import Tenant from '../models/tenant';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';

@@ -9,8 +9,8 @@ import 'jest-extended';
 import { LOCALE } from '@argonne/common';
 
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   domain,
   expectedDateFormat,
@@ -31,6 +31,7 @@ import {
   randomItems,
 } from '../jest';
 import School from '../models/school';
+import type { TenantDocument } from '../models/tenant';
 import type { UserDocument } from '../models/user';
 import User from '../models/user';
 import {
@@ -44,7 +45,6 @@ import {
   UPDATE_TENANT_CORE,
   UPDATE_TENANT_EXTRA,
 } from '../queries/tenant';
-import type { TenantDocument } from '../models/tenant';
 
 const { MSG_ENUM } = LOCALE;
 const { TENANT } = LOCALE.DB_ENUM;

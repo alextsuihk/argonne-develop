@@ -2,7 +2,9 @@
  * Apollo TypeDef: Chat-Group
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     chatGroup(id: ID!): ChatGroup
     chatGroups(query: QueryInput): [ChatGroup!]!

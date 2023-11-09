@@ -3,8 +3,8 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import passwordController from '../controllers/password';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

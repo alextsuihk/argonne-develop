@@ -9,9 +9,6 @@ import { LOCALE } from '@argonne/common';
 
 import configLoader from '../config/config-loader';
 import {
-  FAKE,
-  FAKE2_LOCALE,
-  FAKE_LOCALE,
   apolloContext,
   apolloExpect,
   apolloTestServer,
@@ -19,6 +16,9 @@ import {
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
+  FAKE,
+  FAKE_LOCALE,
+  FAKE2_LOCALE,
   jestSetup,
   jestTeardown,
   prob,

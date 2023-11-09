@@ -4,7 +4,7 @@
 
 import { LOCALE } from '@argonne/common';
 
-import { apolloExpect, apolloContext, apolloTestServer, FAKE, jestSetup, jestTeardown, prob } from '../jest';
+import { apolloContext, apolloExpect, apolloTestServer, FAKE, jestSetup, jestTeardown, prob } from '../jest';
 import { ANALYTIC_SESSION } from '../queries/analytic';
 
 const { MSG_ENUM } = LOCALE;

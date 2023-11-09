@@ -6,17 +6,17 @@
 import { LOCALE } from '@argonne/common';
 
 import {
-  FAKE,
-  FAKE2,
-  FAKE2_LOCALE,
-  FAKE_LOCALE,
+  type ConvertObjectIdToString,
   expectedDateFormat,
   expectedIdFormat,
   expectedLocaleFormat,
   expectedRemark,
+  FAKE,
+  FAKE_LOCALE,
+  FAKE2,
+  FAKE2_LOCALE,
   jestSetup,
   jestTeardown,
-  type ConvertObjectIdToString,
 } from '../../jest';
 import type { TypographyDocument } from '../../models/typography';
 import commonTest from './rest-api-test';

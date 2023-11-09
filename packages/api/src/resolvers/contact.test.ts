@@ -5,9 +5,10 @@
 
 import { LOCALE } from '@argonne/common';
 
+import type { TokenWithExpireAtResponse } from '../controllers/common';
 import {
-  apolloExpect,
   apolloContext,
+  apolloExpect,
   apolloTestServer,
   expectedDateFormat,
   expectedIdFormat,
@@ -17,7 +18,6 @@ import {
   prob,
   shuffle,
 } from '../jest';
-import type { UserDocument } from '../models/user';
 import User, { activeCond } from '../models/user';
 import {
   ADD_CONTACT,
@@ -27,7 +27,6 @@ import {
   REMOVE_CONTACT,
   UPDATE_CONTACT,
 } from '../queries/contact';
-import type { TokenWithExpireAtResponse } from '../controllers/common';
 
 const { MSG_ENUM } = LOCALE;
 

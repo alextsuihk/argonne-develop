@@ -10,10 +10,9 @@ import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 
 import { jestSetup, jestTeardown } from '../jest';
-import type { UserDocument } from '../models/user';
+import { sleep } from '../utils/helper';
 import token from '../utils/token';
 import { decodeHeader } from './auth';
-import { sleep } from '../utils/helper';
 
 const { MSG_ENUM } = LOCALE;
 

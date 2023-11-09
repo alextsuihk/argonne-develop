@@ -3,7 +3,9 @@
  *
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     contribution(id: ID!): Contribution
     contributions(query: QueryInput): [Contribution!]!

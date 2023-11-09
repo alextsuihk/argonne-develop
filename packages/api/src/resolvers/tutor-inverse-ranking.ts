@@ -3,8 +3,8 @@
  *
  */
 
-import type { ApolloContext } from '../server';
 import tutorInverseRankingController from '../controllers/tutor-inverse-ranking';
+import type { ApolloContext } from '../server';
 import { tryCatch } from './root';
 
 type unk = unknown;

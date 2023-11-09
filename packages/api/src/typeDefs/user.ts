@@ -2,7 +2,9 @@
  * Apollo TypeDef: User
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     user(id: ID!): User
     users(query: QueryInput): [User!]!

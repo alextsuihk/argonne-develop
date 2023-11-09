@@ -2,7 +2,9 @@
  * apollo typeDef: Level
  */
 
-export default `#graphql
+import gql from 'graphql-tag';
+
+export default gql`
   extend type Query {
     level(id: ID!): Level @cacheControl(maxAge: 3600)
     levels(query: QueryInput): [Level!]! @cacheControl(maxAge: 3600)

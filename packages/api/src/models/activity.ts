@@ -13,7 +13,7 @@ import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import type { Id } from './common';
-import { baseDefinition, pointSchema } from './common';
+import { baseDefinition, localeSchema, pointSchema } from './common';
 
 const { ACTIVITY } = LOCALE.DB_ENUM;
 
@@ -32,6 +32,8 @@ const activitySchema = new Schema(
 
     fee: { type: Number, required: true },
     venue: { type: String, required: true },
+
+    address: { type: localeSchema },
     district: { type: Schema.Types.ObjectId, ref: 'District' },
     location: pointSchema,
 
