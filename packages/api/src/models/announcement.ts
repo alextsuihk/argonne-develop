@@ -9,7 +9,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -41,5 +41,5 @@ const announcementSchema = new Schema(
 
 announcementSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Announcement = model('Announcement', announcementSchema);
-export type AnnouncementDocument = InferSchemaType<typeof announcementSchema> & Id;
+export type AnnouncementDocument = Omit<InferSchemaType<typeof announcementSchema>, 'remarks'> & Id & Remarks;
 export default Announcement;

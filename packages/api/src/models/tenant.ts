@@ -9,7 +9,7 @@ import type { FilterQuery, FlattenMaps, InferSchemaType, Types } from 'mongoose'
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import { Id, stashDefinition, Stashes } from './common';
 import { baseDefinition, localeSchema } from './common';
 
 const { MSG_ENUM } = LOCALE;
@@ -46,7 +46,7 @@ const tenantSchema = new Schema(
     satelliteUrl: String,
 
     flaggedWords: [String],
-    authServices: [String], // oAuth2-like [`${clientId}#${clientSecret}#{redirect}#{select}#${friendKey}`]
+    authServices: [String], // oAuth2-like [`${clientId}#${clientSecret}#{redirect}#{select}#${friendName}#{url}`]
 
     satelliteIp: String, // most recent IP
     satelliteVersion: String,
@@ -61,14 +61,7 @@ const tenantSchema = new Schema(
       },
     ],
 
-    stashes: [
-      {
-        _id: { type: Schema.Types.ObjectId, required: true },
-        title: { type: String, required: true },
-        secret: { type: String, required: true },
-        url: { type: String, required: true },
-      },
-    ],
+    stashes: [stashDefinition],
 
     meta: { type: Map, of: String },
   },
@@ -103,7 +96,11 @@ const tenantSchema = new Schema(
 
 tenantSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Tenant = model('Tenant', tenantSchema);
-export type TenantDocument = FlattenMaps<InferSchemaType<typeof tenantSchema> & Id>;
+export type TenantDocument = FlattenMaps<Omit<InferSchemaType<typeof tenantSchema>, 'seedings' | 'stashes'>> &
+  Id &
+  Stashes & {
+    seedings: { _id: Types.ObjectId; ip: string; startedAt: Date; completedAt?: Date | null; result?: string | null }[];
+  };
 
 export default Tenant;
 

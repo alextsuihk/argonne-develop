@@ -8,7 +8,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Bids, Id, Members } from './common';
 import { baseDefinition, bidDefinition, memberDefinition } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -85,5 +85,5 @@ questionSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])),
 // });
 
 const Question = model('Question', questionSchema);
-export type QuestionDocument = InferSchemaType<typeof questionSchema> & Id;
+export type QuestionDocument = Omit<InferSchemaType<typeof questionSchema>, 'bids' | 'members'> & Bids & Id & Members;
 export default Question;

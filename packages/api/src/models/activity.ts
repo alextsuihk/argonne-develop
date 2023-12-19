@@ -8,11 +8,11 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { InferSchemaType } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition, localeSchema, pointSchema } from './common';
 
 const { ACTIVITY } = LOCALE.DB_ENUM;
@@ -54,5 +54,7 @@ const activitySchema = new Schema(
 
 const Activity = model('Activity', activitySchema);
 
-export type ActivityDocument = InferSchemaType<typeof activitySchema> & Id;
+export type ActivityDocument = Omit<InferSchemaType<typeof activitySchema>, 'participants' | 'remarks'> &
+  Id &
+  Remarks & { participants: { user: Types.ObjectId; status: string; ranking?: number | null }[] };
 export default Activity;

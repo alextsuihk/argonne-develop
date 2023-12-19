@@ -5,11 +5,11 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { InferSchemaType } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -76,5 +76,28 @@ const tutorSchema = new Schema(
 
 tutorSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Tutor = model('Tutor', tutorSchema);
-export type TutorDocument = InferSchemaType<typeof tutorSchema> & Id;
+export type TutorDocument = Omit<
+  InferSchemaType<typeof tutorSchema>,
+  'credentials' | 'rankings' | 'remarks' | 'specialties'
+> &
+  Id &
+  Remarks & {
+    credentials: { _id: Types.ObjectId; title: string; proofs: string[]; updatedAt: Date; verifiedAt?: Date | null }[];
+    specialties: {
+      _id: Types.ObjectId;
+      tenant: Types.ObjectId;
+      note?: string | null;
+      langs: string[];
+      level: Types.ObjectId;
+      subject: Types.ObjectId;
+      priority?: number | null;
+    }[];
+    rankings: {
+      level: Types.ObjectId;
+      subject: Types.ObjectId;
+      correctness?: number | null;
+      explicitness?: number | null;
+      punctuality?: number | null;
+    }[];
+  };
 export default Tutor;

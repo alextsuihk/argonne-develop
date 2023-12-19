@@ -12,6 +12,14 @@ import Tag from '../../models/tag';
 const seed = async (): Promise<string> => {
   const tags: Partial<TagDocument>[] = [
     {
+      name: { enUS: 'algebra', zhHK: '代數', zhCN: '代数' },
+      description: { enUS: 'Algebra', zhHK: '代數', zhCN: '代数' },
+    },
+    {
+      name: { enUS: 'geometry', zhHK: '幾何學', zhCN: '几何学' },
+      description: { enUS: 'Geometry', zhHK: '幾何學', zhCN: '几何学' },
+    },
+    {
       name: { enUS: 'docker', zhHK: 'docker', zhCN: 'docker' },
       description: {
         enUS: 'Docker is a tool to build and run containers. Questions concerning Dockerfiles, Docker Compose, and architecture are accepted, but Stack Overflow questions must be programming-related.',

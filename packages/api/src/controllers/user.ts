@@ -208,7 +208,7 @@ const findCommon = async (
 ) => {
   const [{ query }, adminTenants] = await Promise.all([
     querySchema.validate(args),
-    isRoot(userRoles) ? [] : Tenant.findAdminTenants(userId, userTenants), // ROOT could access any user (no need to pull adminTenants)
+    isRoot(userRoles) ? [] : Tenant.findAdminTenants(userId, userTenants), // ROOT could access all users (no need to pull adminTenants)
   ]);
   if (!isRoot(userRoles) && !adminTenants.length) throw { statusCode: 403, code: MSG_ENUM.UNAUTHORIZED_OPERATION };
 

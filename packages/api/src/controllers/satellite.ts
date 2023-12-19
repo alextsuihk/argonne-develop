@@ -21,7 +21,7 @@ import configLoader from '../config/config-loader';
 import Activity from '../models/activity';
 import Announcement from '../models/announcement';
 import Assignment from '../models/assignment';
-import Book, { BookAssignment } from '../models/book';
+import Book, { BookAssignment, BookDocument } from '../models/book';
 import Chat from '../models/chat';
 import ChatGroup from '../models/chat-group';
 import Classroom from '../models/classroom';
@@ -232,7 +232,7 @@ const seedRequest: RequestHandler = async (req, res, next) => {
         select,
       ).lean(),
       bookAssignments: await BookAssignment.find({}, select).lean(),
-      books: await Book.find({}, select).lean(),
+      books: (await Book.find({}, select).lean()) as BookDocument[], // correct the BookDocument type
       chatGroups: await ChatGroup.find(
         { $or: [{ tenant: tenant._id }, { tenant: { $exists: false } }] },
         select,

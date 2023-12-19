@@ -4,12 +4,13 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { InferSchemaType } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
+import { ContributionDocument } from './contribution';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -36,7 +37,7 @@ const bookAssignmentSchema = new Schema(
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 export const BookAssignment = model('BookAssignment', bookAssignmentSchema);
-export type BookAssignmentDocument = InferSchemaType<typeof bookAssignmentSchema> & Id;
+export type BookAssignmentDocument = Omit<InferSchemaType<typeof bookAssignmentSchema>, 'remarks'> & Id & Remarks;
 
 const bookSchema = new Schema(
   {
@@ -77,5 +78,26 @@ const bookSchema = new Schema(
 
 bookSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Book = model('Book', bookSchema);
-export type BookDocument = InferSchemaType<typeof bookSchema> & Id;
+
+export type BookDocument = Omit<InferSchemaType<typeof bookSchema>, 'remarks' | 'revisions' | 'supplements'> &
+  Id &
+  Remarks & {
+    revisions: {
+      _id: Types.ObjectId;
+      rev: string;
+      isbn?: string | null;
+      year: number;
+      listPrice?: number | null;
+      imageUrls: string[];
+      createdAt: Date;
+      deletedAt?: Date | null;
+    }[];
+
+    supplements: {
+      _id: Types.ObjectId;
+      contribution: ContributionDocument;
+      chapter: string;
+      deletedAt?: Date | null;
+    }[];
+  };
 export default Book;

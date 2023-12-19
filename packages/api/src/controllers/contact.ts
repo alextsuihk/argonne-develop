@@ -47,7 +47,7 @@ const CONTACT_TOKEN_PREFIX = 'CONTACT';
 const transform = (
   userTenants: string[],
   friend: UserDocument,
-  userContacts: UserDocument['contacts'],
+  userContacts: { user: Types.ObjectId; name?: string | null; updatedAt: Date }[],
 ): ContactWithAvatarUrl => {
   const myContact = userContacts.find(c => c.user.equals(friend._id));
   return {

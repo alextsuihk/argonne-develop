@@ -64,12 +64,10 @@ const sanitizeServices = (services: string[], isSchool = false) => {
  */
 const transform = (tenant: TenantDocument, admin = false): TenantDocument => ({
   ...tenant,
-  authServices: admin
-    ? tenant.authServices.map(authService => {
-        const [clientId, , redirectUri, , friendlyKey] = authService.split('#'); // hide clientSecret & select
-        return `${friendlyKey ?? ''}#${clientId}#${redirectUri}`;
-      })
-    : [],
+  authServices: tenant.authServices.map(authService => {
+    const [clientId, , redirectUri, , friendlyName, url] = authService.split('#'); // hide clientSecret & select
+    return admin ? `${friendlyName}#${url}#${clientId}#${redirectUri}` : `${friendlyName}#${url}`;
+  }),
 
   stashes: admin ? tenant.stashes : [], // hide stashes for non admin|tenantAdmin
 });

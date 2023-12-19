@@ -5,15 +5,14 @@
 
 import { LOCALE } from '@argonne/common';
 import bcrypt from 'bcryptjs';
-import type { InferSchemaType } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
 import redisCache from '../redis';
 import { mongoId } from '../utils/helper';
-import type { Id } from './common';
+import { Id, Remarks, stashDefinition } from './common';
 import { baseDefinition, localeSchema } from './common';
-import { userExtraDefinition } from './user-extra';
 
 const { SYSTEM, USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -127,16 +126,24 @@ const userSchema = new Schema(
 
     identifiedAt: Date,
 
-    stashes: [
+    stashes: [stashDefinition],
+
+    studentIds: [{ type: String, index: true }],
+
+    schoolHistories: [
       {
-        _id: { type: Schema.Types.ObjectId, required: true },
-        title: { type: String, required: true },
-        secret: { type: String, required: true },
-        url: { type: String, required: true },
+        _id: false,
+        year: { type: String, required: true },
+        school: { type: Schema.Types.ObjectId, ref: 'School', required: true },
+        level: { type: Schema.Types.ObjectId, ref: 'Level', required: true },
+        schoolClass: String,
+        updatedAt: { type: Date, default: Date.now },
       },
     ],
 
-    ...userExtraDefinition,
+    // schoolHistories: [String], // [year, school, level, schoolClass, updatedAt].join("#")
+
+    favoriteTutors: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     deletedAt: { type: Date, expires: DEFAULTS.MONGOOSE.EXPIRES.USER },
   },
   {
@@ -161,7 +168,7 @@ const userSchema = new Schema(
             };
         }
 
-        // no cached values
+        // no cached values (or invalid value)
         const [system, admins, account, accountWithheld, robots, alex] = await Promise.all([
           this.findOne({ status: USER.STATUS.SYSTEM, name: 'System' }).lean(),
           this.find({ roles: USER.ROLE.ADMIN }).lean(),
@@ -210,5 +217,19 @@ userSchema.pre('save', async function () {
 
 userSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const User = model('User', userSchema);
-export type UserDocument = InferSchemaType<typeof userSchema> & Id;
+// export type UserDocument = InferSchemaType<typeof userSchema> & Id;
+
+// no need to define apiKeys
+export type UserDocument = Omit<InferSchemaType<typeof userSchema>, 'remarks' | 'schoolHistories' | 'violations'> &
+  Id &
+  Remarks & {
+    schoolHistories: {
+      year: string;
+      school: Types.ObjectId;
+      level: Types.ObjectId;
+      schoolClass?: string | null;
+      updatedAt: Date;
+    }[];
+    violations: { createdAt: Date; reason: string; link: string }[];
+  };
 export default User;

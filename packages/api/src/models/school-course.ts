@@ -4,7 +4,7 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { InferSchemaType } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
@@ -50,5 +50,11 @@ const schoolSchema = new Schema(
 
 schoolSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const SchoolCourse = model('SchoolCourse', schoolSchema);
-export type SchoolCourseDocument = InferSchemaType<typeof schoolSchema> & Id;
+export type SchoolCourseDocument = Omit<InferSchemaType<typeof schoolSchema>, 'courses'> &
+  Id & {
+    courses: {
+      level: Types.ObjectId;
+      subjects: { _id: Types.ObjectId; alias?: string | null; books: Types.ObjectId[] }[];
+    }[];
+  };
 export default SchoolCourse;

@@ -5,11 +5,11 @@
  */
 
 import { LOCALE } from '@argonne/common';
-import type { InferSchemaType } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -31,8 +31,8 @@ const contributionSchema = new Schema(
     contributors: [
       {
         _id: false, // user is unique, _id is not needed
-        user: { type: Schema.Types.ObjectId, ref: 'User' },
-        name: String,
+        user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+        name: { type: String, required: true },
         school: { type: Schema.Types.ObjectId, ref: 'School' },
       },
     ],
@@ -47,5 +47,7 @@ const contributionSchema = new Schema(
 
 contributionSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Contribution = model('Contribution', contributionSchema);
-export type ContributionDocument = InferSchemaType<typeof contributionSchema> & Id;
+export type ContributionDocument = Omit<InferSchemaType<typeof contributionSchema>, 'remarks' | 'contributors'> &
+  Id &
+  Remarks & { contributors: { user: Types.ObjectId; name: string; school?: Types.ObjectId | null }[] };
 export default Contribution;

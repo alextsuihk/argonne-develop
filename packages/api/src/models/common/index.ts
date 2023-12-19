@@ -29,7 +29,8 @@ export const baseDefinition = {
 };
 
 const baseSchema = new Schema(baseDefinition);
-export type BaseDocument = InferSchemaType<typeof baseSchema>;
+export type Remarks = { remarks: { t: Date; u: string; m: string }[] };
+export type BaseDocument = Omit<InferSchemaType<typeof baseSchema>, 'remarks'> & Remarks;
 
 /**
  * bidDefinition
@@ -40,6 +41,7 @@ export const bidDefinition = {
   bounty: Number,
   contents: [{ type: Schema.Types.ObjectId, ref: 'Content' }],
 };
+export type Bids = { bids: { bidder: Types.ObjectId; bounty?: number | null; contents: Types.ObjectId[] }[] };
 
 /**
  * localSchema
@@ -75,3 +77,15 @@ export const memberDefinition = {
   flags: [String],
   lastViewedAt: { type: Date, default: Date.now },
 };
+export type Members = { members: { user: Types.ObjectId; flags: string[]; lastViewedAt: Date }[] };
+
+/**
+ * stashDefinition
+ */
+export const stashDefinition = {
+  _id: { type: Schema.Types.ObjectId, required: true },
+  title: { type: String, required: true },
+  secret: { type: String, required: true },
+  url: { type: String, required: true },
+};
+export type Stashes = { stashes: { _id: Types.ObjectId; title: string; secret: string; url: string }[] };

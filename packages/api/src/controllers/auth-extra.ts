@@ -51,6 +51,8 @@ type Action =
 export type GetExtraAction = 'isEmailAvailable' | 'listApiKeys';
 export type PostExtraAction = 'sendEmailVerification' | 'sendMessengerVerification';
 
+type ApiKeys = { _id: Types.ObjectId; token: string; scope: string; note?: string | null; expireAt: Date }[];
+
 const { MSG_ENUM } = LOCALE;
 const { MESSENGER, SYSTEM, USER } = LOCALE.DB_ENUM;
 const { assertUnreachable, auth, authGetUser, hubModeOnly } = common;
@@ -75,7 +77,7 @@ const { config } = configLoader;
 /**
  * (helper) partially hide token value except showId
  */
-const hideApiKeysToken = (apiKeys: UserDocument['apiKeys'], showId?: Types.ObjectId): UserDocument['apiKeys'] =>
+const hideApiKeysToken = (apiKeys: ApiKeys, showId?: Types.ObjectId): ApiKeys =>
   apiKeys.map(({ _id, token, ...rest }) => ({
     _id,
     ...rest,
@@ -94,7 +96,7 @@ export const isEmailAvailable = async (req: Request, args: unknown): Promise<boo
 /**
  * List ApiKeys
  */
-export const listApiKeys = async (req: Request): Promise<UserDocument['apiKeys']> => {
+export const listApiKeys = async (req: Request): Promise<ApiKeys> => {
   const { apiKeys } = await authGetUser(req);
   return hideApiKeysToken(apiKeys);
 };
@@ -102,7 +104,7 @@ export const listApiKeys = async (req: Request): Promise<UserDocument['apiKeys']
 /**
  * Add ApiKey
  */
-export const addApiKey = async (req: Request, args: unknown): Promise<UserDocument['apiKeys']> => {
+export const addApiKey = async (req: Request, args: unknown): Promise<ApiKeys> => {
   const [user, { expireAt, scope, note }] = await Promise.all([authGetUser(req), userApiKeySchema.validate(args)]);
   if (expireAt < new Date()) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR };
 
@@ -136,7 +138,7 @@ export const addApiKey = async (req: Request, args: unknown): Promise<UserDocume
 /**
  * Remove Api Key
  */
-export const removeApiKey = async (req: Request, args: unknown): Promise<UserDocument['apiKeys']> => {
+export const removeApiKey = async (req: Request, args: unknown): Promise<ApiKeys> => {
   const [user, { id }] = await Promise.all([authGetUser(req), idSchema.validate(args)]);
 
   const originalApiKey = user.apiKeys.find(p => p._id.equals(id));

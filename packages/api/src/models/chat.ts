@@ -7,7 +7,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Members, Remarks } from './common';
 import { baseDefinition, memberDefinition } from './common';
 
 const { DEFAULTS } = configLoader;
@@ -25,5 +25,5 @@ const chatSchema = new Schema(
 );
 
 const Chat = model('Chat', chatSchema);
-export type ChatDocument = InferSchemaType<typeof chatSchema> & Id;
+export type ChatDocument = Omit<InferSchemaType<typeof chatSchema>, 'members' | 'remarks'> & Id & Members & Remarks;
 export default Chat;

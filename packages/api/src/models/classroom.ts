@@ -11,7 +11,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -50,5 +50,5 @@ const classroomSchema = new Schema(
 
 classroomSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Classroom = model('Classroom', classroomSchema);
-export type ClassroomDocument = InferSchemaType<typeof classroomSchema> & Id;
+export type ClassroomDocument = Omit<InferSchemaType<typeof classroomSchema>, 'remarks'> & Id & Remarks;
 export default Classroom;

@@ -34,13 +34,14 @@ describe('Auth-Services GraphQL', () => {
   test('should pass when generates authToken & gets user info', async () => {
     expect.assertions(1 + 3);
 
+    const friendName = 'JEST-apollo';
+    const url = 'https://libray.example.com';
     const clientId = randomString();
     const clientSecret = randomString();
     const redirectUri = '/jest';
-    const friendKey = 'JEST-apollo';
 
     // fake an authService
-    const authService = [clientId, clientSecret, redirectUri, 'BARE', friendKey].join('#');
+    const authService = [clientId, clientSecret, redirectUri, 'BARE', friendName, url].join('#');
     const { matchedCount } = await Tenant.updateOne(
       { _id: jest.tenantId, services: TENANT.SERVICE.AUTH_SERVICE },
       { $push: { authServices: authService } },

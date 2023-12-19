@@ -30,10 +30,10 @@ export const extract = (msg: Locale | string, userLocale?: string) =>
   typeof msg === 'string'
     ? msg
     : userLocale === zhHK
-    ? msg.zhHK
-    : userLocale === zhCN
-    ? msg.zhCN || msg.zhHK
-    : msg.enUS;
+      ? msg.zhHK
+      : userLocale === zhCN
+        ? msg.zhCN || msg.zhHK
+        : msg.enUS;
 
 /**
  * Send Message to System Admins

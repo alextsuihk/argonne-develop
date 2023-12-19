@@ -111,20 +111,6 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
 
       assignments: assignments.map(a => a._id),
 
-      supplements: Array(supplementCount)
-        .fill(0)
-        .map(() => {
-          const contribution = fakeContribution(randomItems(users, 3));
-          contributions.push({ ...contribution.toObject(), book: bookId });
-
-          return {
-            _id: mongoId(),
-            contribution: contribution._id,
-            chapter: `${faker.number.int({ min: 1, max: 10 })}#${faker.number.int({ min: 1, max: 20 })}`,
-            ...(prob(0.1) && { deletedAt: faker.date.recent({ days: 120 }) }),
-          };
-        }),
-
       revisions: Array(rev)
         .fill(0)
         .map((_, idx) => ({
@@ -140,7 +126,25 @@ const fake = async (count = 200, rev = 3, assignmentCount = 10, supplementCount 
           updatedAt: new Date(),
         })),
     });
-    books.push(book);
+
+    // book.supplement is separated out because BookDocument['supplements'] populates Contribution
+    book.supplements.push(
+      ...Array(supplementCount)
+        .fill(0)
+        .map(() => {
+          const contribution = fakeContribution(randomItems(users, 3));
+          contribution.book = bookId;
+          contributions.push(contribution.toObject());
+
+          return {
+            _id: mongoId(),
+            contribution: contribution._id,
+            chapter: `${faker.number.int({ min: 1, max: 10 })}#${faker.number.int({ min: 1, max: 20 })}`,
+            ...(prob(0.1) && { deletedAt: faker.date.recent({ days: 120 }) }),
+          };
+        }),
+    );
+    books.push(book.toObject());
   }
 
   await Promise.all([

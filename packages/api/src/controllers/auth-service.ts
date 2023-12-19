@@ -46,7 +46,7 @@ export const authServiceToken = async (
   if (!tenantId || !clientId || !tenant || !schoolId || !tenant.services.includes(TENANT.SERVICE.AUTH_SERVICE))
     throw { statusCode: 400, code: MSG_ENUM.TENANT_ERROR };
 
-  const authService = tenant.authServices.find(service => service.startsWith(clientId)); // no need to check redirectUrl nor friendlyKey
+  const authService = tenant.authServices.find(service => service.startsWith(clientId)); // no need to check redirectUrl nor friendlyName
   if (userTenants[0] !== tenantId || !authService) throw { statusCode: 422, code: MSG_ENUM.USER_INPUT_ERROR }; // only support userPrimaryTenant
 
   const [cid, clientSecret, redirectUri, select] = authService.split('#');

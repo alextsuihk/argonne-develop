@@ -8,7 +8,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { CHAT_GROUP, SYSTEM } = LOCALE.DB_ENUM;
@@ -44,5 +44,5 @@ const chatGroupSchema = new Schema(
 
 chatGroupSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const ChatGroup = model('ChatGroup', chatGroupSchema);
-export type ChatGroupDocument = InferSchemaType<typeof chatGroupSchema> & Id;
+export type ChatGroupDocument = Omit<InferSchemaType<typeof chatGroupSchema>, 'remarks'> & Id & Remarks;
 export default ChatGroup;

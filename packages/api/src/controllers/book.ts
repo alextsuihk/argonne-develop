@@ -227,7 +227,7 @@ const create = async (req: Request, args: unknown): Promise<BookDocumentEx> => {
     messageToAdmins(msg, userId, userLocale, isAdmin(userRoles), publisher.admins, `BOOK#${book._id}`),
     DatabaseEvent.log(userId, `/books/${_id}`, 'CREATE', { args }),
     syncToAllSatellites({
-      bulkWrite: { books: [{ insertOne: { document: book } }] satisfies BulkWrite<BookDocument> },
+      bulkWrite: { books: [{ insertOne: { document: book.toObject() } }] satisfies BulkWrite<BookDocument> },
     }),
   ]);
 
@@ -639,16 +639,17 @@ const addAssignment = async (req: Request, args: unknown): Promise<BookDocumentE
     assignment: { content: data, contribution: contributionFields, examples: examplesFields, ...assignmentFields },
   } = await bookAssignmentSchema.concat(idSchema).validate(args);
 
-  const [{ book: original, publisher }, contributors, { systemId }] = await Promise.all([
+  const { contributors, ...otherContributionFields } = contributionFields;
+  const [{ book: original, publisher }, sanitizedContributors, { systemId }] = await Promise.all([
     checkPermission(id, userId, isAdmin(userRoles)),
-    sanitizeContributors(contributionFields.contributors),
+    sanitizeContributors(contributors),
     User.findSystemAccountIds(),
   ]);
-  const creator = (contributors.length === 1 && contributors[0]?.user) || systemId; // if multiple contributors, use systemId
+  const creator = (sanitizedContributors.length === 1 && sanitizedContributors[0]?.user) || systemId; // if multiple contributors, use systemId
 
   const contribution = new Contribution<Partial<ContributionDocument>>({
-    ...contributionFields,
-    contributors,
+    ...otherContributionFields,
+    contributors: sanitizedContributors,
     flags: [CONTRIBUTION.FLAG.BOOK_ASSIGNMENT],
     book: original._id,
     chapter: assignmentFields.chapter,
@@ -753,15 +754,16 @@ const addSupplement = async (req: Request, args: unknown): Promise<BookDocumentE
     supplement: { contribution: contributionFields, ...supplementFields },
   } = await bookSupplementSchema.concat(idSchema).validate(args);
 
-  const [{ book: original, publisher }, contributors] = await Promise.all([
+  const { contributors, ...otherContributionFields } = contributionFields;
+  const [{ book: original, publisher }, sanitizedContributors] = await Promise.all([
     checkPermission(id, userId, isAdmin(userRoles)),
-    sanitizeContributors(contributionFields.contributors),
+    sanitizeContributors(contributors),
   ]);
 
   // save before population
   const contribution = await Contribution.create<Partial<ContributionDocument>>({
-    ...contributionFields,
-    contributors,
+    ...otherContributionFields,
+    contributors: sanitizedContributors,
     flags: [CONTRIBUTION.FLAG.BOOK_SUPPLEMENT],
     book: original._id,
     chapter: supplementFields.chapter,

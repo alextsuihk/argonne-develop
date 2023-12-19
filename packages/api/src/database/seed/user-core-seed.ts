@@ -12,7 +12,7 @@ import chalk from 'chalk';
 import configLoader from '../../config/config-loader';
 import type { UserDocument } from '../../models/user';
 import User from '../../models/user';
-import { randomString } from '../../utils/helper';
+import { mongoId, randomString } from '../../utils/helper';
 
 const { USER } = LOCALE.DB_ENUM;
 const { DEFAULTS } = configLoader;
@@ -72,6 +72,7 @@ const seed = async (): Promise<string> => {
       emails: [`${randomString()}@@${DEFAULTS.DOMAIN}`], // invalid email format, non-login-able
     },
     {
+      _id: mongoId('654c52a152625f03784fb312'), // fixed _id for alex
       status: USER.STATUS.ACTIVE,
       name: 'Alex',
       emails: ['alex@inspire.hk', 'alex@alextsui.net'],
