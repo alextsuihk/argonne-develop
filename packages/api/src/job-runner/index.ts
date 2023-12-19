@@ -103,12 +103,13 @@ const execute = async (jobId?: string): Promise<void> => {
           job.task === 'censor' && job.censor
             ? censor(job.censor)
             : job.task === 'grade' && configLoader.config.mode === 'HUB' && job.grade
-            ? grade(job.grade)
-            : job.task === 'report' && configLoader.config.mode === 'HUB' && job.report
-            ? report(job.report)
-            : job.task === 'removeObject' && job.removeObject?.url
-            ? (await storage.removeObject(job.removeObject.url)) || `fail to removeObject(${job.removeObject.url})`
-            : 'unable to process',
+              ? grade(job.grade)
+              : job.task === 'report' && configLoader.config.mode === 'HUB' && job.report
+                ? report(job.report)
+                : job.task === 'removeObject' && job.removeObject?.url
+                  ? (await storage.removeObject(job.removeObject.url)) ||
+                    `fail to removeObject(${job.removeObject.url})`
+                  : 'unable to process',
         ]);
         clearTimeout(timerId); // (just good practice), ok to let it expires later
 

@@ -9,10 +9,12 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import Tenant from './tenant';
 
 const { DEFAULTS } = configLoader;
+
+const ILLEGAL_ABBR = ['ALEX', 'STEM', 'TUTOR']; // uppercase
 
 const redirectSchema = new Schema(
   {
@@ -25,16 +27,16 @@ const redirectSchema = new Schema(
 
     statics: {
       async generate(url: string, expiresIn?: number) {
-        let alreadyTaken = true;
+        let notAllowed = true;
         let abbr = '';
 
         do {
           abbr = Math.random().toString(36).slice(2).toUpperCase();
-          const [redirect, tenant] = await Promise.all([Tenant.exists({ code: abbr }), Redirect.exists({ abbr })]);
-          alreadyTaken = !!redirect || !!tenant; //
-        } while (alreadyTaken);
+          const [tenant, redirect] = await Promise.all([Tenant.exists({ code: abbr }), this.exists({ abbr })]);
+          notAllowed = !!redirect || !!tenant || ILLEGAL_ABBR.includes(abbr); //
+        } while (notAllowed);
 
-        await Redirect.create({ abbr, url, ...(expiresIn && { expireAt: addSeconds(Date.now(), expiresIn) }) });
+        await this.create({ abbr, url, ...(expiresIn && { expireAt: addSeconds(Date.now(), expiresIn) }) });
 
         return abbr;
       },
@@ -42,6 +44,6 @@ const redirectSchema = new Schema(
   },
 );
 
-export type RedirectDocument = InferSchemaType<typeof redirectSchema> & Id;
+export type RedirectDocument = Omit<InferSchemaType<typeof redirectSchema>, 'remarks'> & Id & Remarks;
 const Redirect = model('Redirect', redirectSchema);
-export default Tenant;
+export default Redirect;

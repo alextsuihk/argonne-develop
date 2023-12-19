@@ -58,19 +58,19 @@ const createUpdateDelete = async <T extends BaseDocument>(
           .send(data)
           .set(task.headers ?? headers)
       : action === 'delete'
-      ? await request(app)
-          .delete(`/api/${route}/${id!}`)
-          .send(prob(0.5) ? { remark: FAKE } : {})
-          .set(task.headers ?? headers)
-      : action.startsWith('get')
-      ? await request(app)
-          .get(extra ? `/api/${route}/${extra}` : `/api/${route}`)
-          .send(data)
-          .set(task.headers ?? headers)
-      : await request(app)
-          .patch(action === 'update' ? `/api/${route}/${id}` : `/api/${route}/${id!}/${action}`)
-          .send(data)
-          .set(task.headers ?? headers);
+        ? await request(app)
+            .delete(`/api/${route}/${id!}`)
+            .send(prob(0.5) ? { remark: FAKE } : {})
+            .set(task.headers ?? headers)
+        : action.startsWith('get')
+          ? await request(app)
+              .get(extra ? `/api/${route}/${extra}` : `/api/${route}`)
+              .send(data)
+              .set(task.headers ?? headers)
+          : await request(app)
+              .patch(action === 'update' ? `/api/${route}/${id}` : `/api/${route}/${id!}/${action}`)
+              .send(data)
+              .set(task.headers ?? headers);
 
     // console.log('restful debug [action, extra] >>> ', action, id, extra);
 

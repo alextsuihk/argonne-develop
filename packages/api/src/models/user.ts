@@ -217,7 +217,6 @@ userSchema.pre('save', async function () {
 
 userSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const User = model('User', userSchema);
-// export type UserDocument = InferSchemaType<typeof userSchema> & Id;
 
 // no need to define apiKeys
 export type UserDocument = Omit<InferSchemaType<typeof userSchema>, 'remarks' | 'schoolHistories' | 'violations'> &

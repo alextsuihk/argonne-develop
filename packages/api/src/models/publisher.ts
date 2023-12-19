@@ -8,7 +8,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition, localeSchema } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -37,5 +37,5 @@ const publisherSchema = new Schema(
 
 publisherSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Publisher = model('Publisher', publisherSchema);
-export type PublisherDocument = InferSchemaType<typeof publisherSchema> & Id;
+export type PublisherDocument = Omit<InferSchemaType<typeof publisherSchema>, 'remarks'> & Id & Remarks;
 export default Publisher;

@@ -770,12 +770,12 @@ const updateFlag = async (
           { fields: select(), new: true },
         ).lean()
       : action === 'setFlag'
-      ? Question.findOneAndUpdate(
-          { _id: id, 'members.user': { $ne: userId } },
-          { $push: { members: { user: userId, flags: [flag], lastViewedAt: new Date() } } },
-          { fields: select(), new: true },
-        ).lean()
-      : null,
+        ? Question.findOneAndUpdate(
+            { _id: id, 'members.user': { $ne: userId } },
+            { $push: { members: { user: userId, flags: [flag], lastViewedAt: new Date() } } },
+            { fields: select(), new: true },
+          ).lean()
+        : null,
 
     notifySync(
       original.tenant,

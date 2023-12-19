@@ -3,12 +3,13 @@
  *
  */
 
+import type { Locale } from '@argonne/common';
 import { LOCALE } from '@argonne/common';
-import type { InferSchemaType } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition, localeSchema } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -42,6 +43,8 @@ const typographySchema = new Schema(
 
 typographySchema.index({ tenant: 'text', key: 'text' }, { name: 'Search' }); // text search
 const Typography = model('Typography', typographySchema);
-export type TypographyDocument = InferSchemaType<typeof typographySchema> & Id;
+export type TypographyDocument = Omit<InferSchemaType<typeof typographySchema>, 'customs' | 'remarks'> &
+  Id &
+  Remarks & { customs: { tenant: Types.ObjectId; title: Locale; content: Locale }[] };
 
 export default Typography;

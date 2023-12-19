@@ -6,7 +6,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { DEFAULTS } = configLoader;
@@ -24,5 +24,5 @@ const contentSchema = new Schema(
 );
 
 const Content = model('Content', contentSchema);
-export type ContentDocument = InferSchemaType<typeof contentSchema> & Id;
+export type ContentDocument = Omit<InferSchemaType<typeof contentSchema>, 'remarks'> & Id & Remarks;
 export default Content;

@@ -10,7 +10,7 @@ import { InferSchemaType, model, Schema } from 'mongoose';
 import configLoader from '../config/config-loader';
 import { redisClient } from '../redis';
 import { isTestMode } from '../utils/environment';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { JOB, SYSTEM } = LOCALE.DB_ENUM;
@@ -50,7 +50,7 @@ const jobSchema = new Schema(
 );
 
 jobSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
-export type JobDocument = InferSchemaType<typeof jobSchema> & Id;
+export type JobDocument = Omit<InferSchemaType<typeof jobSchema>, 'remarks'> & Id & Remarks;
 
 const Job = model('Job', jobSchema);
 export default Job;

@@ -12,7 +12,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition, localeSchema } from './common';
 
 const { DEFAULTS } = configLoader;
@@ -30,5 +30,5 @@ const merchandiseSchema = new Schema(
 );
 
 const Merchandise = model('Merchandise', merchandiseSchema);
-export type MerchandiseDocument = InferSchemaType<typeof merchandiseSchema> & Id;
+export type MerchandiseDocument = Omit<InferSchemaType<typeof merchandiseSchema>, 'remarks'> & Id & Remarks;
 export default Merchandise;

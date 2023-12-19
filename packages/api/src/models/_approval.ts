@@ -8,15 +8,12 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import { randomString } from '../utils/helper';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { DEFAULTS } = configLoader;
 
-export const NEW_JOB_CHANNEL = `new-job-${randomString()}`;
-
-const jobSchema = new Schema(
+const approvalSchema = new Schema(
   {
     ...baseDefinition,
 
@@ -25,12 +22,12 @@ const jobSchema = new Schema(
     approvedBy: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     approvedAt: { type: Date, expires: DEFAULTS.MONGOOSE.EXPIRES.APPROVAL },
 
-    task: String,
+    task: String, // [task#args].join('#')
     result: String,
   },
   DEFAULTS.MONGOOSE.SCHEMA_OPTS,
 );
 
-const Approval = model('Approval', jobSchema);
-export type ApprovalDocument = InferSchemaType<typeof jobSchema> & Id;
+const Approval = model('Approval', approvalSchema);
+export type ApprovalDocument = Omit<InferSchemaType<typeof approvalSchema>, 'remarks'> & Id & Remarks;
 export default Approval;

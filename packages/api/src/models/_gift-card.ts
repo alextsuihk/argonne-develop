@@ -11,7 +11,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { DEFAULTS } = configLoader;
@@ -31,5 +31,5 @@ const giftCardSchema = new Schema(
 );
 
 const GiftCard = model('GiftCard', giftCardSchema);
-export type GiftCardDocument = InferSchemaType<typeof giftCardSchema> & Id;
+export type GiftCardDocument = Omit<InferSchemaType<typeof giftCardSchema>, 'remarks'> & Id & Remarks;
 export default GiftCard;

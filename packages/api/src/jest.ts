@@ -48,8 +48,8 @@ export type ConvertObjectIdToString<T extends object> = {
   [K in keyof T]: T[K] extends Types.ObjectId | undefined | null
     ? string | undefined | null
     : T[K] extends Types.ObjectId[]
-    ? string[]
-    : T[K] | null;
+      ? string[]
+      : T[K] | null;
 };
 
 const { QUESTION, USER } = LOCALE.DB_ENUM;

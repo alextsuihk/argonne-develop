@@ -8,7 +8,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { DEFAULTS } = configLoader;
@@ -27,5 +27,5 @@ const userInterestSchema = new Schema(
 );
 
 const UserInterest = model('UserInterest', userInterestSchema);
-export type UserInterestDocument = InferSchemaType<typeof userInterestSchema> & Id;
+export type UserInterestDocument = Omit<InferSchemaType<typeof userInterestSchema>, 'remarks'> & Id & Remarks;
 export default UserInterest;

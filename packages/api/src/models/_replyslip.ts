@@ -3,11 +3,11 @@
  *
  */
 
-import type { InferSchemaType } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { DEFAULTS } = configLoader;
@@ -23,10 +23,12 @@ const replySlipSchema = new Schema(
     choices: [String],
     replies: [
       {
+        _id: false,
         student: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-        parent: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+        parent: { type: Schema.Types.ObjectId, ref: 'User' },
         repliedAt: Date,
         answer: Number,
+        note: String,
       },
     ],
     createdAt: { type: Date, default: Date.now, expires: DEFAULTS.MONGOOSE.EXPIRES.REPLY_SLIP },
@@ -35,5 +37,15 @@ const replySlipSchema = new Schema(
 );
 
 const ReplySlip = model('ReplySlip', replySlipSchema);
-export type ReplySlipDocument = InferSchemaType<typeof replySlipSchema> & Id;
+export type ReplySlipDocument = Omit<InferSchemaType<typeof replySlipSchema>, 'remarks' | 'replies'> &
+  Id &
+  Remarks & {
+    replies: {
+      student: Types.ObjectId;
+      parent?: Types.ObjectId | null;
+      repliedAt?: Date | null;
+      answer?: number | null;
+      note?: string | null;
+    }[];
+  };
 export default ReplySlip;

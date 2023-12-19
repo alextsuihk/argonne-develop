@@ -105,8 +105,8 @@ const fake = async (codes: string[], chatGroupCount = 5, chatMax = 5, contentMax
                   membership: prob(0.5)
                     ? CHAT_GROUP.MEMBERSHIP.NORMAL
                     : prob(0.5)
-                    ? CHAT_GROUP.MEMBERSHIP.CLOSED
-                    : CHAT_GROUP.MEMBERSHIP.PUBLIC,
+                      ? CHAT_GROUP.MEMBERSHIP.CLOSED
+                      : CHAT_GROUP.MEMBERSHIP.PUBLIC,
                   ...(prob(0.8) && { title: `chatGroup-title : ${faker.lorem.slug(5)}` }),
                   ...(prob(0.5) && { description: `chatGroup-desc : ${faker.lorem.sentences(5)}` }),
                   users: [user, ...otherUsers].map(u => u._id),

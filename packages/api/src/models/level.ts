@@ -8,7 +8,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition, localeSchema } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -34,5 +34,5 @@ const levelSchema = new Schema(
 
 levelSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Level = model('Level', levelSchema);
-export type LevelDocument = InferSchemaType<typeof levelSchema> & Id;
+export type LevelDocument = Omit<InferSchemaType<typeof levelSchema>, 'remarks'> & Id & Remarks;
 export default Level;

@@ -226,8 +226,8 @@ const impersonateStart = async (req: Request, res: Response, args: unknown): Pro
   let remark = isRoot(impersonatedUser.roles)
     ? `NOT allow impersonating ${impersonatedUser._id} (because of impersonated user is ROOT)`
     : !isAdmin(user.roles) && !impersonatedUser.supervisors.some(s => s.equals(userId))
-    ? `NOT allow impersonating ${impersonatedUser._id} (not supervisors)`
-    : null;
+      ? `NOT allow impersonating ${impersonatedUser._id} (not supervisors)`
+      : null;
 
   if (remark) {
     await AuthEvent.log(userId, 'impersonateStart', req.ua, req.ip, coordinates, remark);

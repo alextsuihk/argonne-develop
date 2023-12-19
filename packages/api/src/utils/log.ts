@@ -40,10 +40,10 @@ const log = async (level: Level, msg: string, extra?: unknown, user?: Types.Obje
         level === 'error'
           ? chalk.red('ERROR')
           : level === 'warn'
-          ? chalk.yellow('WARN')
-          : level === 'info'
-          ? chalk.green('INFO')
-          : chalk.gray(level.toUpperCase());
+            ? chalk.yellow('WARN')
+            : level === 'info'
+              ? chalk.green('INFO')
+              : chalk.gray(level.toUpperCase());
       console.info(`${lvl}::[${chalk.blue(instance)}]: ${msg}`); // eslint-disable-line no-console
     }
   } catch (error) {

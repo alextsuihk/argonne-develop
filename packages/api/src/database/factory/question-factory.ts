@@ -83,15 +83,15 @@ const fake = async (
                 classroom && tenant?.school
                   ? classroom.teachers
                   : tenant?.services.includes(TENANT.SERVICE.TUTOR)
-                  ? tenantTutors
-                      .filter(({ specialties }) =>
-                        specialties.some(
-                          ({ level, subject }) => level.equals(classroom.level) && subject.equals(classroom.subject),
-                        ),
-                      )
-                      .slice(0, bidCount)
-                      .map(tutor => tutor.user)
-                  : [];
+                    ? tenantTutors
+                        .filter(({ specialties }) =>
+                          specialties.some(
+                            ({ level, subject }) => level.equals(classroom.level) && subject.equals(classroom.subject),
+                          ),
+                        )
+                        .slice(0, bidCount)
+                        .map(tutor => tutor.user)
+                    : [];
 
               if (tutorUserIds.length) {
                 const isBidding =

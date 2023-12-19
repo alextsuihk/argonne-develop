@@ -7,11 +7,11 @@
 
 import { LOCALE } from '@argonne/common';
 import { addDays } from 'date-fns';
-import type { InferSchemaType } from 'mongoose';
+import type { InferSchemaType, Types } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 //! TODO: add calculatedPriority
@@ -63,6 +63,7 @@ const advertisementSchema = new Schema(
 
     views: [
       {
+        _id: false,
         user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         viewedAt: { type: Date, default: Date.now },
         ip: { type: String, required: true },
@@ -74,6 +75,7 @@ const advertisementSchema = new Schema(
 
     clicks: [
       {
+        _id: false,
         user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         clickedAt: { type: Date, default: Date.now },
         ip: { type: String, required: true },
@@ -105,5 +107,14 @@ const advertisementSchema = new Schema(
 
 advertisementSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Advertisement = model('Advertisement', advertisementSchema);
-export type AdvertisementDocument = InferSchemaType<typeof advertisementSchema> & Id;
+export type AdvertisementDocument = Omit<
+  InferSchemaType<typeof advertisementSchema>,
+  'clicks' | 'coupons' | 'remarks' | 'views'
+> &
+  Id &
+  Remarks & {
+    views: { user: Types.ObjectId; viewedAt: Date; ip: string; ua: string; account: number; createdAt: Date }[];
+    clicks: { user: Types.ObjectId; clickedAt: Date; ip: string; ua: string; account: number; createdAt: Date }[];
+    coupons: { user: Types.ObjectId; issuedAt: Date; ip: string; ua: string; account: number; createdAt: Date }[];
+  };
 export default Advertisement;

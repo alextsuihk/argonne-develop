@@ -9,7 +9,7 @@ import type { InferSchemaType } from 'mongoose';
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -46,5 +46,5 @@ const homeworkSchema = new Schema(
 );
 
 const Homework = model('Homework', homeworkSchema);
-export type HomeworkDocument = InferSchemaType<typeof homeworkSchema> & Id;
+export type HomeworkDocument = Omit<InferSchemaType<typeof homeworkSchema>, 'remarks'> & Id & Remarks;
 export default Homework;

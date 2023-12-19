@@ -344,8 +344,8 @@ describe('ChatGroup GraphQL', () => {
       to === 'admins'
         ? [TO_TENANT_ADMINS_CHAT_GROUP, tenant!.admins.map(u => u.toString())]
         : to === 'counselors'
-        ? [TO_TENANT_COUNSELORS_CHAT_GROUP, tenant!.counselors.map(u => u.toString())]
-        : [TO_TENANT_SUPPORTS_CHAT_GROUP, tenant!.supports.map(u => u.toString())];
+          ? [TO_TENANT_COUNSELORS_CHAT_GROUP, tenant!.counselors.map(u => u.toString())]
+          : [TO_TENANT_SUPPORTS_CHAT_GROUP, tenant!.supports.map(u => u.toString())];
 
     const expectedFormatEx = {
       ...expectedFormat,
@@ -375,8 +375,8 @@ describe('ChatGroup GraphQL', () => {
       to === 'admins'
         ? { toTenantAdminsChatGroup: expectedRes1 }
         : to === 'counselors'
-        ? { toTenantCounselorsChatGroup: expectedRes1 }
-        : { toTenantSupportsChatGroup: expectedRes1 },
+          ? { toTenantCounselorsChatGroup: expectedRes1 }
+          : { toTenantSupportsChatGroup: expectedRes1 },
     );
 
     const res2 = await apolloTestServer.executeOperation(
@@ -396,8 +396,8 @@ describe('ChatGroup GraphQL', () => {
       to === 'admins'
         ? { toTenantAdminsChatGroup: expectedRes2 }
         : to === 'counselors'
-        ? { toTenantCounselorsChatGroup: expectedRes2 }
-        : { toTenantSupportsChatGroup: expectedRes2 },
+          ? { toTenantCounselorsChatGroup: expectedRes2 }
+          : { toTenantSupportsChatGroup: expectedRes2 },
     );
 
     // clean up

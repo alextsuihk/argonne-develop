@@ -9,7 +9,7 @@ import type { FilterQuery, FlattenMaps, InferSchemaType, Types } from 'mongoose'
 import { model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import { Id, stashDefinition, Stashes } from './common';
+import { Id, Remarks, stashDefinition, Stashes } from './common';
 import { baseDefinition, localeSchema } from './common';
 
 const { MSG_ENUM } = LOCALE;
@@ -96,8 +96,11 @@ const tenantSchema = new Schema(
 
 tenantSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Tenant = model('Tenant', tenantSchema);
-export type TenantDocument = FlattenMaps<Omit<InferSchemaType<typeof tenantSchema>, 'seedings' | 'stashes'>> &
+export type TenantDocument = FlattenMaps<
+  Omit<InferSchemaType<typeof tenantSchema>, 'remarks' | 'seedings' | 'stashes'>
+> &
   Id &
+  Remarks &
   Stashes & {
     seedings: { _id: Types.ObjectId; ip: string; startedAt: Date; completedAt?: Date | null; result?: string | null }[];
   };

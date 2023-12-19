@@ -7,7 +7,7 @@ import { LOCALE } from '@argonne/common';
 import { InferSchemaType, model, Schema } from 'mongoose';
 
 import configLoader from '../config/config-loader';
-import type { Id } from './common';
+import type { Id, Remarks } from './common';
 import { baseDefinition, localeSchema } from './common';
 
 const { SYSTEM } = LOCALE.DB_ENUM;
@@ -32,6 +32,6 @@ const tagSchema = new Schema(
 
 tagSchema.index(Object.fromEntries(searchableFields.map(f => [f, 'text'])), { name: 'Search' }); // text search
 const Tag = model('Tag', tagSchema);
-export type TagDocument = InferSchemaType<typeof tagSchema> & Id;
+export type TagDocument = Omit<InferSchemaType<typeof tagSchema>, 'remarks'> & Id & Remarks;
 
 export default Tag;
